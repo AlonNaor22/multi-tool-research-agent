@@ -1,0 +1,13 @@
+# Core LangChain and Anthropic
+langchain>=0.1.0
+langchain-anthropic>=0.1.0
+langchain-community>=0.0.10
+anthropic>=0.18.0
+
+# Tools
+duckduckgo-search>=4.1.0        # Free web search (no API key needed)
+wikipedia>=1.4.0                 # Wikipedia API
+numexpr>=2.8.0                   # Safe math evaluation
+
+# Utilities
+python-dotenv>=1.0.0             # Load environment variables from .env

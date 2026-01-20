@@ -1,0 +1,21 @@
+# Environment variables (contains API keys - never commit!)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Output files
+output/*.md
+
+# Task specification (not for public repo)
+Task 3 Multi-Tool Research Agent.md
