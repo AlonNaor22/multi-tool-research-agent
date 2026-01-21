@@ -6,6 +6,7 @@ This gives the agent access to current information from the internet.
 
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import Tool
+from src.utils import retry_on_error
 
 
 # Use LangChain's built-in DuckDuckGo wrapper
@@ -13,6 +14,7 @@ from langchain_core.tools import Tool
 _ddg_search = DuckDuckGoSearchRun()
 
 
+@retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 def web_search(query: str) -> str:
     """
     Search the web using DuckDuckGo.

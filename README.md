@@ -1,6 +1,6 @@
 # Multi-Tool Research Agent
 
-An AI-powered research agent that autonomously uses multiple tools (web search, Wikipedia, calculator) to gather information and answer complex questions. Built with Claude and LangChain using the ReAct (Reasoning + Acting) pattern.
+An AI-powered research agent that autonomously uses multiple tools (web search, Wikipedia, calculator, weather, news, URL fetcher) to gather information and answer complex questions. Built with Claude and LangChain using the ReAct (Reasoning + Acting) pattern.
 
 ## Features
 
@@ -8,6 +8,13 @@ An AI-powered research agent that autonomously uses multiple tools (web search, 
 - **Web Search**: Access current information from the internet via DuckDuckGo
 - **Wikipedia Lookup**: Get encyclopedic background information
 - **Calculator**: Perform accurate mathematical calculations
+- **Weather**: Get real-time weather data for any city
+- **News Search**: Find recent news articles on any topic
+- **URL Fetcher**: Read and extract content from web pages
+- **Conversation Memory**: Remember previous exchanges for follow-up questions
+- **Markdown Reports**: Export research results as formatted reports
+- **Execution Timing**: See how long each tool takes to execute
+- **Retry Logic**: Automatic retries for failed network requests
 - **ReAct Pattern**: Shows reasoning steps (Thought → Action → Observation)
 
 ## How It Works
@@ -55,14 +62,17 @@ Final Answer: Japan's population is ~123.4 million, which is about 1.54% of the 
    pip install -r requirements.txt
    ```
 
-4. **Set up API key**
+4. **Set up API keys**
 
-   Create a `.env` file with your Anthropic API key:
+   Create a `.env` file with your API keys:
    ```
    ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+   OPENWEATHER_API_KEY=your-openweather-key-here
    ```
 
-   Get your API key from [console.anthropic.com](https://console.anthropic.com/)
+   Get your API keys from:
+   - Anthropic: [console.anthropic.com](https://console.anthropic.com/)
+   - OpenWeatherMap: [openweathermap.org/api](https://openweathermap.org/api) (free tier available)
 
 ## Usage
 
@@ -78,42 +88,77 @@ Then ask questions:
         Powered by Claude + LangChain
 ============================================================
 
-Available tools: web_search, wikipedia, calculator
-Type 'quit' or 'exit' to stop.
+Available tools: web_search, wikipedia, calculator, weather, news_search, fetch_url
 
-Your question: Who was Albert Einstein and how many years ago was he born?
+Commands:
+  Type your question to research
+  'clear'  - Clear conversation memory
+  'quit'   - Exit the program
+
+Your question: What's the weather in Tokyo and what are some facts about the city?
 ```
+
+After each answer, you can save the research as a Markdown report.
+
+## Available Tools
+
+| Tool | Description | Example Query |
+|------|-------------|---------------|
+| `web_search` | Search the web for current info | "Tesla stock price 2024" |
+| `wikipedia` | Encyclopedic information | "Who was Albert Einstein?" |
+| `calculator` | Mathematical calculations | "What is 15% of 850?" |
+| `weather` | Current weather data | "Weather in London" |
+| `news_search` | Recent news articles | "Latest AI news" |
+| `fetch_url` | Read web page content | "Summarize this article: https://..." |
 
 ## Example Queries
 
+**Simple queries:**
 - "What is 15% of 250?"
-- "Who invented the telephone and when?"
+- "Who invented the telephone?"
+- "What's the weather in New York?"
+
+**Multi-tool queries:**
 - "What's the population of Tokyo compared to New York?"
 - "What is the GDP of Germany and how does it rank globally?"
+- "What's the latest news about artificial intelligence?"
+
+**Follow-up questions (uses memory):**
+- "What is the population of France?" → "How does that compare to Germany?"
+- "Tell me about climate change" → "What are the main causes?"
 
 ## Project Structure
 
 ```
 multi-tool-research-agent/
-├── main.py                 # CLI entry point
-├── config.py               # Configuration settings
-├── requirements.txt        # Python dependencies
-├── .env                    # API keys (not in repo)
+├── main.py                     # CLI entry point
+├── config.py                   # Configuration settings
+├── requirements.txt            # Python dependencies
+├── .env                        # API keys (not in repo)
+├── .env.example                # Example environment file
 ├── src/
-│   ├── agent.py           # Main agent with ReAct pattern
+│   ├── agent.py               # Main agent with ReAct pattern & memory
+│   ├── callbacks.py           # Timing callback handler
+│   ├── report_generator.py    # Markdown report export
+│   ├── utils.py               # Utility functions (retry logic)
 │   └── tools/
-│       ├── calculator_tool.py
-│       ├── wikipedia_tool.py
-│       └── search_tool.py
-└── output/                 # For saved reports
+│       ├── calculator_tool.py # Math calculations
+│       ├── wikipedia_tool.py  # Wikipedia lookups
+│       ├── search_tool.py     # Web search
+│       ├── weather_tool.py    # Weather data
+│       ├── news_tool.py       # News search
+│       └── url_tool.py        # URL content fetcher
+└── output/                     # Saved research reports
 ```
 
 ## Technologies
 
 - **LangChain** - Agent orchestration framework
 - **Claude (Anthropic)** - LLM for reasoning
-- **DuckDuckGo** - Free web search
+- **DuckDuckGo** - Free web and news search
 - **Wikipedia API** - Encyclopedia lookups
+- **OpenWeatherMap** - Weather data
+- **BeautifulSoup** - Web page parsing
 - **numexpr** - Safe math evaluation
 
 ## Configuration
@@ -126,6 +171,24 @@ Edit `config.py` to customize:
 | `TEMPERATURE` | 0.2 | Lower = more focused reasoning |
 | `MAX_ITERATIONS` | 10 | Max reasoning steps |
 | `VERBOSE` | True | Show reasoning steps |
+
+## Key Concepts
+
+### ReAct Pattern
+The agent follows a loop of **Re**asoning and **Act**ing:
+1. **Thought**: Analyze what information is needed
+2. **Action**: Choose and use a tool
+3. **Observation**: Process the tool's result
+4. Repeat until the answer is complete
+
+### Conversation Memory
+The agent remembers the last 5 exchanges, enabling follow-up questions like "How does that compare to X?" without repeating context.
+
+### Callbacks
+LangChain callbacks let us hook into agent events. We use this to track tool execution times.
+
+### Retry Logic
+Network-dependent tools (weather, search, URL fetcher) automatically retry on timeout or connection errors.
 
 ## License
 
