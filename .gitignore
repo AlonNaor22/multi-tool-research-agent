@@ -14,8 +14,13 @@ env/
 .vscode/
 .idea/
 
-# Output files
-output/*.md
+# Output files (charts, reports)
+output/*
+!output/.gitkeep
+
+# Session files (user data)
+sessions/*
+!sessions/.gitkeep
 
 # Task specification (not for public repo)
 Task 3 Multi-Tool Research Agent.md

@@ -1,21 +1,36 @@
 # Multi-Tool Research Agent
 
-An AI-powered research agent that autonomously uses multiple tools (web search, Wikipedia, calculator, weather, news, URL fetcher) to gather information and answer complex questions. Built with Claude and LangChain using the ReAct (Reasoning + Acting) pattern.
+An AI-powered research agent that autonomously uses multiple tools (web search, Wikipedia, calculator, weather, news, academic papers, Python code execution, Wolfram Alpha, and more) to gather information and answer complex questions. Built with Claude and LangChain using the ReAct (Reasoning + Acting) pattern.
 
 ## Features
 
+### Core Features
 - **Autonomous Tool Selection**: The agent decides which tools to use based on the question
-- **Web Search**: Access current information from the internet via DuckDuckGo
-- **Wikipedia Lookup**: Get encyclopedic background information
-- **Calculator**: Perform accurate mathematical calculations
-- **Weather**: Get real-time weather data for any city
-- **News Search**: Find recent news articles on any topic
-- **URL Fetcher**: Read and extract content from web pages
-- **Conversation Memory**: Remember previous exchanges for follow-up questions
-- **Markdown Reports**: Export research results as formatted reports
-- **Execution Timing**: See how long each tool takes to execute
-- **Retry Logic**: Automatic retries for failed network requests
 - **ReAct Pattern**: Shows reasoning steps (Thought → Action → Observation)
+- **Conversation Memory**: Remember all exchanges for follow-up questions
+- **Session Persistence**: Save and load research sessions to continue later
+
+### Available Tools (11 Total)
+
+| Tool | Description |
+|------|-------------|
+| `web_search` | Search the web for current information via DuckDuckGo |
+| `wikipedia` | Get encyclopedic background information |
+| `calculator` | Perform accurate mathematical calculations |
+| `weather` | Get real-time weather data for any city |
+| `news_search` | Find recent news articles on any topic |
+| `fetch_url` | Read and extract content from web pages |
+| `arxiv_search` | Search academic papers on ArXiv |
+| `python_repl` | Execute Python code for complex calculations |
+| `wolfram_alpha` | Computational knowledge (math, science, facts) |
+| `create_chart` | Generate bar, line, and pie charts |
+| `parallel_search` | Run multiple searches simultaneously |
+
+### Additional Features
+- **Execution Timing**: See how long each tool takes
+- **Retry Logic**: Automatic retries for failed network requests
+- **Data Visualization**: Create charts and save as PNG images
+- **Parallel Execution**: Speed up research with concurrent searches
 
 ## How It Works
 
@@ -68,11 +83,13 @@ Final Answer: Japan's population is ~123.4 million, which is about 1.54% of the 
    ```
    ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
    OPENWEATHER_API_KEY=your-openweather-key-here
+   WOLFRAM_ALPHA_APP_ID=your-wolfram-app-id-here
    ```
 
    Get your API keys from:
    - Anthropic: [console.anthropic.com](https://console.anthropic.com/)
    - OpenWeatherMap: [openweathermap.org/api](https://openweathermap.org/api) (free tier available)
+   - Wolfram Alpha: [developer.wolframalpha.com](https://developer.wolframalpha.com/) (free tier available)
 
 ## Usage
 
@@ -88,28 +105,48 @@ Then ask questions:
         Powered by Claude + LangChain
 ============================================================
 
-Available tools: web_search, wikipedia, calculator, weather, news_search, fetch_url
+Available tools: web_search, wikipedia, calculator, weather, news_search,
+fetch_url, arxiv_search, python_repl, wolfram_alpha, create_chart, parallel_search
 
 Commands:
   Type your question to research
-  'clear'  - Clear conversation memory
-  'quit'   - Exit the program
+  'clear'    - Clear conversation memory
+  'save'     - Save current session
+  'load'     - Load a previous session
+  'sessions' - List all saved sessions
+  'quit'     - Exit the program
 
 Your question: What's the weather in Tokyo and what are some facts about the city?
 ```
 
-After each answer, you can save the research as a Markdown report.
+### Session Management
 
-## Available Tools
+Save your research sessions to continue later:
 
-| Tool | Description | Example Query |
-|------|-------------|---------------|
-| `web_search` | Search the web for current info | "Tesla stock price 2024" |
-| `wikipedia` | Encyclopedic information | "Who was Albert Einstein?" |
-| `calculator` | Mathematical calculations | "What is 15% of 850?" |
-| `weather` | Current weather data | "Weather in London" |
-| `news_search` | Recent news articles | "Latest AI news" |
-| `fetch_url` | Read web page content | "Summarize this article: https://..." |
+```
+Your question: What is quantum computing?
+[...answer...]
+
+Your question: save
+Session description (3 words max): quantum computing basics
+New session created: sessions/22.01.2026_quantum_computing_basics.json
+
+Your question: quit
+```
+
+Later, load the session:
+```
+Your question: load
+Available sessions:
+  1. 22.01.2026_quantum_computing_basics (3 messages)
+
+Enter session number or ID: 1
+Loaded session: 22.01.2026_quantum_computing_basics
+Restored 3 messages.
+
+Your question: tell me more about qubits
+[...continues with context from previous session...]
+```
 
 ## Example Queries
 
@@ -118,10 +155,26 @@ After each answer, you can save the research as a Markdown report.
 - "Who invented the telephone?"
 - "What's the weather in New York?"
 
+**Academic research:**
+- "Find papers about transformer neural networks on ArXiv"
+- "What are the latest research papers on quantum computing?"
+
+**Computational queries (Wolfram Alpha):**
+- "Solve x^2 + 2x - 8 = 0"
+- "What is the integral of x^2?"
+- "Convert 100 miles to kilometers"
+
+**Python code execution:**
+- "Calculate the factorial of 20 using Python"
+- "Generate the first 10 Fibonacci numbers"
+
+**Data visualization:**
+- "Create a pie chart showing market share: Apple 40%, Samsung 30%, Others 30%"
+- "Make a bar chart of sales by region: North 100, South 150, East 80, West 120"
+
 **Multi-tool queries:**
 - "What's the population of Tokyo compared to New York?"
-- "What is the GDP of Germany and how does it rank globally?"
-- "What's the latest news about artificial intelligence?"
+- "Search for Tesla on web, wikipedia, and news at the same time"
 
 **Follow-up questions (uses memory):**
 - "What is the population of France?" → "How does that compare to Germany?"
@@ -135,20 +188,28 @@ multi-tool-research-agent/
 ├── config.py                   # Configuration settings
 ├── requirements.txt            # Python dependencies
 ├── .env                        # API keys (not in repo)
-├── .env.example                # Example environment file
 ├── src/
 │   ├── agent.py               # Main agent with ReAct pattern & memory
 │   ├── callbacks.py           # Timing callback handler
 │   ├── report_generator.py    # Markdown report export
+│   ├── session_manager.py     # Session save/load functionality
 │   ├── utils.py               # Utility functions (retry logic)
 │   └── tools/
-│       ├── calculator_tool.py # Math calculations
-│       ├── wikipedia_tool.py  # Wikipedia lookups
-│       ├── search_tool.py     # Web search
-│       ├── weather_tool.py    # Weather data
-│       ├── news_tool.py       # News search
-│       └── url_tool.py        # URL content fetcher
-└── output/                     # Saved research reports
+│       ├── calculator_tool.py  # Math calculations
+│       ├── wikipedia_tool.py   # Wikipedia lookups
+│       ├── search_tool.py      # Web search (DuckDuckGo)
+│       ├── weather_tool.py     # Weather data
+│       ├── news_tool.py        # News search
+│       ├── url_tool.py         # URL content fetcher
+│       ├── arxiv_tool.py       # Academic paper search
+│       ├── python_repl_tool.py # Python code execution
+│       ├── wolfram_tool.py     # Wolfram Alpha queries
+│       ├── visualization_tool.py # Chart generation
+│       └── parallel_tool.py    # Parallel search execution
+├── sessions/                   # Saved research sessions
+├── output/                     # Generated charts and reports
+└── docs/
+    └── CUSTOM_TOOLS_GUIDE.md   # Guide for creating new tools
 ```
 
 ## Technologies
@@ -158,6 +219,9 @@ multi-tool-research-agent/
 - **DuckDuckGo** - Free web and news search
 - **Wikipedia API** - Encyclopedia lookups
 - **OpenWeatherMap** - Weather data
+- **ArXiv API** - Academic paper search
+- **Wolfram Alpha API** - Computational knowledge
+- **matplotlib** - Chart generation
 - **BeautifulSoup** - Web page parsing
 - **numexpr** - Safe math evaluation
 
@@ -182,13 +246,18 @@ The agent follows a loop of **Re**asoning and **Act**ing:
 4. Repeat until the answer is complete
 
 ### Conversation Memory
-The agent remembers the last 5 exchanges, enabling follow-up questions like "How does that compare to X?" without repeating context.
+The agent remembers all exchanges in a session. For the AI prompt, only the last 5 exchanges are included to avoid context overflow, but all history is saved when you use the `save` command.
 
-### Callbacks
-LangChain callbacks let us hook into agent events. We use this to track tool execution times.
+### Session Persistence
+Sessions are saved as JSON files in the `sessions/` folder. The filename includes the date and a description you provide:
+- Format: `dd.mm.yyyy_description_words.json`
+- Example: `22.01.2026_quantum_computing_basics.json`
 
-### Retry Logic
-Network-dependent tools (weather, search, URL fetcher) automatically retry on timeout or connection errors.
+### Parallel Execution
+The `parallel_search` tool uses Python's `ThreadPoolExecutor` to run multiple searches simultaneously, significantly speeding up research that requires multiple sources.
+
+### Creating Custom Tools
+See `docs/CUSTOM_TOOLS_GUIDE.md` for a comprehensive guide on creating your own tools.
 
 ## License
 

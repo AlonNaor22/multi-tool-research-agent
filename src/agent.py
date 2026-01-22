@@ -25,14 +25,19 @@ from src.tools.search_tool import search_tool
 from src.tools.weather_tool import weather_tool
 from src.tools.news_tool import news_tool
 from src.tools.url_tool import url_tool
+from src.tools.arxiv_tool import arxiv_tool
+from src.tools.python_repl_tool import python_repl_tool
+from src.tools.wolfram_tool import wolfram_tool
+from src.tools.visualization_tool import visualization_tool
+from src.tools.parallel_tool import parallel_tool
 
 
 class SimpleMemory:
     """
     A simple conversation memory implementation.
 
-    Stores the last k conversation exchanges (question + answer pairs)
-    and formats them as a string for the prompt.
+    Stores ALL conversation exchanges for saving, but only uses the last k
+    exchanges for the prompt (to avoid context overflow).
 
     This replaces LangChain's ConversationBufferWindowMemory which
     may not be available in all versions.
@@ -43,25 +48,26 @@ class SimpleMemory:
         Initialize the memory.
 
         Args:
-            k: Number of exchanges to remember (default: 5)
+            k: Number of recent exchanges to include in prompt (default: 5)
         """
         self.k = k
-        self.history = []  # List of (input, output) tuples
+        self.history = []  # List of ALL (input, output) tuples
 
     def add_exchange(self, user_input: str, agent_output: str):
         """Add a conversation exchange to memory."""
         self.history.append((user_input, agent_output))
-        # Keep only the last k exchanges
-        if len(self.history) > self.k:
-            self.history = self.history[-self.k:]
+        # We keep ALL history now - no truncation!
 
     def get_history_string(self) -> str:
-        """Get the conversation history as a formatted string."""
+        """Get the recent conversation history for the prompt (last k exchanges)."""
         if not self.history:
             return "No previous conversation."
 
+        # Only include last k exchanges in the prompt to avoid context overflow
+        recent_history = self.history[-self.k:]
+
         lines = []
-        for user_input, agent_output in self.history:
+        for user_input, agent_output in recent_history:
             lines.append(f"Human: {user_input}")
             lines.append(f"Assistant: {agent_output}")
 
@@ -143,11 +149,19 @@ class ResearchAgent:
             search_tool,
             weather_tool,
             news_tool,
-            url_tool
+            url_tool,
+            arxiv_tool,  # Academic paper search
+            python_repl_tool,  # Python code execution
+            wolfram_tool,  # Computational knowledge (Wolfram Alpha)
+            visualization_tool,  # Chart/graph generation
+            parallel_tool,  # Run multiple searches in parallel
         ]
 
         # Create our simple conversation memory
         self.memory = SimpleMemory(k=5)
+
+        # Track current session ID (for saving to the same file)
+        self.current_session_id = None
 
         # Create the ReAct agent with the memory-enabled prompt
         agent = create_react_agent(
@@ -214,13 +228,69 @@ class ResearchAgent:
         return self.timing_callback.get_summary()
 
     def clear_memory(self):
-        """Clear the conversation history."""
+        """Clear the conversation history and start a new session."""
         self.memory.clear()
+        self.current_session_id = None  # Next save will create a new file
         print("Conversation memory cleared.")
 
     def get_memory(self) -> str:
         """Get the current conversation history."""
         return self.memory.buffer
+
+    def save_session(self, session_id: str = None, description: str = None) -> str:
+        """
+        Save the current session to a file.
+
+        Uses the same session file throughout a session. Only creates
+        a new file on the first save or if explicitly given a new ID.
+
+        Args:
+            session_id: Optional session ID. If None, reuses current or generates new.
+            description: Short description for new sessions (3 words max).
+
+        Returns:
+            Path to the saved session file.
+        """
+        from src.session_manager import save_session
+
+        # Reuse current session ID if we have one and none was provided
+        if session_id is None and self.current_session_id is not None:
+            session_id = self.current_session_id
+
+        filepath = save_session(self.memory.history, session_id, description)
+
+        # Store the session ID for future saves (extract from filepath if new)
+        if self.current_session_id is None:
+            # Extract session ID from the filepath
+            import os
+            filename = os.path.basename(filepath)
+            self.current_session_id = filename.replace('.json', '')
+
+        return filepath
+
+    def load_session(self, session_id: str) -> bool:
+        """
+        Load a previously saved session.
+
+        Args:
+            session_id: The session ID to load.
+
+        Returns:
+            True if loaded successfully, False otherwise.
+        """
+        from src.session_manager import load_session
+        history = load_session(session_id)
+
+        if history is None:
+            return False
+
+        # Restore the history to memory
+        self.memory.history = list(history)
+
+        # Track this as the current session (so future saves go to same file)
+        self.current_session_id = session_id
+
+        return True
 
 
 # Keep backward compatibility with the old function

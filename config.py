@@ -8,6 +8,7 @@ load_dotenv()
 
 # API Keys
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+WOLFRAM_ALPHA_APP_ID = os.getenv("WOLFRAM_ALPHA_APP_ID")
 
 # LLM Configuration
 MODEL_NAME = "claude-sonnet-4-5-20250929"  # Claude Sonnet 4.5 for complex reasoning
