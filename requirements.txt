@@ -7,7 +7,6 @@ anthropic>=0.18.0
 # Tools
 duckduckgo-search>=4.1.0        # Free web search (no API key needed)
 wikipedia>=1.4.0                 # Wikipedia API
-numexpr>=2.8.0                   # Safe math evaluation
 arxiv>=2.0.0                     # Academic paper search (ArXiv API)
 matplotlib>=3.7.0                # Data visualization (charts/graphs)
 
