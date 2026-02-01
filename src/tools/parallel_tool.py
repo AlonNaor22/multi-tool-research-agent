@@ -4,64 +4,77 @@ This is a "meta-tool" that runs multiple searches in parallel.
 Instead of the agent making 3 sequential searches, it can use this
 tool to run all 3 at once, significantly speeding up research.
 
-KEY CONCEPT: ThreadPoolExecutor
--------------------------------
-Python's concurrent.futures module provides ThreadPoolExecutor,
-which manages a pool of worker threads. When we submit multiple
-tasks, they run simultaneously (truly parallel for I/O operations
+Features:
+- Supports web, wikipedia, news, and arxiv searches
+- Runs searches concurrently using ThreadPoolExecutor
+- Smart result truncation based on content type
+- Maximum 10 parallel searches
+
+Python's ThreadPoolExecutor manages a pool of worker threads. When we submit
+multiple tasks, they run simultaneously (truly parallel for I/O operations
 like HTTP requests).
-
-WHY THIS WORKS:
---------------
-Our tools mostly do I/O (network requests to APIs). Python's GIL
-(Global Interpreter Lock) allows threads to run in parallel during
-I/O operations. So web searches, API calls, etc. benefit greatly
-from threading.
-
-USAGE:
-------
-The agent provides a JSON input with multiple queries:
-{
-    "searches": [
-        {"type": "web", "query": "Tesla stock price"},
-        {"type": "wikipedia", "query": "Tesla company"},
-        {"type": "web", "query": "SpaceX latest launch"}
-    ]
-}
-
-All searches run in parallel and results are returned together.
 """
 
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Any
+from typing import Dict, List
 from langchain_core.tools import Tool
 
 # Import the actual search functions from our tools
 from src.tools.search_tool import web_search
 from src.tools.wikipedia_tool import search_wikipedia
 from src.tools.news_tool import search_news
+from src.tools.arxiv_tool import search_arxiv
 
 
 # Maximum number of parallel workers
 MAX_WORKERS = 5
 
-# Timeout for each individual search (seconds)
-SEARCH_TIMEOUT = 30
+# Timeout for the entire parallel operation (seconds)
+PARALLEL_TIMEOUT = 60
+
+# Result truncation limits by type
+TRUNCATION_LIMITS = {
+    "web": 600,
+    "wikipedia": 800,
+    "news": 700,
+    "arxiv": 800,
+    "default": 500,
+}
 
 
 def get_search_function(search_type: str):
-    """
-    Get the appropriate search function based on type.
-
-    This is a simple dispatcher that maps type names to functions.
-    """
+    """Get the appropriate search function based on type."""
     search_functions = {
         "web": web_search,
         "wikipedia": search_wikipedia,
         "news": search_news,
+        "arxiv": search_arxiv,
     }
     return search_functions.get(search_type.lower())
+
+
+def truncate_result(result: str, search_type: str) -> str:
+    """Intelligently truncate result based on type."""
+    limit = TRUNCATION_LIMITS.get(search_type, TRUNCATION_LIMITS["default"])
+
+    if len(result) <= limit:
+        return result
+
+    # Try to truncate at a sentence boundary
+    truncated = result[:limit]
+    last_period = truncated.rfind('.')
+    last_newline = truncated.rfind('\n')
+
+    # Use the later of period or newline as cut point
+    cut_point = max(last_period, last_newline)
+
+    if cut_point > limit * 0.7:  # Only if we're not losing too much
+        truncated = result[:cut_point + 1]
+    else:
+        truncated = result[:limit]
+
+    return truncated + "..."
 
 
 def execute_single_search(search_spec: Dict) -> Dict:
@@ -83,7 +96,7 @@ def execute_single_search(search_spec: Dict) -> Dict:
         return {
             "type": search_type,
             "query": query,
-            "result": f"Unknown search type: {search_type}. Use 'web', 'wikipedia', or 'news'.",
+            "result": f"Unknown search type: {search_type}. Use 'web', 'wikipedia', 'news', or 'arxiv'.",
             "success": False
         }
 
@@ -108,16 +121,15 @@ def parallel_search(input_str: str) -> str:
     """
     Execute multiple searches in parallel.
 
-    HOW IT WORKS:
-    1. Parse the JSON input to get list of searches
-    2. Create a ThreadPoolExecutor with MAX_WORKERS threads
-    3. Submit all searches to the executor
-    4. Wait for all to complete and collect results
-    5. Format and return combined results
-
-    The key insight is that while one thread waits for a network
-    response, other threads can be making their own requests.
-    This is much faster than sequential execution.
+    INPUT FORMAT:
+    {
+        "searches": [
+            {"type": "web", "query": "Tesla stock price"},
+            {"type": "wikipedia", "query": "Tesla company"},
+            {"type": "news", "query": "Tesla"},
+            {"type": "arxiv", "query": "electric vehicles battery"}
+        ]
+    }
 
     Args:
         input_str: JSON string with "searches" array
@@ -129,7 +141,11 @@ def parallel_search(input_str: str) -> str:
     try:
         spec = json.loads(input_str)
     except json.JSONDecodeError as e:
-        return f"Error: Invalid JSON. {e}\n\nExpected format:\n{{\"searches\": [{{\"type\": \"web\", \"query\": \"...\"}}, ...]}}"
+        return (
+            f"Error: Invalid JSON. {e}\n\n"
+            "Expected format:\n"
+            '{\"searches\": [{\"type\": \"web\", \"query\": \"...\"}, ...]}'
+        )
 
     searches = spec.get("searches", [])
 
@@ -147,24 +163,19 @@ def parallel_search(input_str: str) -> str:
     # Execute searches in parallel
     results = []
 
-    # ThreadPoolExecutor creates a pool of worker threads
-    # max_workers controls how many run simultaneously
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Submit all searches - this returns immediately
-        # Each submit() schedules the function to run in a thread
+        # Submit all searches
         future_to_search = {
             executor.submit(execute_single_search, search): search
             for search in searches
         }
 
-        # as_completed() yields futures as they finish
-        # This is more efficient than waiting for all in order
-        for future in as_completed(future_to_search, timeout=SEARCH_TIMEOUT):
+        # Collect results as they complete
+        for future in as_completed(future_to_search, timeout=PARALLEL_TIMEOUT):
             try:
                 result = future.result()
                 results.append(result)
             except Exception as e:
-                # Handle any unexpected errors
                 search = future_to_search[future]
                 results.append({
                     "type": search.get("type", "unknown"),
@@ -173,15 +184,26 @@ def parallel_search(input_str: str) -> str:
                     "success": False
                 })
 
+    # Count successes
+    success_count = sum(1 for r in results if r["success"])
+
     # Format the results
-    output_lines = [f"Parallel search completed ({len(results)} searches):\n"]
+    output_lines = [
+        f"Parallel search completed: {success_count}/{len(results)} successful\n"
+    ]
 
     for i, r in enumerate(results, 1):
-        status = "✓" if r["success"] else "✗"
-        output_lines.append(f"--- Result {i} [{r['type'].upper()}] {status} ---")
-        output_lines.append(f"Query: {r['query']}")
-        output_lines.append(f"Result: {r['result'][:500]}...")  # Truncate long results
-        output_lines.append("")
+        status = "SUCCESS" if r["success"] else "FAILED"
+        search_type = r["type"].upper()
+
+        # Truncate result smartly
+        truncated_result = truncate_result(r["result"], r["type"])
+
+        output_lines.append(
+            f"--- [{search_type}] {status} ---\n"
+            f"Query: {r['query']}\n"
+            f"{truncated_result}\n"
+        )
 
     return "\n".join(output_lines)
 
@@ -192,15 +214,17 @@ parallel_tool = Tool(
     func=parallel_search,
     description=(
         "Execute multiple searches in parallel for faster results. "
-        "Use this when you need to gather information from multiple sources simultaneously. "
-        "Input must be a JSON string with a 'searches' array. Each search needs 'type' "
-        "('web', 'wikipedia', or 'news') and 'query' fields. "
-        "Example: "
-        '{\"searches\": ['
-        '{\"type\": \"web\", \"query\": \"Tesla stock price 2024\"}, '
-        '{\"type\": \"wikipedia\", \"query\": \"Tesla Inc\"}, '
-        '{\"type\": \"news\", \"query\": \"Tesla\"}]} '
-        "Maximum 10 searches per call. All searches run at the same time, "
-        "making this much faster than searching one by one."
+        "Use this when you need to gather information from multiple sources at once. "
+        "\n\nSUPPORTED TYPES: web, wikipedia, news, arxiv"
+        "\n\nFORMAT:"
+        '\n{"searches": [{"type": "web", "query": "..."}, {"type": "arxiv", "query": "..."}]}'
+        "\n\nEXAMPLE:"
+        '\n{"searches": ['
+        '{"type": "web", "query": "Tesla stock 2024"}, '
+        '{"type": "wikipedia", "query": "Tesla Inc"}, '
+        '{"type": "news", "query": "Tesla"}, '
+        '{"type": "arxiv", "query": "electric vehicle battery"}'
+        ']}'
+        "\n\nLIMITS: Maximum 10 searches per call. All run simultaneously."
     )
 )

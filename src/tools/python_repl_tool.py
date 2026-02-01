@@ -7,10 +7,11 @@ SECURITY CONSIDERATIONS:
 -----------------------
 Executing arbitrary code is inherently risky. We implement several safeguards:
 
-1. TIMEOUT: Code execution is limited to 5 seconds to prevent infinite loops
+1. TIMEOUT: Code execution is limited to 5 seconds (works on Windows and Unix)
 2. RESTRICTED GLOBALS: We limit what built-in functions are available
 3. OUTPUT CAPTURE: We capture stdout/stderr instead of printing directly
-4. NO PERSISTENT STATE: Each execution is independent (no shared variables)
+4. OUTPUT SIZE LIMIT: Maximum 10,000 characters returned
+5. NO PERSISTENT STATE: Each execution is independent (no shared variables)
 
 NOTE: This is NOT a fully sandboxed environment. For production use, consider:
 - Docker containers
@@ -19,25 +20,62 @@ NOTE: This is NOT a fully sandboxed environment. For production use, consider:
 """
 
 import sys
-import signal
+import threading
 from io import StringIO
 from contextlib import redirect_stdout, redirect_stderr
 from langchain_core.tools import Tool
-from src.utils import retry_on_error
 
 
 # Configuration
 EXECUTION_TIMEOUT = 5  # seconds
+MAX_OUTPUT_LENGTH = 10000  # characters
 
 
-class TimeoutError(Exception):
-    """Raised when code execution takes too long."""
-    pass
+class ExecutionResult:
+    """Container for execution result from thread."""
+    def __init__(self):
+        self.output = None
+        self.error = None
 
 
-def timeout_handler(signum, frame):
-    """Signal handler for timeout."""
-    raise TimeoutError("Code execution timed out (exceeded 5 seconds)")
+def _execute_code_thread(code: str, safe_globals: dict, result: ExecutionResult):
+    """
+    Execute code in a thread (allows timeout on Windows).
+
+    Args:
+        code: Python code to execute
+        safe_globals: Restricted namespace
+        result: ExecutionResult object to store output
+    """
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
+    local_namespace = {}
+
+    try:
+        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+            try:
+                # First, try to compile as an expression
+                compiled = compile(code, "<agent>", "eval")
+                eval_result = eval(compiled, safe_globals, local_namespace)
+                if eval_result is not None:
+                    print(repr(eval_result))
+            except SyntaxError:
+                # It's not a simple expression, execute as statements
+                exec(code, safe_globals, local_namespace)
+
+        output = stdout_capture.getvalue()
+        errors = stderr_capture.getvalue()
+
+        if errors:
+            result.output = f"Output:\n{output}\n\nWarnings:\n{errors}"
+        elif output:
+            result.output = output.strip()
+        else:
+            result.output = "Code executed successfully (no output)"
+
+    except Exception as e:
+        error_type = type(e).__name__
+        result.error = f"Execution Error ({error_type}): {str(e)}"
 
 
 def execute_python(code: str) -> str:
@@ -46,8 +84,8 @@ def execute_python(code: str) -> str:
 
     HOW THIS WORKS:
     ---------------
-    1. We create StringIO objects to capture stdout/stderr
-    2. We redirect print() output to our StringIO
+    1. We create a thread to run the code (allows timeout on Windows)
+    2. We redirect print() output to capture it
     3. We execute the code with exec() in a restricted namespace
     4. We return whatever was printed + the result of the last expression
 
@@ -57,96 +95,111 @@ def execute_python(code: str) -> str:
     Returns:
         The output of the code execution, or error message.
     """
-    # Prepare output capture
-    stdout_capture = StringIO()
-    stderr_capture = StringIO()
+    # Import optional data science libraries if available
+    optional_modules = {}
+
+    try:
+        import numpy as np
+        optional_modules["np"] = np
+        optional_modules["numpy"] = np
+    except ImportError:
+        pass
+
+    try:
+        import pandas as pd
+        optional_modules["pd"] = pd
+        optional_modules["pandas"] = pd
+    except ImportError:
+        pass
 
     # Define what's available to the executed code
-    # We're being somewhat permissive here for utility, but you could
-    # restrict this further by removing certain built-ins
     safe_globals = {
         "__builtins__": {
             # Safe built-ins
             "abs": abs,
             "all": all,
             "any": any,
+            "bin": bin,
             "bool": bool,
+            "bytes": bytes,
+            "chr": chr,
             "dict": dict,
+            "divmod": divmod,
             "enumerate": enumerate,
             "filter": filter,
             "float": float,
+            "format": format,
+            "frozenset": frozenset,
+            "hex": hex,
             "int": int,
+            "isinstance": isinstance,
+            "iter": iter,
             "len": len,
             "list": list,
             "map": map,
             "max": max,
             "min": min,
+            "next": next,
+            "oct": oct,
+            "ord": ord,
             "pow": pow,
-            "print": print,  # Will be captured by redirect_stdout
+            "print": print,
             "range": range,
+            "repr": repr,
             "reversed": reversed,
             "round": round,
             "set": set,
+            "slice": slice,
             "sorted": sorted,
             "str": str,
             "sum": sum,
             "tuple": tuple,
             "type": type,
             "zip": zip,
-            # Math functions (commonly needed)
-            "divmod": divmod,
-            # String methods are available on str objects
-            # List/dict comprehensions work automatically
         },
-        # Pre-import some safe, useful modules
+        # Pre-import safe, useful modules
         "math": __import__("math"),
         "statistics": __import__("statistics"),
         "datetime": __import__("datetime"),
         "json": __import__("json"),
         "re": __import__("re"),
+        "random": __import__("random"),
+        "collections": __import__("collections"),
+        "itertools": __import__("itertools"),
+        "functools": __import__("functools"),
     }
 
-    # Local namespace for the executed code
-    local_namespace = {}
+    # Add optional data science modules if available
+    safe_globals.update(optional_modules)
 
-    try:
-        # Note: signal.SIGALRM doesn't work on Windows
-        # For Windows, we'd need threading with a timeout
-        # This is a simplified version that works on Unix-like systems
+    # Create result container and execution thread
+    result = ExecutionResult()
+    thread = threading.Thread(
+        target=_execute_code_thread,
+        args=(code, safe_globals, result)
+    )
 
-        # Redirect stdout and stderr
-        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            # Execute the code
-            # Using exec() for statements, but we also want to capture
-            # the result of expressions
+    # Start thread and wait with timeout
+    thread.start()
+    thread.join(timeout=EXECUTION_TIMEOUT)
 
-            # Try to detect if it's a simple expression vs statements
-            try:
-                # First, try to compile as an expression
-                compiled = compile(code, "<agent>", "eval")
-                result = eval(compiled, safe_globals, local_namespace)
-                if result is not None:
-                    print(repr(result))
-            except SyntaxError:
-                # It's not a simple expression, execute as statements
-                exec(code, safe_globals, local_namespace)
+    # Check if thread is still running (timeout occurred)
+    if thread.is_alive():
+        # Note: We can't forcefully kill the thread in Python
+        # The thread will continue but we return timeout error
+        return f"Timeout Error: Code execution exceeded {EXECUTION_TIMEOUT} seconds. The operation was too slow or contains an infinite loop."
 
-        # Get captured output
-        output = stdout_capture.getvalue()
-        errors = stderr_capture.getvalue()
+    # Return result
+    if result.error:
+        return result.error
 
-        if errors:
-            return f"Output:\n{output}\n\nErrors:\n{errors}"
-        elif output:
-            return output.strip()
-        else:
-            return "Code executed successfully (no output)"
+    output = result.output or "Code executed successfully (no output)"
 
-    except TimeoutError as e:
-        return f"Timeout Error: {str(e)}"
-    except Exception as e:
-        error_type = type(e).__name__
-        return f"Execution Error ({error_type}): {str(e)}"
+    # Truncate if too long
+    if len(output) > MAX_OUTPUT_LENGTH:
+        output = output[:MAX_OUTPUT_LENGTH] + f"\n\n[Output truncated - exceeded {MAX_OUTPUT_LENGTH} characters]"
+
+    return output
 
 
 # Create the LangChain Tool wrapper
@@ -156,13 +209,15 @@ python_repl_tool = Tool(
     description=(
         "Execute Python code and return the output. Use this for complex calculations, "
         "data manipulation, string processing, working with lists/dicts, or any task "
-        "that requires programming logic. The code runs in a restricted environment "
-        "with access to: math, statistics, datetime, json, re modules, and common "
-        "built-ins (len, range, sorted, etc.). "
-        "Input should be valid Python code. For multi-line code, use proper indentation. "
-        "Examples: "
-        "'sum([1,2,3,4,5])', "
-        "'[x**2 for x in range(10)]', "
-        "'import math; math.factorial(10)'"
+        "that requires programming logic. "
+        "\n\nAVAILABLE MODULES: math, statistics, datetime, json, re, random, "
+        "collections, itertools, functools. Also numpy (np) and pandas (pd) if installed."
+        "\n\nBUILT-INS: len, range, sorted, map, filter, zip, enumerate, sum, min, max, etc."
+        "\n\nLIMITS: 5 second timeout, 10,000 character output limit."
+        "\n\nEXAMPLES:"
+        "\n- 'sum([1,2,3,4,5])'"
+        "\n- '[x**2 for x in range(10)]'"
+        "\n- 'import math; math.factorial(10)'"
+        "\n- 'sorted([3,1,4,1,5,9], reverse=True)'"
     )
 )

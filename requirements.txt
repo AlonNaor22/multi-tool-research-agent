@@ -10,6 +10,8 @@ wikipedia>=1.4.0                 # Wikipedia API
 arxiv>=2.0.0                     # Academic paper search (ArXiv API)
 matplotlib>=3.7.0                # Data visualization (charts/graphs)
 sympy>=1.12                      # Symbolic math for equation solving
+beautifulsoup4>=4.12.0           # HTML parsing for URL fetcher
+pypdf>=3.17.0                    # PDF text extraction
 
 # Utilities
 python-dotenv>=1.0.0             # Load environment variables from .env

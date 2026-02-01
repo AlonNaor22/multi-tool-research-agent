@@ -1,23 +1,32 @@
 """Wolfram Alpha tool for the research agent.
 
-Wolfram Alpha is a "computational knowledge engine" that can:
-- Solve math equations (algebra, calculus, etc.)
-- Answer factual questions (population, distances, etc.)
-- Convert units
-- Compute statistics
-- And much more!
+Wolfram Alpha is a "computational knowledge engine" - use it as a LAST RESORT
+for queries that other tools cannot handle.
 
-KEY CONCEPT: API Integration
-----------------------------
-We're using Wolfram Alpha's "Short Answers API" which returns a simple text response.
-This is different from their Full Results API which returns structured data.
+WHEN TO USE THIS TOOL:
+---------------------
+- Real-world factual data: "calories in a banana", "population of Tokyo"
+- Scientific constants: "speed of light", "atomic mass of gold"
+- Geographic/astronomical data: "distance from Earth to Mars", "height of Everest"
+- Economic data: "GDP of Germany", "minimum wage in California"
+- Nutritional information: "protein in chicken breast"
+- Historical dates: "when was the Eiffel Tower built"
+- Comparisons: "compare population of France and Germany"
 
-The API is simple: just a GET request with your AppID and query.
-Example: https://api.wolframalpha.com/v1/result?appid=XXX&i=population+of+france
+WHEN NOT TO USE THIS TOOL (use these instead):
+---------------------------------------------
+- Basic math calculations -> use 'calculator'
+- Unit conversions -> use 'unit_converter'
+- Solving equations (x + 2 = 5) -> use 'equation_solver'
+- Current events/news -> use 'web_search' or 'news_search'
+- Encyclopedia info -> use 'wikipedia'
+- Academic papers -> use 'arxiv_search'
+
+This tool queries Wolfram Alpha's Short Answers API for concise responses.
+Requires WOLFRAM_ALPHA_APP_ID in your .env file.
 """
 
 import requests
-from urllib.parse import quote
 from langchain_core.tools import Tool
 from src.utils import retry_on_error
 from config import WOLFRAM_ALPHA_APP_ID
@@ -30,63 +39,64 @@ WOLFRAM_API_URL = "https://api.wolframalpha.com/v1/result"
 @retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
 def query_wolfram_alpha(query: str) -> str:
     """
-    Query Wolfram Alpha and return the answer.
+    Query Wolfram Alpha for factual/computational knowledge.
 
-    HOW THE API WORKS:
-    ------------------
-    1. We URL-encode the query (spaces become %20, etc.)
-    2. We send a GET request with our AppID and the query
-    3. Wolfram Alpha returns a plain text answer
-
-    The Short Answers API is perfect for our use case because:
-    - Simple text response (no parsing needed)
-    - Fast response time
-    - Works for most common queries
+    This is best used for real-world data that requires Wolfram's
+    curated knowledge base - things like nutritional info, scientific
+    constants, geographic data, economic statistics, etc.
 
     Args:
-        query: The question or calculation to send to Wolfram Alpha
-               Examples: "integrate x^2", "population of Japan", "150 USD to EUR"
+        query: Natural language question or lookup
+               Examples: "calories in an avocado", "height of Mount Fuji",
+                        "GDP of Japan", "boiling point of ethanol"
 
     Returns:
         The answer as text, or an error message.
     """
     # Check if API key is configured
     if not WOLFRAM_ALPHA_APP_ID:
-        return "Error: Wolfram Alpha API key not configured. Add WOLFRAM_ALPHA_APP_ID to your .env file."
+        return (
+            "Error: Wolfram Alpha API key not configured. "
+            "Add WOLFRAM_ALPHA_APP_ID to your .env file. "
+            "Get a free key at: https://developer.wolframalpha.com/"
+        )
 
     try:
         # Build the API request
-        # quote() URL-encodes the query string
         params = {
             "appid": WOLFRAM_ALPHA_APP_ID,
-            "i": query  # 'i' stands for 'input'
+            "i": query
         }
 
-        # Make the request
-        # timeout=10 means we wait max 10 seconds for a response
+        # Make the request with timeout
         response = requests.get(
             WOLFRAM_API_URL,
             params=params,
             timeout=10
         )
 
-        # Check for errors
-        # Wolfram Alpha returns specific error messages in the response body
+        # Handle response
         if response.status_code == 200:
             answer = response.text.strip()
 
             # Wolfram returns specific messages for issues
             if answer == "Wolfram|Alpha did not understand your input":
-                return f"Wolfram Alpha couldn't understand the query: '{query}'. Try rephrasing it."
+                return (
+                    f"Wolfram Alpha couldn't understand: '{query}'. "
+                    "Try rephrasing as a simple factual question."
+                )
             elif answer == "No short answer available":
-                return f"Wolfram Alpha has data on this but no short answer. Query: '{query}'"
+                return (
+                    f"Wolfram Alpha has data on this but no short answer available. "
+                    f"Query: '{query}'. Try being more specific."
+                )
             else:
                 return f"Wolfram Alpha: {answer}"
 
         elif response.status_code == 403:
             return "Error: Invalid Wolfram Alpha API key."
         elif response.status_code == 501:
-            return f"Wolfram Alpha couldn't process this query: '{query}'"
+            return f"Wolfram Alpha couldn't process: '{query}'. Try a different phrasing."
         else:
             return f"Wolfram Alpha API error (status {response.status_code})"
 
@@ -101,14 +111,20 @@ wolfram_tool = Tool(
     name="wolfram_alpha",
     func=query_wolfram_alpha,
     description=(
-        "Query Wolfram Alpha for computational knowledge. Use this for: "
-        "mathematical calculations (integrals, derivatives, equations), "
-        "unit conversions (e.g., '100 miles to km'), "
-        "scientific data (e.g., 'atomic weight of gold'), "
-        "factual questions (e.g., 'distance from Earth to Mars'), "
-        "statistics and data lookups. "
-        "Input should be a natural language query or mathematical expression. "
-        "Examples: 'solve x^2 + 2x - 8 = 0', 'calories in an apple', "
-        "'GDP of Germany', 'convert 72 fahrenheit to celsius'"
+        "Query Wolfram Alpha for FACTUAL REAL-WORLD DATA. Use this as a LAST RESORT "
+        "when other tools cannot answer the question. "
+        "\n\nBEST FOR:"
+        "\n- Nutritional data: 'calories in an apple', 'protein in eggs'"
+        "\n- Scientific constants: 'speed of light', 'atomic weight of gold'"
+        "\n- Geographic facts: 'population of Tokyo', 'height of Mount Everest'"
+        "\n- Economic data: 'GDP of France', 'unemployment rate in US'"
+        "\n- Astronomical data: 'distance to Mars', 'diameter of Jupiter'"
+        "\n- Historical facts: 'when was the Eiffel Tower built'"
+        "\n\nDO NOT USE FOR:"
+        "\n- Math calculations (use calculator)"
+        "\n- Unit conversions (use unit_converter)"
+        "\n- Solving equations (use equation_solver)"
+        "\n- Current news (use web_search)"
+        "\n- General knowledge (use wikipedia)"
     )
 )
