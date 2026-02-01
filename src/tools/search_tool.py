@@ -102,16 +102,17 @@ search_tool = Tool(
     name="web_search",
     func=web_search,
     description=(
-        "Search the web for current information using DuckDuckGo. Use this for "
-        "up-to-date information, recent events, or anything not in Wikipedia. "
-        "\n\nSIMPLE USAGE: Just provide a search query string."
-        "\n\nADVANCED USAGE: Provide JSON with options:"
-        '\n{"query": "search terms", "max_results": 5, "region": "us-en"}'
-        "\n\nREGION CODES: us-en, uk-en, de-de, fr-fr, es-es, it-it, jp-jp, etc."
-        "\n\nRETURNS: Structured results with title, URL, and snippet for each result."
-        "\n\nEXAMPLES:"
-        "\n- 'Tesla stock price 2024'"
-        "\n- 'latest AI developments'"
-        '\n- {"query": "climate news", "max_results": 3, "region": "uk-en"}'
+        "Search the web for CURRENT and RECENT information. Use for things that "
+        "change over time or need multiple perspectives from websites. "
+        "\n\nUSE FOR:"
+        "\n- Current events: 'Tesla stock price today', 'latest iPhone release'"
+        "\n- Recent developments: 'AI news 2024', 'new Python features'"
+        "\n- Opinions/reviews: 'best laptop 2024', 'React vs Vue comparison'"
+        "\n- Anything not in Wikipedia or needing fresh data"
+        "\n\nDO NOT USE FOR:"
+        "\n- Established facts/history (use wikipedia)"
+        "\n- Precise measurements (use wolfram_alpha)"
+        "\n\nSIMPLE: 'search query' | ADVANCED: {\"query\": \"...\", \"max_results\": 5}"
+        "\n\nRULE: Need CURRENT info? -> Web Search. Need ESTABLISHED knowledge? -> Wikipedia."
     )
 )

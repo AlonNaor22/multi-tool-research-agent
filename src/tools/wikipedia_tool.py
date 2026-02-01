@@ -133,16 +133,17 @@ wikipedia_tool = Tool(
     name="wikipedia",
     func=search_wikipedia,
     description=(
-        "Look up encyclopedic information on Wikipedia. Use this for background "
-        "knowledge, definitions, historical facts, or general information. "
-        "\n\nSIMPLE USAGE: Just provide a topic: 'Albert Einstein', 'Climate change'"
-        "\n\nADVANCED USAGE: Provide JSON with options:"
-        '\n{"query": "Python", "sentences": 10, "results": 3}'
-        "\n\nOPTIONS:"
-        "\n- query: Search topic"
-        "\n- sentences: Number of sentences in summary (default 5)"
-        "\n- results: Number of articles to return (1-5, for disambiguation)"
-        "\n- suggestion: true/false to enable auto-suggestions (default true)"
-        "\n\nHANDLES: Disambiguation pages, suggests alternatives when not found."
+        "Look up EXPLANATIONS, HISTORY, and CONTEXT on Wikipedia. Use for understanding "
+        "topics, not for getting specific numbers. "
+        "\n\nUSE FOR:"
+        "\n- What is something: 'What is machine learning', 'Python programming'"
+        "\n- History/background: 'History of the Internet', 'Albert Einstein biography'"
+        "\n- Concepts explained: 'How does DNA work', 'What caused World War 2'"
+        "\n- General knowledge: 'Climate change', 'Renaissance art'"
+        "\n\nDO NOT USE FOR:"
+        "\n- Specific numbers/measurements (use wolfram_alpha)"
+        "\n- Current events (use web_search)"
+        "\n\nSIMPLE: 'Albert Einstein' | ADVANCED: {\"query\": \"Python\", \"sentences\": 10}"
+        "\n\nRULE: Need an EXPLANATION? -> Wikipedia. Need a NUMBER? -> Wolfram."
     )
 )

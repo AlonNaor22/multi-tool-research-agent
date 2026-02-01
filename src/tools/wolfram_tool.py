@@ -1,26 +1,29 @@
 """Wolfram Alpha tool for the research agent.
 
-Wolfram Alpha is a "computational knowledge engine" - use it as a LAST RESORT
-for queries that other tools cannot handle.
+Wolfram Alpha is a "computational knowledge engine" for PRECISE, QUANTITATIVE DATA.
+Use this when you need exact numbers, measurements, or scientific values.
 
-WHEN TO USE THIS TOOL:
----------------------
-- Real-world factual data: "calories in a banana", "population of Tokyo"
-- Scientific constants: "speed of light", "atomic mass of gold"
-- Geographic/astronomical data: "distance from Earth to Mars", "height of Everest"
-- Economic data: "GDP of Germany", "minimum wage in California"
-- Nutritional information: "protein in chicken breast"
-- Historical dates: "when was the Eiffel Tower built"
-- Comparisons: "compare population of France and Germany"
+WHEN TO USE THIS TOOL (precise/quantitative answers):
+----------------------------------------------------
+- Nutritional data: "calories in a banana", "protein in 100g chicken"
+- Scientific constants: "speed of light in m/s", "atomic mass of gold"
+- Physical measurements: "height of Mount Everest", "depth of Pacific Ocean"
+- Astronomical data: "distance from Earth to Mars", "diameter of Jupiter"
+- Chemical properties: "boiling point of ethanol", "density of iron"
+- Precise statistics: "population of Tokyo", "GDP of Germany in USD"
 
-WHEN NOT TO USE THIS TOOL (use these instead):
----------------------------------------------
-- Basic math calculations -> use 'calculator'
-- Unit conversions -> use 'unit_converter'
-- Solving equations (x + 2 = 5) -> use 'equation_solver'
+WHEN NOT TO USE THIS TOOL:
+-------------------------
+- General knowledge/history/context -> use 'wikipedia'
 - Current events/news -> use 'web_search' or 'news_search'
-- Encyclopedia info -> use 'wikipedia'
-- Academic papers -> use 'arxiv_search'
+- Math calculations -> use 'calculator'
+- Unit conversions -> use 'unit_converter'
+- Solving equations -> use 'equation_solver'
+
+RULE OF THUMB:
+- Need a specific NUMBER or MEASUREMENT? -> Wolfram Alpha
+- Need an EXPLANATION or CONTEXT? -> Wikipedia
+- Need CURRENT or RECENT info? -> Web Search
 
 This tool queries Wolfram Alpha's Short Answers API for concise responses.
 Requires WOLFRAM_ALPHA_APP_ID in your .env file.
@@ -111,20 +114,19 @@ wolfram_tool = Tool(
     name="wolfram_alpha",
     func=query_wolfram_alpha,
     description=(
-        "Query Wolfram Alpha for FACTUAL REAL-WORLD DATA. Use this as a LAST RESORT "
-        "when other tools cannot answer the question. "
-        "\n\nBEST FOR:"
-        "\n- Nutritional data: 'calories in an apple', 'protein in eggs'"
-        "\n- Scientific constants: 'speed of light', 'atomic weight of gold'"
-        "\n- Geographic facts: 'population of Tokyo', 'height of Mount Everest'"
-        "\n- Economic data: 'GDP of France', 'unemployment rate in US'"
-        "\n- Astronomical data: 'distance to Mars', 'diameter of Jupiter'"
-        "\n- Historical facts: 'when was the Eiffel Tower built'"
+        "Get PRECISE NUMERICAL DATA and exact measurements. Use when you need "
+        "a specific number, not an explanation. "
+        "\n\nUSE FOR (exact values):"
+        "\n- Nutritional data: 'calories in an apple', 'protein in 100g beef'"
+        "\n- Scientific constants: 'speed of light in m/s', 'atomic weight of gold'"
+        "\n- Measurements: 'height of Mount Everest in meters', 'depth of Pacific Ocean'"
+        "\n- Astronomical: 'distance Earth to Mars in km', 'diameter of Jupiter'"
+        "\n- Chemical: 'boiling point of ethanol', 'density of iron'"
+        "\n- Statistics: 'population of Tokyo', 'GDP of France in USD'"
         "\n\nDO NOT USE FOR:"
-        "\n- Math calculations (use calculator)"
-        "\n- Unit conversions (use unit_converter)"
-        "\n- Solving equations (use equation_solver)"
-        "\n- Current news (use web_search)"
-        "\n- General knowledge (use wikipedia)"
+        "\n- Explanations/history/context (use wikipedia)"
+        "\n- Current events (use web_search)"
+        "\n- Math (use calculator) or equations (use equation_solver)"
+        "\n\nRULE: Need a NUMBER? -> Wolfram. Need an EXPLANATION? -> Wikipedia."
     )
 )
