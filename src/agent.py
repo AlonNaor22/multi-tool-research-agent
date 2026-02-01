@@ -20,6 +20,8 @@ from config import (
     VERBOSE,
 )
 from src.tools.calculator_tool import calculator_tool
+from src.tools.unit_converter_tool import unit_converter_tool
+from src.tools.equation_solver_tool import equation_solver_tool
 from src.tools.wikipedia_tool import wikipedia_tool
 from src.tools.search_tool import search_tool
 from src.tools.weather_tool import weather_tool
@@ -144,7 +146,9 @@ class ResearchAgent:
 
         # Collect all our tools
         self.tools = [
-            calculator_tool,
+            calculator_tool,  # Math calculations and variables
+            unit_converter_tool,  # Unit conversions (length, weight, etc.)
+            equation_solver_tool,  # Solve equations (x + 2 = 5)
             wikipedia_tool,
             search_tool,
             weather_tool,
