@@ -35,6 +35,7 @@ from src.tools.parallel_tool import parallel_tool
 from src.tools.currency_tool import currency_tool
 from src.tools.youtube_tool import youtube_tool
 from src.tools.pdf_tool import pdf_tool
+from src.tools.google_scholar_tool import google_scholar_tool
 
 
 # Tool categories for hierarchical selection
@@ -47,8 +48,8 @@ TOOL_CATEGORIES = {
     },
     "INFORMATION RETRIEVAL": {
         "description": "Use to find information, facts, news, research, and videos.",
-        "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search"],
-        "guidance": "Use web_search for current events/recent data, wikipedia for established facts/history/explanations, news_search for recent news, arxiv_search for academic papers, youtube_search for video tutorials/explanations."
+        "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar"],
+        "guidance": "Use web_search for current events/recent data, wikipedia for established facts/history/explanations, news_search for recent news, arxiv_search for physics/CS/math papers, youtube_search for video tutorials/explanations, google_scholar for academic research/historical studies/scientific papers."
     },
     "WEB CONTENT": {
         "description": "Use to read and extract content from specific web pages or PDF documents.",
@@ -236,6 +237,7 @@ class ResearchAgent:
             news_tool,
             arxiv_tool,  # Academic paper search
             youtube_tool,  # YouTube video search
+            google_scholar_tool,  # Academic/historical research
             # Web Content
             url_tool,
             pdf_tool,  # PDF document reader
