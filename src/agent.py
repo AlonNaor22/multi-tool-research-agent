@@ -32,25 +32,28 @@ from src.tools.python_repl_tool import python_repl_tool
 from src.tools.wolfram_tool import wolfram_tool
 from src.tools.visualization_tool import visualization_tool
 from src.tools.parallel_tool import parallel_tool
+from src.tools.currency_tool import currency_tool
+from src.tools.youtube_tool import youtube_tool
+from src.tools.pdf_tool import pdf_tool
 
 
 # Tool categories for hierarchical selection
 # This helps the LLM navigate tools more effectively as the toolset grows
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
-        "description": "Use for calculations, equations, unit conversions, and computational knowledge.",
-        "tools": ["calculator", "unit_converter", "equation_solver", "wolfram_alpha"],
-        "guidance": "Use calculator for arithmetic/algebra, unit_converter for unit changes, equation_solver for symbolic math, wolfram_alpha for complex computations and verified facts."
+        "description": "Use for calculations, equations, unit conversions, currency, and computational knowledge.",
+        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha"],
+        "guidance": "Use calculator for arithmetic/algebra, unit_converter for unit changes, equation_solver for symbolic math, currency_converter for money exchange rates, wolfram_alpha for complex computations and verified facts."
     },
     "INFORMATION RETRIEVAL": {
-        "description": "Use to find information, facts, news, and research.",
-        "tools": ["web_search", "wikipedia", "news_search", "arxiv_search"],
-        "guidance": "Use web_search for current events/recent data, wikipedia for established facts/history/explanations, news_search for recent news, arxiv_search for academic papers."
+        "description": "Use to find information, facts, news, research, and videos.",
+        "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search"],
+        "guidance": "Use web_search for current events/recent data, wikipedia for established facts/history/explanations, news_search for recent news, arxiv_search for academic papers, youtube_search for video tutorials/explanations."
     },
     "WEB CONTENT": {
-        "description": "Use to read and extract content from specific web pages.",
-        "tools": ["fetch_url"],
-        "guidance": "Use when you have a specific URL and need to read its content."
+        "description": "Use to read and extract content from specific web pages or PDF documents.",
+        "tools": ["fetch_url", "pdf_reader"],
+        "guidance": "Use fetch_url for HTML web pages, pdf_reader for PDF documents (research papers, reports)."
     },
     "CODE EXECUTION": {
         "description": "Use when you need to run Python code for complex logic or data processing.",
@@ -221,19 +224,29 @@ class ResearchAgent:
 
         # Collect all our tools
         self.tools = [
+            # Math & Computation
             calculator_tool,  # Math calculations and variables
             unit_converter_tool,  # Unit conversions (length, weight, etc.)
             equation_solver_tool,  # Solve equations (x + 2 = 5)
+            currency_tool,  # Currency conversion with real-time rates
+            wolfram_tool,  # Computational knowledge (Wolfram Alpha)
+            # Information Retrieval
             wikipedia_tool,
             search_tool,
-            weather_tool,
             news_tool,
-            url_tool,
             arxiv_tool,  # Academic paper search
+            youtube_tool,  # YouTube video search
+            # Web Content
+            url_tool,
+            pdf_tool,  # PDF document reader
+            # Code Execution
             python_repl_tool,  # Python code execution
-            wolfram_tool,  # Computational knowledge (Wolfram Alpha)
+            # Visualization
             visualization_tool,  # Chart/graph generation
+            # Multi-Source
             parallel_tool,  # Run multiple searches in parallel
+            # Weather
+            weather_tool,
         ]
 
         # Create our simple conversation memory
