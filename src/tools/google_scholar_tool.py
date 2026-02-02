@@ -284,10 +284,11 @@ google_scholar_tool = Tool(
     name="google_scholar",
     func=scholar_search,
     description=(
-        "Search Google Scholar for academic papers, research, and scientific studies. "
-        "\n\nFORMAT: 'climate change effects', 'from 2020: neural networks', '2010-2020: paleoclimate'"
-        "\n\nRETURNS: Paper titles, authors, year, citations, URLs, and abstracts."
-        "\n\nUSE FOR: Academic research, historical studies, scientific topics, literature reviews."
-        "\n\nBETTER THAN web_search for: Historical questions, scientific data, peer-reviewed sources."
+        "Search Google Scholar for published research across ALL academic fields. "
+        "\n\nBEST FOR: History, humanities, medicine, social sciences, archaeology, climate history, ancient studies."
+        "\n\nNOT FOR: Cutting-edge AI/ML or CS research (use arxiv_search instead)."
+        "\n\nFORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'"
+        "\n\nFEATURES: Year filters, citation counts, covers peer-reviewed journals and theses."
+        "\n\nRETURNS: Titles, authors, year, citation count, URLs, abstracts."
     )
 )

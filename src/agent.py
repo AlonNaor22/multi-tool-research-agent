@@ -49,7 +49,7 @@ TOOL_CATEGORIES = {
     "INFORMATION RETRIEVAL": {
         "description": "Use to find information, facts, news, research, and videos.",
         "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar"],
-        "guidance": "Use web_search for current events/recent data, wikipedia for established facts/history/explanations, news_search for recent news, arxiv_search for physics/CS/math papers, youtube_search for video tutorials/explanations, google_scholar for academic research/historical studies/scientific papers."
+        "guidance": "web_search for current events/news, wikipedia for general facts/explanations, news_search for recent news, arxiv_search for STEM/AI/ML/physics/math pre-prints, youtube_search for videos/tutorials, google_scholar for history/humanities/medicine/social sciences/ancient topics."
     },
     "WEB CONTENT": {
         "description": "Use to read and extract content from specific web pages or PDF documents.",

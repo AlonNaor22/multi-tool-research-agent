@@ -147,17 +147,12 @@ arxiv_tool = Tool(
     name="arxiv_search",
     func=search_arxiv,
     description=(
-        "Search for academic papers on ArXiv. Use this for scholarly research, "
-        "scientific papers, or peer-reviewed sources on physics, math, CS, AI, ML, etc. "
-        "\n\nSIMPLE USAGE: Just provide a topic: 'transformer neural networks'"
-        "\n\nADVANCED USAGE: Provide JSON with options:"
-        '\n{"query": "attention mechanism", "max_results": 10, "sort": "date", "category": "cs.AI"}'
-        "\n\nOPTIONS:"
-        "\n- query: Search terms"
-        "\n- max_results: 1-15 (default 5)"
-        "\n- sort: 'relevance' (default) or 'date' (newest first)"
-        "\n- category: Filter by ArXiv category (cs.AI, cs.LG, cs.CL, cs.CV, physics, math, etc.)"
-        "\n- full_abstract: true to show complete abstract"
-        "\n\nRETURNS: Paper titles, authors, dates, categories, URLs, and abstracts."
+        "Search ArXiv for STEM pre-prints: Physics, Math, Computer Science, AI/ML, Statistics. "
+        "\n\nBEST FOR: Cutting-edge AI/ML research, neural networks, algorithms, physics, mathematics."
+        "\n\nNOT FOR: History, humanities, medicine, social sciences, ancient topics (use google_scholar instead)."
+        "\n\nSIMPLE: 'transformer neural networks', 'quantum computing'"
+        "\n\nADVANCED: {\"query\": \"attention\", \"max_results\": 10, \"sort\": \"date\", \"category\": \"cs.AI\"}"
+        "\n\nCATEGORIES: cs.AI, cs.LG (ML), cs.CL (NLP), cs.CV (vision), physics, math, stat.ML"
+        "\n\nRETURNS: Titles, authors, dates, free PDF links, abstracts."
     )
 )
