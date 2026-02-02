@@ -34,6 +34,77 @@ from src.tools.visualization_tool import visualization_tool
 from src.tools.parallel_tool import parallel_tool
 
 
+# Tool categories for hierarchical selection
+# This helps the LLM navigate tools more effectively as the toolset grows
+TOOL_CATEGORIES = {
+    "MATH & COMPUTATION": {
+        "description": "Use for calculations, equations, unit conversions, and computational knowledge.",
+        "tools": ["calculator", "unit_converter", "equation_solver", "wolfram_alpha"],
+        "guidance": "Use calculator for arithmetic/algebra, unit_converter for unit changes, equation_solver for symbolic math, wolfram_alpha for complex computations and verified facts."
+    },
+    "INFORMATION RETRIEVAL": {
+        "description": "Use to find information, facts, news, and research.",
+        "tools": ["web_search", "wikipedia", "news_search", "arxiv_search"],
+        "guidance": "Use web_search for current events/recent data, wikipedia for established facts/history/explanations, news_search for recent news, arxiv_search for academic papers."
+    },
+    "WEB CONTENT": {
+        "description": "Use to read and extract content from specific web pages.",
+        "tools": ["fetch_url"],
+        "guidance": "Use when you have a specific URL and need to read its content."
+    },
+    "CODE EXECUTION": {
+        "description": "Use when you need to run Python code for complex logic or data processing.",
+        "tools": ["python_repl"],
+        "guidance": "Use for complex calculations, data manipulation, algorithms, or when other tools are insufficient."
+    },
+    "VISUALIZATION": {
+        "description": "Use to create charts and graphs from data.",
+        "tools": ["create_chart"],
+        "guidance": "Use to visualize data as bar, line, or pie charts."
+    },
+    "MULTI-SOURCE": {
+        "description": "Use to search multiple sources simultaneously.",
+        "tools": ["parallel_search"],
+        "guidance": "Use when you need to gather information from multiple sources at once for efficiency."
+    },
+    "WEATHER": {
+        "description": "Use to get current weather information.",
+        "tools": ["weather"],
+        "guidance": "Use for weather forecasts and current conditions."
+    },
+}
+
+
+def get_hierarchical_tool_description(tools) -> str:
+    """
+    Generate a hierarchical tool description string organized by category.
+
+    This helps the LLM navigate tools more effectively by:
+    1. Grouping related tools together
+    2. Providing category-level guidance
+    3. Giving specific tool descriptions within each category
+    """
+    # Build a mapping of tool names to their description
+    tool_descriptions = {tool.name: tool.description for tool in tools}
+
+    lines = []
+    lines.append("Tools are organized by category. First identify the category you need, then select the appropriate tool.\n")
+
+    for category_name, category_info in TOOL_CATEGORIES.items():
+        lines.append(f"## {category_name}")
+        lines.append(f"{category_info['description']}")
+        lines.append(f"Guidance: {category_info['guidance']}")
+        lines.append("")
+
+        for tool_name in category_info["tools"]:
+            if tool_name in tool_descriptions:
+                lines.append(f"  - {tool_name}: {tool_descriptions[tool_name]}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 class SimpleMemory:
     """
     A simple conversation memory implementation.
@@ -85,7 +156,7 @@ class SimpleMemory:
         return self.get_history_string()
 
 
-# The ReAct prompt template WITH MEMORY
+# The ReAct prompt template WITH MEMORY and HIERARCHICAL TOOL SELECTION
 # Notice the {chat_history} variable - this is where previous conversations go
 REACT_PROMPT_WITH_MEMORY = PromptTemplate.from_template("""You are a helpful research assistant with access to various tools.
 Your goal is to answer questions thoroughly by gathering information from multiple sources when needed.
@@ -93,14 +164,18 @@ Your goal is to answer questions thoroughly by gathering information from multip
 Previous conversation:
 {chat_history}
 
-You have access to the following tools:
-
 {tools}
+
+TOOL SELECTION PROCESS:
+1. Identify what TYPE of task you need (math? information lookup? code execution?)
+2. Look at the matching CATEGORY above
+3. Read the category guidance to pick the right tool
+4. Choose the most specific tool for your need
 
 Use the following format:
 
 Question: the input question you must answer
-Thought: you should always think about what to do
+Thought: I need to [type of task]. Looking at [CATEGORY], I should use [tool] because [reason].
 Action: the action to take, should be one of [{tool_names}]
 Action Input: the input to the action
 Observation: the result of the action
@@ -109,14 +184,14 @@ Thought: I now know the final answer
 Final Answer: the final answer to the original input question
 
 Important guidelines:
-- Always think step by step about what information you need
+- Always identify the CATEGORY first, then select the tool
 - Use multiple tools when necessary to gather comprehensive information
-- Use the calculator for any mathematical calculations - don't do math in your head
-- Use wikipedia for background/encyclopedic information
-- Use web_search for current events, recent data, or real-time information
+- For calculations: use calculator (simple) or python_repl (complex) - never do math in your head
+- For facts: prefer wikipedia (established) over web_search (current/recent)
+- For numbers/computation: prefer wolfram_alpha when precision matters
 - If the user asks a follow-up question, use the chat history for context
 - Synthesize information from multiple sources into a coherent answer
-- If a tool returns an error, try a different approach
+- If a tool returns an error, try a different approach or different tool in the same category
 
 Begin!
 
@@ -168,10 +243,12 @@ class ResearchAgent:
         self.current_session_id = None
 
         # Create the ReAct agent with the memory-enabled prompt
+        # Use hierarchical tool descriptions for better tool selection
         agent = create_react_agent(
             llm=self.llm,
             tools=self.tools,
             prompt=REACT_PROMPT_WITH_MEMORY,
+            tools_renderer=get_hierarchical_tool_description,
         )
 
         # Create the timing callback handler
