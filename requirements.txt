@@ -16,3 +16,7 @@ pypdf>=3.17.0                    # PDF text extraction
 # Utilities
 python-dotenv>=1.0.0             # Load environment variables from .env
 requests>=2.31.0                 # HTTP requests (for Wolfram Alpha, etc.)
+
+# Testing
+pytest>=7.0                      # Test framework
+pytest-mock>=3.10                # Mock fixtures for pytest
