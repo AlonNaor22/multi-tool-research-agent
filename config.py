@@ -11,9 +11,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 WOLFRAM_ALPHA_APP_ID = os.getenv("WOLFRAM_ALPHA_APP_ID")
 
 # LLM Configuration
-MODEL_NAME = "claude-sonnet-4-5-20250929"  # Claude Sonnet 4.5 for complex reasoning
-TEMPERATURE = 0.2  # Lower = more focused/deterministic responses
-MAX_TOKENS = 2000  # Maximum length of LLM response
+MODEL_NAME = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")  # Override via .env
+TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))  # Lower = more focused/deterministic
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))  # Maximum length of LLM response
 
 # Agent Configuration
 MAX_ITERATIONS = 10  # Maximum reasoning steps before stopping

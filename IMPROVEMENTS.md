@@ -45,9 +45,9 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 
 ## Nice to Have
 
-### 9. Config Cleanup
-- [ ] Make model selectable (currently hardcoded to claude-sonnet-4-5-20250929)
-- [ ] Fix banner to list all 17 tools (currently missing several)
+### 9. ~~Config Cleanup~~ (DONE)
+- [x] Make model selectable (currently hardcoded to claude-sonnet-4-5-20250929)
+- [x] Fix banner to list all 17 tools
 
 ### 10. Rate Limiting
 - [ ] Prevent burning API credits if someone hammers the agent
