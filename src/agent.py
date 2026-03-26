@@ -1,14 +1,15 @@
-"""Main research agent using Claude and the ReAct pattern.
+"""Main research agent using Claude's native tool calling.
 
-The agent uses Claude as a reasoning engine to decide which tools to use
-and in what order, following the ReAct (Reasoning + Acting) pattern.
+The agent uses Claude's structured tool-use API to decide which tools to call
+and in what order. This replaces the older ReAct text-parsing approach with
+native tool calling — the same pattern used in production agents.
 
-Now includes conversation memory for follow-up questions.
+Includes conversation memory for follow-up questions.
 """
 
 from langchain_anthropic import ChatAnthropic
-from langchain_classic.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage, AIMessage
 
 from src.callbacks import TimingCallbackHandler
 from config import (
@@ -38,75 +39,76 @@ from src.tools.pdf_tool import pdf_tool
 from src.tools.google_scholar_tool import google_scholar_tool
 
 
-# Tool categories for hierarchical selection
-# This helps the LLM navigate tools more effectively as the toolset grows
+# Tool categories for hierarchical selection — included in the system prompt
+# so the LLM can navigate 18+ tools effectively.
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
-        "description": "Use for calculations, equations, unit conversions, currency, and computational knowledge.",
         "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha"],
         "guidance": "Use calculator for arithmetic/algebra, unit_converter for unit changes, equation_solver for symbolic math, currency_converter for money exchange rates, wolfram_alpha for complex computations and verified facts."
     },
     "INFORMATION RETRIEVAL": {
-        "description": "Use to find information, facts, news, research, and videos.",
         "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar"],
         "guidance": "web_search for current events/news, wikipedia for general facts/explanations, news_search for recent news, arxiv_search for STEM/AI/ML/physics/math pre-prints, youtube_search for videos/tutorials, google_scholar for history/humanities/medicine/social sciences/ancient topics."
     },
     "WEB CONTENT": {
-        "description": "Use to read and extract content from specific web pages or PDF documents.",
         "tools": ["fetch_url", "pdf_reader"],
         "guidance": "Use fetch_url for HTML web pages, pdf_reader for PDF documents (research papers, reports)."
     },
     "CODE EXECUTION": {
-        "description": "Use when you need to run Python code for complex logic or data processing.",
         "tools": ["python_repl"],
         "guidance": "Use for complex calculations, data manipulation, algorithms, or when other tools are insufficient."
     },
     "VISUALIZATION": {
-        "description": "Use to create charts and graphs from data.",
         "tools": ["create_chart"],
         "guidance": "Use to visualize data as bar, line, or pie charts."
     },
     "MULTI-SOURCE": {
-        "description": "Use to search multiple sources simultaneously.",
         "tools": ["parallel_search"],
         "guidance": "Use when you need to gather information from multiple sources at once for efficiency."
     },
     "WEATHER": {
-        "description": "Use to get current weather information.",
         "tools": ["weather"],
         "guidance": "Use for weather forecasts and current conditions."
     },
 }
 
 
-def get_hierarchical_tool_description(tools) -> str:
-    """
-    Generate a hierarchical tool description string organized by category.
-
-    This helps the LLM navigate tools more effectively by:
-    1. Grouping related tools together
-    2. Providing category-level guidance
-    3. Giving specific tool descriptions within each category
-    """
-    # Build a mapping of tool names to their description
-    tool_descriptions = {tool.name: tool.description for tool in tools}
-
-    lines = []
-    lines.append("Tools are organized by category. First identify the category you need, then select the appropriate tool.\n")
+def _build_system_prompt() -> str:
+    """Build the system prompt with tool selection guidance."""
+    lines = [
+        "You are a helpful research assistant with access to various tools.",
+        "Your goal is to answer questions thoroughly by gathering information from multiple sources when needed.",
+        "",
+        "TOOL SELECTION PROCESS:",
+        "1. Identify what TYPE of task you need (math? information lookup? code execution?)",
+        "2. Look at the matching CATEGORY below",
+        "3. Read the category guidance to pick the right tool",
+        "4. Choose the most specific tool for your need",
+        "",
+    ]
 
     for category_name, category_info in TOOL_CATEGORIES.items():
         lines.append(f"## {category_name}")
-        lines.append(f"{category_info['description']}")
+        lines.append(f"Tools: {', '.join(category_info['tools'])}")
         lines.append(f"Guidance: {category_info['guidance']}")
         lines.append("")
 
-        for tool_name in category_info["tools"]:
-            if tool_name in tool_descriptions:
-                lines.append(f"  - {tool_name}: {tool_descriptions[tool_name]}")
-
-        lines.append("")
+    lines.extend([
+        "Important guidelines:",
+        "- Always identify the CATEGORY first, then select the tool",
+        "- Use multiple tools when necessary to gather comprehensive information",
+        "- For calculations: use calculator (simple) or python_repl (complex) - never do math in your head",
+        "- For facts: prefer wikipedia (established) over web_search (current/recent)",
+        "- For numbers/computation: prefer wolfram_alpha when precision matters",
+        "- If the user asks a follow-up question, use the conversation history for context",
+        "- Synthesize information from multiple sources into a coherent answer",
+        "- If a tool returns an error, try a different approach or different tool in the same category",
+    ])
 
     return "\n".join(lines)
+
+
+SYSTEM_PROMPT = _build_system_prompt()
 
 
 class SimpleMemory:
@@ -115,9 +117,6 @@ class SimpleMemory:
 
     Stores ALL conversation exchanges for saving, but only uses the last k
     exchanges for the prompt (to avoid context overflow).
-
-    This replaces LangChain's ConversationBufferWindowMemory which
-    may not be available in all versions.
     """
 
     def __init__(self, k: int = 5):
@@ -133,21 +132,29 @@ class SimpleMemory:
     def add_exchange(self, user_input: str, agent_output: str):
         """Add a conversation exchange to memory."""
         self.history.append((user_input, agent_output))
-        # We keep ALL history now - no truncation!
+
+    def get_messages(self) -> list:
+        """Get the recent conversation history as LangChain messages (last k exchanges)."""
+        if not self.history:
+            return []
+
+        recent_history = self.history[-self.k:]
+        messages = []
+        for user_input, agent_output in recent_history:
+            messages.append(HumanMessage(content=user_input))
+            messages.append(AIMessage(content=agent_output))
+        return messages
 
     def get_history_string(self) -> str:
-        """Get the recent conversation history for the prompt (last k exchanges)."""
+        """Get the recent conversation history as a string (for display/compatibility)."""
         if not self.history:
             return "No previous conversation."
 
-        # Only include last k exchanges in the prompt to avoid context overflow
         recent_history = self.history[-self.k:]
-
         lines = []
         for user_input, agent_output in recent_history:
             lines.append(f"Human: {user_input}")
             lines.append(f"Assistant: {agent_output}")
-
         return "\n".join(lines)
 
     def clear(self):
@@ -160,57 +167,15 @@ class SimpleMemory:
         return self.get_history_string()
 
 
-# The ReAct prompt template WITH MEMORY and HIERARCHICAL TOOL SELECTION
-# Notice the {chat_history} variable - this is where previous conversations go
-REACT_PROMPT_WITH_MEMORY = PromptTemplate.from_template("""You are a helpful research assistant with access to various tools.
-Your goal is to answer questions thoroughly by gathering information from multiple sources when needed.
-
-Previous conversation:
-{chat_history}
-
-{tools}
-
-TOOL SELECTION PROCESS:
-1. Identify what TYPE of task you need (math? information lookup? code execution?)
-2. Look at the matching CATEGORY above
-3. Read the category guidance to pick the right tool
-4. Choose the most specific tool for your need
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: I need to [type of task]. Looking at [CATEGORY], I should use [tool] because [reason].
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Important guidelines:
-- Always identify the CATEGORY first, then select the tool
-- Use multiple tools when necessary to gather comprehensive information
-- For calculations: use calculator (simple) or python_repl (complex) - never do math in your head
-- For facts: prefer wikipedia (established) over web_search (current/recent)
-- For numbers/computation: prefer wolfram_alpha when precision matters
-- If the user asks a follow-up question, use the chat history for context
-- Synthesize information from multiple sources into a coherent answer
-- If a tool returns an error, try a different approach or different tool in the same category
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}""")
-
-
 class ResearchAgent:
     """
-    A research agent with conversation memory.
+    A research agent using Claude's native tool calling.
 
-    This class wraps the agent so we can:
-    1. Keep the same agent instance across multiple queries
-    2. Maintain conversation history for follow-up questions
-    3. Clear memory when needed
+    Uses LangChain's create_agent (LangGraph-based) which leverages Claude's
+    structured tool-use API instead of text-based ReAct parsing. This means:
+    - Tool calls are structured JSON, not fragile text parsing
+    - The LLM natively understands tool schemas
+    - More reliable tool selection and argument passing
     """
 
     def __init__(self):
@@ -226,27 +191,27 @@ class ResearchAgent:
         # Collect all our tools
         self.tools = [
             # Math & Computation
-            calculator_tool,  # Math calculations and variables
-            unit_converter_tool,  # Unit conversions (length, weight, etc.)
-            equation_solver_tool,  # Solve equations (x + 2 = 5)
-            currency_tool,  # Currency conversion with real-time rates
-            wolfram_tool,  # Computational knowledge (Wolfram Alpha)
+            calculator_tool,
+            unit_converter_tool,
+            equation_solver_tool,
+            currency_tool,
+            wolfram_tool,
             # Information Retrieval
             wikipedia_tool,
             search_tool,
             news_tool,
-            arxiv_tool,  # Academic paper search
-            youtube_tool,  # YouTube video search
-            google_scholar_tool,  # Academic/historical research
+            arxiv_tool,
+            youtube_tool,
+            google_scholar_tool,
             # Web Content
             url_tool,
-            pdf_tool,  # PDF document reader
+            pdf_tool,
             # Code Execution
-            python_repl_tool,  # Python code execution
+            python_repl_tool,
             # Visualization
-            visualization_tool,  # Chart/graph generation
+            visualization_tool,
             # Multi-Source
-            parallel_tool,  # Run multiple searches in parallel
+            parallel_tool,
             # Weather
             weather_tool,
         ]
@@ -257,25 +222,16 @@ class ResearchAgent:
         # Track current session ID (for saving to the same file)
         self.current_session_id = None
 
-        # Create the ReAct agent with the memory-enabled prompt
-        # Use hierarchical tool descriptions for better tool selection
-        agent = create_react_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=REACT_PROMPT_WITH_MEMORY,
-            tools_renderer=get_hierarchical_tool_description,
-        )
-
         # Create the timing callback handler
         self.timing_callback = TimingCallbackHandler()
 
-        # Create the executor (without built-in memory - we handle it ourselves)
-        self.agent_executor = AgentExecutor(
-            agent=agent,
+        # Create the agent using native tool calling (LangGraph-based)
+        # This replaces the old create_react_agent + AgentExecutor pattern
+        self.agent = create_agent(
+            model=self.llm,
             tools=self.tools,
-            verbose=VERBOSE,
-            handle_parsing_errors=True,
-            max_iterations=MAX_ITERATIONS,
+            system_prompt=SYSTEM_PROMPT,
+            debug=VERBOSE,
         )
 
     def query(self, question: str, show_timing: bool = True) -> str:
@@ -294,19 +250,19 @@ class ResearchAgent:
             # Reset timing data from previous query
             self.timing_callback.reset()
 
-            # Get chat history for the prompt
-            chat_history = self.memory.get_history_string()
+            # Build messages: conversation history + new question
+            messages = self.memory.get_messages()
+            messages.append(HumanMessage(content=question))
 
-            # Run the agent with memory context
-            result = self.agent_executor.invoke(
-                {
-                    "input": question,
-                    "chat_history": chat_history  # Pass memory to prompt
-                },
-                {"callbacks": [self.timing_callback]}
+            # Run the agent with native tool calling
+            result = self.agent.invoke(
+                {"messages": messages},
+                {"callbacks": [self.timing_callback],
+                 "recursion_limit": MAX_ITERATIONS * 2},
             )
 
-            answer = result["output"]
+            # Extract the final answer from the last AI message
+            answer = self._extract_answer(result)
 
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)
@@ -318,6 +274,25 @@ class ResearchAgent:
             return answer
         except Exception as e:
             return f"Error running research query: {str(e)}"
+
+    def _extract_answer(self, result: dict) -> str:
+        """Extract the final text answer from the agent result."""
+        messages = result.get("messages", [])
+        # Walk backwards to find the last AI message with text content
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and msg.content:
+                # Content can be a string or a list of blocks
+                if isinstance(msg.content, str):
+                    return msg.content
+                # If it's a list of content blocks, extract text blocks
+                if isinstance(msg.content, list):
+                    text_parts = [
+                        block["text"] for block in msg.content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ]
+                    if text_parts:
+                        return "\n".join(text_parts)
+        return "No answer was generated."
 
     def get_last_timing(self) -> str:
         """Get the timing summary from the last query."""
@@ -389,22 +364,13 @@ class ResearchAgent:
         return True
 
 
-# Keep backward compatibility with the old function
 def create_research_agent():
-    """
-    Create and return a research agent (without memory).
-    Kept for backward compatibility.
-    """
-    return ResearchAgent().agent_executor
+    """Create and return a research agent. Kept for backward compatibility."""
+    return ResearchAgent()
 
 
 def run_research_query(query: str) -> str:
-    """
-    Run a single research query (without memory).
-    Kept for backward compatibility.
-
-    For memory support, use ResearchAgent class directly.
-    """
+    """Run a single research query (without memory). Kept for backward compatibility."""
     agent = ResearchAgent()
     return agent.query(query)
 
