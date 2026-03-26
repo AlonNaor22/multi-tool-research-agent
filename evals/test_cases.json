@@ -1,0 +1,107 @@
+[
+  {
+    "id": "calc_percentage",
+    "question": "What is 15% of 340?",
+    "expected_tools": ["calculator"],
+    "expected_keywords": ["51"],
+    "category": "MATH & COMPUTATION"
+  },
+  {
+    "id": "calc_square_root",
+    "question": "What is the square root of 144?",
+    "expected_tools": ["calculator"],
+    "expected_keywords": ["12"],
+    "category": "MATH & COMPUTATION"
+  },
+  {
+    "id": "unit_miles_to_km",
+    "question": "Convert 5 miles to kilometers.",
+    "expected_tools": ["unit_converter"],
+    "expected_keywords": ["8.04"],
+    "category": "MATH & COMPUTATION"
+  },
+  {
+    "id": "equation_linear",
+    "question": "Solve for x: 3x + 7 = 22",
+    "expected_tools": ["equation_solver", "calculator", "wolfram_alpha"],
+    "expected_keywords": ["5"],
+    "category": "MATH & COMPUTATION"
+  },
+  {
+    "id": "wiki_biography",
+    "question": "Use Wikipedia to look up when Albert Einstein was born and where.",
+    "expected_tools": ["wikipedia"],
+    "expected_keywords": ["1879", "German"],
+    "category": "INFORMATION RETRIEVAL"
+  },
+  {
+    "id": "wiki_science",
+    "question": "Search Wikipedia for information about photosynthesis. What is the main input?",
+    "expected_tools": ["wikipedia"],
+    "expected_keywords": ["light", "carbon dioxide"],
+    "category": "INFORMATION RETRIEVAL"
+  },
+  {
+    "id": "search_recent_event",
+    "question": "What are the latest developments in quantum computing?",
+    "expected_tools": ["web_search", "news_search"],
+    "expected_keywords": ["quantum"],
+    "category": "INFORMATION RETRIEVAL"
+  },
+  {
+    "id": "news_topic",
+    "question": "What is in the news today about artificial intelligence?",
+    "expected_tools": ["news_search", "web_search"],
+    "expected_keywords": ["AI", "artificial intelligence"],
+    "category": "INFORMATION RETRIEVAL"
+  },
+  {
+    "id": "arxiv_search",
+    "question": "Find recent research papers about transformer architectures on arXiv.",
+    "expected_tools": ["arxiv_search"],
+    "expected_keywords": ["transformer"],
+    "category": "INFORMATION RETRIEVAL"
+  },
+  {
+    "id": "weather_city",
+    "question": "What is the current weather in London?",
+    "expected_tools": ["weather"],
+    "expected_keywords": ["London"],
+    "category": "WEATHER"
+  },
+  {
+    "id": "python_fibonacci",
+    "question": "Write and run Python code to compute the first 10 Fibonacci numbers.",
+    "expected_tools": ["python_repl"],
+    "expected_keywords": ["1", "2", "3", "5", "8", "13", "21", "34"],
+    "category": "CODE EXECUTION"
+  },
+  {
+    "id": "url_fetch",
+    "question": "Fetch the content of https://httpbin.org/html and tell me what the page is about.",
+    "expected_tools": ["fetch_url"],
+    "expected_keywords": ["Melville", "Moby"],
+    "category": "WEB CONTENT"
+  },
+  {
+    "id": "multistep_population_calc",
+    "question": "What is the population of France and what is 10% of that number?",
+    "expected_tools": ["wikipedia", "web_search", "calculator", "wolfram_alpha"],
+    "expected_keywords": ["France"],
+    "category": "MULTI-STEP"
+  },
+  {
+    "id": "multistep_compare",
+    "question": "What are the populations of Japan and Germany, and which country has more people?",
+    "expected_tools": ["wikipedia", "web_search", "wolfram_alpha"],
+    "expected_keywords": ["Japan"],
+    "category": "MULTI-STEP"
+  },
+  {
+    "id": "ambiguous_math_vs_search",
+    "question": "How many feet are in a mile?",
+    "expected_tools": ["unit_converter", "calculator", "wikipedia", "web_search", "wolfram_alpha"],
+    "expected_keywords": ["5280"],
+    "category": "AMBIGUOUS"
+  }
+]

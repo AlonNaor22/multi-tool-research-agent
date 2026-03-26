@@ -13,10 +13,11 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 - [x] Messages-based conversation history instead of string concatenation
 - [x] Updated requirements to langchain 1.x + langgraph
 
-### 3. Evaluation Suite
-- [ ] Create 10-20 curated questions with expected tool selections and answer keywords
-- [ ] Score: did the agent pick the right tool? Did it answer correctly?
-- [ ] Shows you think about agents as systems, not just demos
+### 3. ~~Evaluation Suite~~ (DONE)
+- [x] 15 curated test cases across all tool categories (math, search, weather, code, multi-step, ambiguous)
+- [x] Two independent scores: tool selection accuracy + answer quality
+- [x] CLI runner with `--case` and `--category` filtering, timestamped JSON reports
+- [x] First run: 100% tool selection, 93% answer quality
 
 ### 4. Streaming Output
 - [ ] Stream Thought/Action/Observation steps in real-time instead of blank screen while thinking

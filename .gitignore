@@ -22,5 +22,9 @@ output/*
 sessions/*
 !sessions/.gitkeep
 
+# Eval results (contain API outputs, regenerated on demand)
+evals/results/*
+!evals/results/.gitkeep
+
 # Task specification (not for public repo)
 Task 3 Multi-Tool Research Agent.md
