@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 from langchain_core.tools import Tool
 
 from src.utils import retry_on_error
+from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
 
 
 @retry_on_error(max_retries=2, delay=2.0)
@@ -45,14 +46,14 @@ def search_google_scholar(query: str, max_results: int = 5, year_from: int = Non
         params["as_yhi"] = year_to
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
     }
 
-    response = requests.get(base_url, params=params, headers=headers, timeout=15)
+    response = requests.get(base_url, params=params, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
     response.raise_for_status()
 
     html = response.text
@@ -73,10 +74,12 @@ def search_google_scholar(query: str, max_results: int = 5, year_from: int = Non
     # Pattern for citation count
     cite_pattern = r'Cited by (\d+)'
 
-    # Find all result blocks
+    # --- Stage 1: Primary parsing ---
+    # Try the full result container pattern used in standard Scholar pages.
     result_blocks = re.findall(r'<div class="gs_r gs_or gs_scl"[^>]*>(.+?)</div>\s*</div>\s*</div>', html, re.DOTALL)
 
-    # If that doesn't work, try alternative pattern
+    # --- Stage 2: Secondary parsing ---
+    # Alternative page layouts use a simpler result container.
     if not result_blocks:
         result_blocks = re.findall(r'<div class="gs_ri">(.+?)</div>\s*(?=<div class="gs_ri">|<div class="gs_r"|$)', html, re.DOTALL)
 
@@ -128,7 +131,9 @@ def search_google_scholar(query: str, max_results: int = 5, year_from: int = Non
         if paper.get("title"):
             results.append(paper)
 
-    # Fallback: simpler extraction if regex didn't work well
+    # --- Stage 3: Fallback ---
+    # Minimal title+URL extraction when the page structure doesn't match
+    # expected patterns (e.g. CAPTCHA pages, layout changes).
     if not results:
         # Try to find any titles
         all_titles = re.findall(r'<h3 class="gs_rt"[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>([^<]+)', html, re.DOTALL)

@@ -19,6 +19,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
 from langchain_core.tools import Tool
+from src.constants import TRUNCATION_PRESERVE_RATIO
 
 # Import the actual search functions from our tools
 from src.tools.search_tool import web_search
@@ -69,7 +70,9 @@ def truncate_result(result: str, search_type: str) -> str:
     # Use the later of period or newline as cut point
     cut_point = max(last_period, last_newline)
 
-    if cut_point > limit * 0.7:  # Only if we're not losing too much
+    # Only use the sentence/line boundary if it preserves at least 70% of
+    # the target length; otherwise a hard cut loses less useful content.
+    if cut_point > limit * TRUNCATION_PRESERVE_RATIO:
         truncated = result[:cut_point + 1]
     else:
         truncated = result[:limit]

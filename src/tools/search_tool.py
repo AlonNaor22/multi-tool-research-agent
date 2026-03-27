@@ -13,7 +13,8 @@ Features:
 import json
 from duckduckgo_search import DDGS
 from langchain_core.tools import Tool
-from src.utils import retry_on_error
+from src.utils import retry_on_error, run_with_timeout
+from src.constants import DEFAULT_SEARCH_TIMEOUT
 
 
 # Configuration defaults
@@ -68,7 +69,11 @@ def web_search(query: str) -> str:
         if region:
             search_kwargs["region"] = region
 
-        results = list(ddgs.text(**search_kwargs))
+        # DDGS has no timeout parameter — wrap to prevent indefinite blocking
+        results = run_with_timeout(
+            lambda: list(ddgs.text(**search_kwargs)),
+            timeout=DEFAULT_SEARCH_TIMEOUT,
+        )
 
         if not results:
             return f"No search results found for '{search_query}'"

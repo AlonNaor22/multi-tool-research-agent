@@ -14,6 +14,7 @@ from urllib.parse import quote_plus
 from langchain_core.tools import Tool
 
 from src.utils import retry_on_error
+from src.constants import DEFAULT_HTTP_HEADERS, DEFAULT_HTTP_TIMEOUT
 
 
 @retry_on_error(max_retries=2, delay=1.0)
@@ -31,12 +32,9 @@ def search_youtube_web(query: str, max_results: int = 5) -> List[Dict]:
     # Use YouTube's search URL
     search_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
+    headers = {**DEFAULT_HTTP_HEADERS}
 
-    response = requests.get(search_url, headers=headers, timeout=15)
+    response = requests.get(search_url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
     response.raise_for_status()
 
     html = response.text
@@ -125,6 +123,8 @@ def search_youtube_web(query: str, max_results: int = 5) -> List[Dict]:
                     break
 
         except json.JSONDecodeError:
+            # JSON parsing of embedded page data failed — fall through
+            # to the regex fallback below.
             pass
 
     # Fallback: simple regex extraction if JSON parsing failed
@@ -159,7 +159,15 @@ def search_youtube_web(query: str, max_results: int = 5) -> List[Dict]:
 
 
 def format_results(results: List[Dict], query: str) -> str:
-    """Format search results for display."""
+    """Format YouTube video search results into a readable multi-line string.
+
+    Args:
+        results: List of video info dicts from search_youtube_web().
+        query: Original search query, shown in the header.
+
+    Returns:
+        Formatted string with numbered video entries, or a "no results" message.
+    """
     if not results:
         return f"No YouTube videos found for '{query}'"
 

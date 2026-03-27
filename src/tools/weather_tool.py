@@ -23,17 +23,23 @@ FORECAST_URL = "http://api.openweathermap.org/data/2.5/forecast"
 
 
 def _format_current_weather(data: dict, units: str) -> str:
-    """Format current weather data into readable string."""
+    """Format current weather API response into a readable string.
+
+    Uses .get() with defaults throughout to handle unexpected API responses
+    gracefully instead of crashing with KeyError.
+    """
     temp_unit = "°C" if units == "metric" else "°F"
     speed_unit = "m/s" if units == "metric" else "mph"
 
-    weather_desc = data["weather"][0]["description"]
-    temp = data["main"]["temp"]
-    feels_like = data["main"]["feels_like"]
-    humidity = data["main"]["humidity"]
-    wind_speed = data["wind"]["speed"]
-    city_name = data["name"]
-    country = data["sys"]["country"]
+    weather_list = data.get("weather", [{}])
+    weather_desc = weather_list[0].get("description", "Unknown") if weather_list else "Unknown"
+    main = data.get("main", {})
+    temp = main.get("temp", "N/A")
+    feels_like = main.get("feels_like", "N/A")
+    humidity = main.get("humidity", "N/A")
+    wind_speed = data.get("wind", {}).get("speed", "N/A")
+    city_name = data.get("name", "Unknown")
+    country = data.get("sys", {}).get("country", "")
 
     return (
         f"**Current weather in {city_name}, {country}:**\n"
@@ -44,21 +50,44 @@ def _format_current_weather(data: dict, units: str) -> str:
     )
 
 
+def _extract_hour(dt_txt: str) -> int:
+    """Extract the hour from an OpenWeatherMap dt_txt string like '2024-01-15 12:00:00'."""
+    try:
+        return int(dt_txt.split(" ")[1].split(":")[0])
+    except (IndexError, ValueError):
+        return 0
+
+
+def _is_closer_to_noon(candidate_hour: int, current_best_hour: int) -> bool:
+    """Return True if candidate_hour is closer to 12:00 than current_best_hour.
+
+    The 5-day forecast API returns 3-hour intervals (00:00, 03:00, ..., 21:00).
+    We pick the reading closest to noon to represent each day's weather,
+    giving the most representative daytime conditions.
+    """
+    return abs(candidate_hour - 12) < abs(current_best_hour - 12)
+
+
 def _format_forecast(data: dict, units: str, days: int = 3) -> str:
-    """Format forecast data into readable string."""
+    """Format forecast API response into a readable multi-day summary.
+
+    Groups the 3-hour interval forecasts by date and picks the reading
+    closest to noon for each day. Uses .get() to handle unexpected formats.
+    """
     temp_unit = "°C" if units == "metric" else "°F"
 
-    city_name = data["city"]["name"]
-    country = data["city"]["country"]
+    city = data.get("city", {})
+    city_name = city.get("name", "Unknown")
+    country = city.get("country", "")
 
-    # Group forecasts by day (take one reading per day around noon)
+    # Group forecasts by day, keeping only the reading closest to noon
     daily_forecasts = {}
-    for item in data["list"]:
-        date = item["dt_txt"].split(" ")[0]
-        hour = int(item["dt_txt"].split(" ")[1].split(":")[0])
+    for item in data.get("list", []):
+        dt_txt = item.get("dt_txt", "")
+        date = dt_txt.split(" ")[0] if " " in dt_txt else dt_txt
+        hour = _extract_hour(dt_txt)
 
-        # Prefer readings around noon (12:00)
-        if date not in daily_forecasts or abs(hour - 12) < abs(int(daily_forecasts[date]["dt_txt"].split(" ")[1].split(":")[0]) - 12):
+        if date not in daily_forecasts or _is_closer_to_noon(hour, _extract_hour(daily_forecasts[date].get("dt_txt", ""))):
             daily_forecasts[date] = item
 
     # Format output
@@ -69,10 +98,12 @@ def _format_forecast(data: dict, units: str, days: int = 3) -> str:
         if count >= days:
             break
 
-        weather_desc = item["weather"][0]["description"]
-        temp = item["main"]["temp"]
-        temp_min = item["main"]["temp_min"]
-        temp_max = item["main"]["temp_max"]
+        weather_list = item.get("weather", [{}])
+        weather_desc = weather_list[0].get("description", "Unknown") if weather_list else "Unknown"
+        main = item.get("main", {})
+        temp = main.get("temp", 0)
+        temp_min = main.get("temp_min", 0)
+        temp_max = main.get("temp_max", 0)
 
         result_parts.append(
             f"{date}: {weather_desc.capitalize()}, "

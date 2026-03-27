@@ -12,6 +12,7 @@ from typing import Optional
 from langchain_core.tools import Tool
 
 from src.utils import retry_on_error
+from src.constants import DEFAULT_USER_AGENT
 
 # Try to import PyPDF2 or pypdf
 try:
@@ -39,7 +40,7 @@ def fetch_pdf(url: str, timeout: int = 30) -> bytes:
         PDF file content as bytes
     """
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "application/pdf,*/*",
     }
 

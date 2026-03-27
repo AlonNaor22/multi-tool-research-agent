@@ -16,7 +16,8 @@ No API key required - ArXiv is completely free and open.
 import json
 import arxiv
 from langchain_core.tools import Tool
-from src.utils import retry_on_error
+from src.utils import retry_on_error, run_with_timeout
+from src.constants import DEFAULT_SEARCH_TIMEOUT
 
 
 # Configuration
@@ -101,8 +102,12 @@ def search_arxiv(query: str) -> str:
             sort_by=sort_criterion
         )
 
-        # Execute the search and collect results
-        papers = list(client.results(search))
+        # Execute the search with a timeout — the arxiv library has no
+        # built-in timeout, so a slow network could block indefinitely.
+        papers = run_with_timeout(
+            lambda: list(client.results(search)),
+            timeout=DEFAULT_SEARCH_TIMEOUT,
+        )
 
         if not papers:
             return f"No academic papers found for '{search_query}'"

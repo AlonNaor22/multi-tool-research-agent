@@ -13,6 +13,8 @@ Features:
 import json
 import wikipedia
 from langchain_core.tools import Tool
+from src.utils import run_with_timeout
+from src.constants import DEFAULT_SEARCH_TIMEOUT
 
 
 # Configuration
@@ -56,8 +58,12 @@ def search_wikipedia(query: str) -> str:
 
     try:
         if search_results_count > 1:
-            # Return multiple search results (titles only, for disambiguation)
-            search_results = wikipedia.search(search_query, results=search_results_count)
+            # Return multiple search results (titles only, for disambiguation).
+            # The wikipedia library has no timeout parameter, so we wrap the call.
+            search_results = run_with_timeout(
+                lambda: wikipedia.search(search_query, results=search_results_count),
+                timeout=DEFAULT_SEARCH_TIMEOUT,
+            )
 
             if not search_results:
                 return f"No Wikipedia articles found for '{search_query}'"
@@ -66,9 +72,15 @@ def search_wikipedia(query: str) -> str:
 
             for i, title in enumerate(search_results, 1):
                 try:
-                    # Get a brief summary of each
-                    page = wikipedia.page(title, auto_suggest=False)
-                    summary = wikipedia.summary(title, sentences=2, auto_suggest=False)
+                    # Get a brief summary of each (with timeout protection)
+                    page = run_with_timeout(
+                        lambda t=title: wikipedia.page(t, auto_suggest=False),
+                        timeout=DEFAULT_SEARCH_TIMEOUT,
+                    )
+                    summary = run_with_timeout(
+                        lambda t=title: wikipedia.summary(t, sentences=2, auto_suggest=False),
+                        timeout=DEFAULT_SEARCH_TIMEOUT,
+                    )
                     if len(summary) > 200:
                         summary = summary[:200] + "..."
                     result_parts.append(f"{i}. **{page.title}**\n   {summary}")
@@ -76,18 +88,27 @@ def search_wikipedia(query: str) -> str:
                     result_parts.append(f"{i}. **{title}** (disambiguation page with {len(e.options)} options)")
                 except wikipedia.exceptions.PageError:
                     result_parts.append(f"{i}. **{title}** (page not found)")
-                except Exception:
-                    result_parts.append(f"{i}. **{title}**")
+                except Exception as e:
+                    # Catch unexpected errors (network, parsing) so one failed
+                    # result doesn't abort the entire multi-result search.
+                    result_parts.append(f"{i}. **{title}** (error: {str(e)[:80]})")
 
             return "\n\n".join(result_parts)
 
         else:
             # Get single article summary
             try:
-                summary = wikipedia.summary(search_query, sentences=sentences, auto_suggest=auto_suggest)
+                # Wrap calls with timeout — wikipedia library has no timeout parameter
+                summary = run_with_timeout(
+                    lambda: wikipedia.summary(search_query, sentences=sentences, auto_suggest=auto_suggest),
+                    timeout=DEFAULT_SEARCH_TIMEOUT,
+                )
 
                 # Get the actual page to retrieve the title and URL
-                page = wikipedia.page(search_query, auto_suggest=auto_suggest)
+                page = run_with_timeout(
+                    lambda: wikipedia.page(search_query, auto_suggest=auto_suggest),
+                    timeout=DEFAULT_SEARCH_TIMEOUT,
+                )
 
                 # Truncate if too long
                 if len(summary) > MAX_CHARS:
@@ -112,8 +133,11 @@ def search_wikipedia(query: str) -> str:
                 )
 
             except wikipedia.exceptions.PageError:
-                # Page not found - try to suggest alternatives
-                suggestions = wikipedia.search(search_query, results=5)
+                # Page not found — try to suggest alternatives
+                suggestions = run_with_timeout(
+                    lambda: wikipedia.search(search_query, results=5),
+                    timeout=DEFAULT_SEARCH_TIMEOUT,
+                )
 
                 if suggestions:
                     suggestions_list = "\n".join(f"  - {s}" for s in suggestions)

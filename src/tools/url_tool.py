@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 from langchain_core.tools import Tool
 from src.utils import retry_on_error
+from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
 
 # Try to import pypdf for PDF support
 try:
@@ -23,14 +24,6 @@ try:
     PDF_SUPPORT = True
 except ImportError:
     PDF_SUPPORT = False
-
-
-# Updated User-Agent (Chrome 120 on Windows)
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
 
 # Content limits
 MAX_CONTENT_CHARS = 5000
@@ -201,10 +194,10 @@ def fetch_url_content(url: str) -> str:
         Extracted text content with metadata, or error message.
     """
     try:
-        headers = {"User-Agent": USER_AGENT}
+        headers = {"User-Agent": DEFAULT_USER_AGENT}
 
         # Fetch the content
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
         response.raise_for_status()
 
         # Check content type to determine how to parse

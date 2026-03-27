@@ -1,10 +1,12 @@
 """Utility functions for the research agent.
 
-Contains helper functions like retry logic that can be used across tools.
+Contains helper functions like retry logic and timeout wrappers
+that can be used across tools.
 """
 
 import time
 import functools
+import concurrent.futures
 from typing import Callable, Any, Tuple, Type
 
 
@@ -107,3 +109,38 @@ def safe_execute(func: Callable, *args, default: Any = None, **kwargs) -> Any:
     except Exception as e:
         print(f"  ⚠️  {func.__name__} failed: {str(e)[:50]}, using default")
         return default
+
+
+def run_with_timeout(func: Callable, args: tuple = (), timeout: int = 30) -> Any:
+    """
+    Run a function with a hard timeout using a thread pool.
+
+    Some third-party libraries (arxiv, duckduckgo_search, wikipedia) don't
+    expose a timeout parameter. This wrapper ensures they can't block forever
+    by running them in a thread and raising TimeoutError if they exceed the limit.
+
+    Args:
+        func: The function to call.
+        args: Positional arguments to pass to the function.
+        timeout: Maximum seconds to wait before raising TimeoutError.
+
+    Returns:
+        The return value of func(*args).
+
+    Raises:
+        TimeoutError: If the function doesn't complete within the timeout.
+        Exception: Any exception raised by func is re-raised.
+
+    Example:
+        # Instead of: results = list(ddgs.text(query))  # can hang forever
+        results = run_with_timeout(lambda: list(ddgs.text(query)), timeout=30)
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(
+                f"{func.__name__ if hasattr(func, '__name__') else 'Function'} "
+                f"timed out after {timeout} seconds"
+            )

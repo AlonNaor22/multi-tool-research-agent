@@ -21,6 +21,7 @@ matplotlib.use('Agg')  # Use non-GUI backend BEFORE importing pyplot
 import matplotlib.pyplot as plt
 import numpy as np
 from langchain_core.tools import Tool
+from src.constants import CHART_FIGSIZE, CHART_DPI
 
 
 # Output directory for charts
@@ -131,9 +132,23 @@ def generate_chart(input_str: str) -> str:
     if chart_type not in valid_types:
         return f"Error: Unknown chart_type '{chart_type}'. Options: {', '.join(valid_types)}"
 
+    # Validate required data keys for each chart type
+    if chart_type in ("bar", "line", "area"):
+        if "series" not in data and ("labels" not in data or "values" not in data):
+            return "Error: Bar/line/area charts need 'labels' and 'values' in data, or a 'series' array."
+    elif chart_type == "pie":
+        if "labels" not in data or "values" not in data:
+            return "Error: Pie charts need 'labels' and 'values' in data."
+    elif chart_type == "scatter":
+        if not (("x" in data and "y" in data) or ("labels" in data and "values" in data)):
+            return "Error: Scatter charts need 'x' and 'y' in data (or 'labels' and 'values')."
+    elif chart_type == "histogram":
+        if "values" not in data:
+            return "Error: Histograms need 'values' in data."
+
     try:
-        # Create the figure
-        fig, ax = plt.subplots(figsize=(10, 6))
+        # Create the figure (CHART_FIGSIZE = width x height in inches)
+        fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
 
         if chart_type == "bar":
             if "series" in data:
@@ -244,7 +259,8 @@ def generate_chart(input_str: str) -> str:
 
         # Save the chart
         plt.tight_layout()
-        plt.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+        # CHART_DPI=150 produces 1500x900 px images at the default figsize
+        plt.savefig(filepath, dpi=CHART_DPI, bbox_inches='tight', facecolor='white')
         plt.close(fig)
 
         return f"Chart saved successfully!\nFile: {filepath}\nType: {chart_type}\nTitle: {title}"
