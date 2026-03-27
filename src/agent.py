@@ -12,6 +12,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
+from src.tool_health import check_tool_health, get_available_tools
 from config import (
     ANTHROPIC_API_KEY,
     MODEL_NAME,
@@ -73,8 +74,15 @@ TOOL_CATEGORIES = {
 }
 
 
-def _build_system_prompt() -> str:
-    """Build the system prompt with tool selection guidance."""
+def _build_system_prompt(disabled_tools: list = None) -> str:
+    """Build the system prompt with tool selection guidance.
+
+    Args:
+        disabled_tools: List of tool names that are unavailable (missing API keys, etc.).
+                        These are removed from the category listings so the LLM doesn't try them.
+    """
+    disabled = set(disabled_tools or [])
+
     lines = [
         "You are a helpful research assistant with access to various tools.",
         "Your goal is to answer questions thoroughly by gathering information from multiple sources when needed.",
@@ -87,9 +95,13 @@ def _build_system_prompt() -> str:
         "",
     ]
 
+    # Build categories, filtering out disabled tools
     for category_name, category_info in TOOL_CATEGORIES.items():
+        available_tools = [t for t in category_info['tools'] if t not in disabled]
+        if not available_tools:
+            continue  # Skip entire category if all its tools are disabled
         lines.append(f"## {category_name}")
-        lines.append(f"Tools: {', '.join(category_info['tools'])}")
+        lines.append(f"Tools: {', '.join(available_tools)}")
         lines.append(f"Guidance: {category_info['guidance']}")
         lines.append("")
 
@@ -99,15 +111,22 @@ def _build_system_prompt() -> str:
         "- Use multiple tools when necessary to gather comprehensive information",
         "- For calculations: use calculator (simple) or python_repl (complex) - never do math in your head",
         "- For facts: prefer wikipedia (established) over web_search (current/recent)",
-        "- For numbers/computation: prefer wolfram_alpha when precision matters",
         "- If the user asks a follow-up question, use the conversation history for context",
         "- Synthesize information from multiple sources into a coherent answer",
-        "- If a tool returns an error, try a different approach or different tool in the same category",
+        "",
+        "ERROR RECOVERY:",
+        "- If a tool returns an error, do NOT repeat the same call. Try an alternative tool from the same category.",
+        "- If a search returns no results, try a shorter or broader query before giving up.",
+        "- Fallback options: if wolfram_alpha is unavailable, use calculator or python_repl instead.",
+        "- If web_search fails, try wikipedia or news_search for the same information.",
+        "- Always give the user a useful answer, even if some tools are unavailable.",
     ])
 
     return "\n".join(lines)
 
 
+# Default system prompt (no disabled tools). Overridden per-instance in __init__
+# if the health check finds disabled tools.
 SYSTEM_PROMPT = _build_system_prompt()
 
 
@@ -179,7 +198,7 @@ class ResearchAgent:
     """
 
     def __init__(self):
-        """Initialize the agent with memory."""
+        """Initialize the agent with memory and health-checked tools."""
         # Initialize Claude as the LLM
         self.llm = ChatAnthropic(
             model=MODEL_NAME,
@@ -189,7 +208,7 @@ class ResearchAgent:
         )
 
         # Collect all our tools
-        self.tools = [
+        all_tools = [
             # Math & Computation
             calculator_tool,
             unit_converter_tool,
@@ -216,6 +235,11 @@ class ResearchAgent:
             weather_tool,
         ]
 
+        # Run health check and filter out tools with missing dependencies.
+        # Disabled tools are removed so the agent never wastes a turn calling them.
+        self.tool_health = check_tool_health()
+        self.tools, self.disabled_tools = get_available_tools(all_tools, self.tool_health)
+
         # Create our simple conversation memory
         self.memory = SimpleMemory(k=5)
 
@@ -226,12 +250,14 @@ class ResearchAgent:
         self.timing_callback = TimingCallbackHandler()
         self.streaming_callback = StreamingCallbackHandler()
 
+        # Build system prompt with disabled tools removed from categories
+        system_prompt = _build_system_prompt(disabled_tools=self.disabled_tools)
+
         # Create the agent using native tool calling (LangGraph-based)
-        # This replaces the old create_react_agent + AgentExecutor pattern
         self.agent = create_agent(
             model=self.llm,
             tools=self.tools,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             debug=VERBOSE,
         )
 

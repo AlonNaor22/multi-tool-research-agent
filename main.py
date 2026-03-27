@@ -3,8 +3,11 @@
 Run with: python main.py
 """
 
+import os
+import sys
 from src.agent import ResearchAgent
 from src.session_manager import list_sessions, get_session_preview
+from src.tool_health import format_health_status
 
 
 def print_banner():
@@ -13,11 +16,6 @@ def print_banner():
     print("        Multi-Tool Research Agent")
     print("        Powered by Claude + LangChain (Native Tool Calling)")
     print("=" * 60)
-    print("\nAvailable tools: calculator, unit_converter, equation_solver,")
-    print("  currency_converter, wolfram_alpha, web_search, wikipedia,")
-    print("  news_search, arxiv_search, youtube_search, google_scholar,")
-    print("  fetch_url, pdf_reader, python_repl, create_chart,")
-    print("  parallel_search, weather")
     print("\nCommands:")
     print("  Type your question to research")
     print("  'clear'    - Clear conversation memory")
@@ -28,17 +26,32 @@ def print_banner():
     print()
 
 
-
-
 def main():
     """Main CLI loop."""
     print_banner()
 
+    # Fail fast if the required Anthropic API key is missing
+    if not os.getenv("ANTHROPIC_API_KEY", "").strip():
+        print("Error: ANTHROPIC_API_KEY is not set.")
+        print("Add it to your .env file or export it as an environment variable.")
+        print("Get a key at: https://console.anthropic.com/")
+        sys.exit(1)
+
     # Create ONE agent instance that persists throughout the session
     # This is what enables memory - the same agent handles all queries
-    print("Initializing agent with memory...")
+    print("Initializing agent...")
     agent = ResearchAgent()
-    print("Ready! Memory is enabled - I'll remember our conversation.\n")
+
+    # Show tool health status — which tools are available vs disabled
+    all_tool_names = [t.name for t in agent.tools]
+    print(format_health_status(agent.tool_health, all_tool_names))
+
+    if agent.disabled_tools:
+        print(f"\n{len(agent.tools)} tools active, {len(agent.disabled_tools)} disabled.")
+    else:
+        print(f"\nAll {len(agent.tools)} tools active.")
+
+    print("Memory is enabled - I'll remember our conversation.\n")
 
     while True:
         try:

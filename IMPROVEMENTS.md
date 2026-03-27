@@ -24,11 +24,12 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 - [x] `stream_query()` method uses LangGraph `stream()` instead of blocking `invoke()`
 - [x] Original `query()` preserved for backward compatibility (tests/evals)
 
-### 5. Better Error Recovery
-- [ ] Tool health check on startup — show which tools are available vs disabled (missing API keys)
-- [ ] Fallback to a different tool if one fails
-- [ ] Retry with rephrased query on failure
-- [ ] Graceful degradation when optional API keys are missing
+### 5. ~~Better Error Recovery~~ (DONE)
+- [x] `check_tool_health()` probes API keys and libraries at startup
+- [x] `get_available_tools()` filters out disabled tools so the agent never calls them
+- [x] System prompt includes explicit fallback mapping and retry guidance
+- [x] Startup banner shows tool status (available vs disabled with fallback info)
+- [x] Fail-fast on missing `ANTHROPIC_API_KEY` with clear setup instructions
 
 ## Medium Impact
 
