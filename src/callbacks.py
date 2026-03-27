@@ -3,9 +3,11 @@
 LangChain Callbacks let you "hook into" events during agent execution.
 Events include: tool starts, tool ends, LLM starts, LLM ends, errors, etc.
 
-We use this to track how long each tool takes to execute.
+We use this to track how long each tool takes to execute,
+and to stream output in real-time so the user isn't staring at a blank screen.
 """
 
+import sys
 import time
 from typing import Any, Dict, List, Optional
 from langchain_core.callbacks import BaseCallbackHandler
@@ -125,3 +127,71 @@ class TimingCallbackHandler(BaseCallbackHandler):
         self.tool_times = []
         self._current_tool_start = None
         self._current_tool_name = None
+
+
+class StreamingCallbackHandler(BaseCallbackHandler):
+    """
+    A callback handler that streams agent output in real-time.
+
+    Shows the user what's happening as it happens:
+    - When the LLM starts thinking
+    - When a tool is called (and which one)
+    - Each token of the final answer as it's generated
+
+    This eliminates the blank-screen problem where the user waits
+    with no feedback while the agent works.
+    """
+
+    def __init__(self):
+        """Initialize the streaming handler."""
+        super().__init__()
+        self._tool_depth = 0  # Track if we're inside a tool call
+
+    def on_llm_start(
+        self,
+        serialized: Dict[str, Any],
+        prompts: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Called when the LLM starts generating. Shows a thinking indicator."""
+        if self._tool_depth == 0:
+            print("\n🧠 Thinking...", flush=True)
+
+    def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
+        """
+        Called for each token the LLM generates.
+
+        Prints tokens as they arrive so the answer appears to "type itself".
+        Only streams tokens when we're NOT inside a tool call (i.e., the final answer).
+        """
+        if self._tool_depth == 0:
+            sys.stdout.write(token)
+            sys.stdout.flush()
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        """Called when the LLM finishes generating."""
+        pass
+
+    def on_tool_start(
+        self,
+        serialized: Dict[str, Any],
+        input_str: str,
+        **kwargs: Any,
+    ) -> None:
+        """Called when a tool starts. Shows which tool is being used."""
+        self._tool_depth += 1
+        tool_name = serialized.get("name", "unknown_tool")
+        print(f"\n🔧 Using {tool_name}...", flush=True)
+
+    def on_tool_end(self, output: str, **kwargs: Any) -> None:
+        """Called when a tool finishes."""
+        self._tool_depth = max(0, self._tool_depth - 1)
+
+    def on_tool_error(self, error: Exception, **kwargs: Any) -> None:
+        """Called when a tool errors."""
+        self._tool_depth = max(0, self._tool_depth - 1)
+        print(f"\n⚠️  Tool error: {error}", flush=True)
+
+    def reset(self):
+        """Reset state for a new query."""
+        self._tool_depth = 0

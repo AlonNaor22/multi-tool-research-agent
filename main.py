@@ -133,12 +133,11 @@ def main():
                 continue
 
             print("\n" + "-" * 60)
-            print("Researching...\n")
 
-            # Run the query through the agent (memory is automatically used)
-            answer = agent.query(query)
+            # Run the query with streaming — shows thinking/tool use in real-time
+            answer = agent.stream_query(query)
 
-            print("-" * 60)
+            print("\n" + "-" * 60)
             print(f"\nAnswer: {answer}\n")
             print("-" * 60)
             print()

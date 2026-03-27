@@ -11,7 +11,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 
-from src.callbacks import TimingCallbackHandler
+from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from config import (
     ANTHROPIC_API_KEY,
     MODEL_NAME,
@@ -222,8 +222,9 @@ class ResearchAgent:
         # Track current session ID (for saving to the same file)
         self.current_session_id = None
 
-        # Create the timing callback handler
+        # Create callback handlers
         self.timing_callback = TimingCallbackHandler()
+        self.streaming_callback = StreamingCallbackHandler()
 
         # Create the agent using native tool calling (LangGraph-based)
         # This replaces the old create_react_agent + AgentExecutor pattern
@@ -263,6 +264,54 @@ class ResearchAgent:
 
             # Extract the final answer from the last AI message
             answer = self._extract_answer(result)
+
+            # Save this exchange to memory
+            self.memory.add_exchange(question, answer)
+
+            # Print timing summary if requested
+            if show_timing:
+                print(self.timing_callback.get_summary())
+
+            return answer
+        except Exception as e:
+            return f"Error running research query: {str(e)}"
+
+    def stream_query(self, question: str, show_timing: bool = True) -> str:
+        """
+        Run a research query with real-time streaming output.
+
+        Instead of blocking until the full answer is ready, this streams
+        intermediate steps (thinking, tool calls) and the final answer
+        token-by-token so the user sees progress in real-time.
+
+        Args:
+            question: The research question to answer.
+            show_timing: Whether to print timing summary (default: True)
+
+        Returns:
+            The agent's final answer as a string.
+        """
+        try:
+            # Reset state from previous query
+            self.timing_callback.reset()
+            self.streaming_callback.reset()
+
+            # Build messages: conversation history + new question
+            messages = self.memory.get_messages()
+            messages.append(HumanMessage(content=question))
+
+            # Stream the agent execution — yields state updates after each node
+            final_result = None
+            for chunk in self.agent.stream(
+                {"messages": messages},
+                {"callbacks": [self.timing_callback, self.streaming_callback],
+                 "recursion_limit": MAX_ITERATIONS * 2},
+                stream_mode="values",
+            ):
+                final_result = chunk
+
+            # Extract the final answer
+            answer = self._extract_answer(final_result) if final_result else "No answer was generated."
 
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)

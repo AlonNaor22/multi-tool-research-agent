@@ -19,9 +19,10 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 - [x] CLI runner with `--case` and `--category` filtering, timestamped JSON reports
 - [x] First run: 100% tool selection, 93% answer quality
 
-### 4. Streaming Output
-- [ ] Stream Thought/Action/Observation steps in real-time instead of blank screen while thinking
-- [ ] Shows production UX thinking
+### 4. ~~Streaming Output~~ (DONE)
+- [x] `StreamingCallbackHandler` streams thinking/tool-use/answer tokens in real-time
+- [x] `stream_query()` method uses LangGraph `stream()` instead of blocking `invoke()`
+- [x] Original `query()` preserved for backward compatibility (tests/evals)
 
 ### 5. Better Error Recovery
 - [ ] Tool health check on startup — show which tools are available vs disabled (missing API keys)
