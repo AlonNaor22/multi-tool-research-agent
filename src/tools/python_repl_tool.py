@@ -7,11 +7,12 @@ SECURITY CONSIDERATIONS:
 -----------------------
 Executing arbitrary code is inherently risky. We implement several safeguards:
 
-1. TIMEOUT: Code execution is limited to 5 seconds (works on Windows and Unix)
-2. RESTRICTED GLOBALS: We limit what built-in functions are available
-3. OUTPUT CAPTURE: We capture stdout/stderr instead of printing directly
-4. OUTPUT SIZE LIMIT: Maximum 10,000 characters returned
-5. NO PERSISTENT STATE: Each execution is independent (no shared variables)
+1. TIMEOUT: Code execution is limited to 5 seconds
+2. PROCESS ISOLATION: Code runs in a separate process that can be killed on timeout
+3. RESTRICTED GLOBALS: We limit what built-in functions are available
+4. OUTPUT CAPTURE: We capture stdout/stderr instead of printing directly
+5. OUTPUT SIZE LIMIT: Maximum 10,000 characters returned
+6. NO PERSISTENT STATE: Each execution is independent (no shared variables)
 
 NOTE: This is NOT a fully sandboxed environment. For production use, consider:
 - Docker containers
@@ -19,10 +20,7 @@ NOTE: This is NOT a fully sandboxed environment. For production use, consider:
 - Separate subprocess with resource limits
 """
 
-import sys
-import threading
-from io import StringIO
-from contextlib import redirect_stdout, redirect_stderr
+import multiprocessing
 from langchain_core.tools import Tool
 
 
@@ -31,73 +29,23 @@ EXECUTION_TIMEOUT = 5  # seconds
 MAX_OUTPUT_LENGTH = 10000  # characters
 
 
-class ExecutionResult:
-    """Container for execution result from thread."""
-    def __init__(self):
-        self.output = None
-        self.error = None
-
-
-def _execute_code_thread(code: str, safe_globals: dict, result: ExecutionResult):
+def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
     """
-    Execute code in a thread (allows timeout on Windows).
+    Execute code in a child process.
+
+    Runs in a separate process so it can be killed on timeout —
+    unlike threads, processes CAN be forcefully terminated.
 
     Args:
         code: Python code to execute
-        safe_globals: Restricted namespace
-        result: ExecutionResult object to store output
+        result_queue: Queue to send the result back to the parent
     """
-    stdout_capture = StringIO()
-    stderr_capture = StringIO()
-    local_namespace = {}
+    import sys
+    from io import StringIO
+    from contextlib import redirect_stdout, redirect_stderr
 
-    try:
-        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            try:
-                # First, try to compile as an expression
-                compiled = compile(code, "<agent>", "eval")
-                eval_result = eval(compiled, safe_globals, local_namespace)
-                if eval_result is not None:
-                    print(repr(eval_result))
-            except SyntaxError:
-                # It's not a simple expression, execute as statements
-                exec(code, safe_globals, local_namespace)
-
-        output = stdout_capture.getvalue()
-        errors = stderr_capture.getvalue()
-
-        if errors:
-            result.output = f"Output:\n{output}\n\nWarnings:\n{errors}"
-        elif output:
-            result.output = output.strip()
-        else:
-            result.output = "Code executed successfully (no output)"
-
-    except Exception as e:
-        error_type = type(e).__name__
-        result.error = f"Execution Error ({error_type}): {str(e)}"
-
-
-def execute_python(code: str) -> str:
-    """
-    Execute Python code and return the output.
-
-    HOW THIS WORKS:
-    ---------------
-    1. We create a thread to run the code (allows timeout on Windows)
-    2. We redirect print() output to capture it
-    3. We execute the code with exec() in a restricted namespace
-    4. We return whatever was printed + the result of the last expression
-
-    Args:
-        code: Python code to execute (can be multi-line)
-
-    Returns:
-        The output of the code execution, or error message.
-    """
     # Import optional data science libraries if available
     optional_modules = {}
-
     try:
         import numpy as np
         optional_modules["np"] = np
@@ -115,7 +63,6 @@ def execute_python(code: str) -> str:
     # Define what's available to the executed code
     safe_globals = {
         "__builtins__": {
-            # Safe built-ins
             "abs": abs,
             "all": all,
             "any": any,
@@ -157,7 +104,6 @@ def execute_python(code: str) -> str:
             "type": type,
             "zip": zip,
         },
-        # Pre-import safe, useful modules
         "math": __import__("math"),
         "statistics": __import__("statistics"),
         "datetime": __import__("datetime"),
@@ -168,32 +114,77 @@ def execute_python(code: str) -> str:
         "itertools": __import__("itertools"),
         "functools": __import__("functools"),
     }
-
-    # Add optional data science modules if available
     safe_globals.update(optional_modules)
 
-    # Create result container and execution thread
-    result = ExecutionResult()
-    thread = threading.Thread(
-        target=_execute_code_thread,
-        args=(code, safe_globals, result)
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
+    local_namespace = {}
+
+    try:
+        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+            try:
+                compiled = compile(code, "<agent>", "eval")
+                eval_result = eval(compiled, safe_globals, local_namespace)
+                if eval_result is not None:
+                    print(repr(eval_result))
+            except SyntaxError:
+                exec(code, safe_globals, local_namespace)
+
+        output = stdout_capture.getvalue()
+        errors = stderr_capture.getvalue()
+
+        if errors:
+            result_queue.put(("output", f"Output:\n{output}\n\nWarnings:\n{errors}"))
+        elif output:
+            result_queue.put(("output", output.strip()))
+        else:
+            result_queue.put(("output", "Code executed successfully (no output)"))
+
+    except Exception as e:
+        error_type = type(e).__name__
+        result_queue.put(("error", f"Execution Error ({error_type}): {str(e)}"))
+
+
+def execute_python(code: str) -> str:
+    """
+    Execute Python code and return the output.
+
+    HOW THIS WORKS:
+    ---------------
+    1. We spawn a child process to run the code
+    2. The child captures stdout/stderr and sends results via a Queue
+    3. If the process exceeds the timeout, we kill it (unlike threads, this works!)
+    4. We return whatever was printed + the result of the last expression
+
+    Args:
+        code: Python code to execute (can be multi-line)
+
+    Returns:
+        The output of the code execution, or error message.
+    """
+    result_queue = multiprocessing.Queue()
+    process = multiprocessing.Process(
+        target=_execute_code_in_process,
+        args=(code, result_queue),
     )
 
-    # Start thread and wait with timeout
-    thread.start()
-    thread.join(timeout=EXECUTION_TIMEOUT)
+    process.start()
+    process.join(timeout=EXECUTION_TIMEOUT)
 
-    # Check if thread is still running (timeout occurred)
-    if thread.is_alive():
-        # Note: We can't forcefully kill the thread in Python
-        # The thread will continue but we return timeout error
+    # If the process is still running, kill it
+    if process.is_alive():
+        process.kill()    # Forcefully terminate — no orphaned loops
+        process.join(1)   # Wait briefly for cleanup
         return f"Timeout Error: Code execution exceeded {EXECUTION_TIMEOUT} seconds. The operation was too slow or contains an infinite loop."
 
-    # Return result
-    if result.error:
-        return result.error
-
-    output = result.output or "Code executed successfully (no output)"
+    # Get result from the queue
+    if not result_queue.empty():
+        kind, value = result_queue.get_nowait()
+        if kind == "error":
+            return value
+        output = value
+    else:
+        output = "Code executed successfully (no output)"
 
     # Truncate if too long
     if len(output) > MAX_OUTPUT_LENGTH:
