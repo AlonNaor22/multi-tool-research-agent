@@ -12,7 +12,10 @@ arxiv>=2.0.0                     # Academic paper search (ArXiv API)
 matplotlib>=3.7.0                # Data visualization (charts/graphs)
 sympy>=1.12                      # Symbolic math for equation solving
 beautifulsoup4>=4.12.0           # HTML parsing for URL fetcher
-pypdf>=3.17.0                    # PDF text extraction
+pdfplumber>=0.10.0               # PDF text extraction (multi-column, tables)
+pypdf>=3.17.0                    # PDF text extraction (fallback)
+yt-dlp>=2024.0.0                 # YouTube search (robust against frontend changes)
+deep-translator>=1.11.0          # Translation (Google Translate, no API key)
 
 # Utilities
 python-dotenv>=1.0.0             # Load environment variables from .env

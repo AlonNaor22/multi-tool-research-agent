@@ -11,6 +11,7 @@ from typing import Optional, Dict
 from langchain_core.tools import Tool
 
 from src.utils import retry_on_error
+from src.constants import DEFAULT_HTTP_TIMEOUT
 
 
 # Common currency codes and their aliases
@@ -88,7 +89,7 @@ def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
         "to": to_currency,
     }
 
-    response = requests.get(base_url, params=params, timeout=10)
+    response = requests.get(base_url, params=params, timeout=DEFAULT_HTTP_TIMEOUT)
     response.raise_for_status()
 
     return response.json()

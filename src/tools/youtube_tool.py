@@ -1,173 +1,107 @@
-"""YouTube search tool for the research agent.
+"""YouTube search tool using yt-dlp for reliable video discovery.
 
-Searches YouTube for videos on a topic and returns video information.
-
-Uses the yt-dlp library for searching (no API key required).
-Falls back to web scraping if needed.
+Replaces the previous fragile web-scraping approach with yt-dlp's
+ytsearch protocol, which is actively maintained and robust against
+YouTube frontend changes.
 """
 
 import re
 import json
-import requests
-from typing import List, Dict, Optional
-from urllib.parse import quote_plus
+from typing import List, Dict
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error
-from src.constants import DEFAULT_HTTP_HEADERS, DEFAULT_HTTP_TIMEOUT
+from src.utils import retry_on_error, run_with_timeout, TTLCache
+from src.constants import DEFAULT_SEARCH_TIMEOUT, DEFAULT_CACHE_TTL
+
+# Cache repeated queries for 5 minutes
+_cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
+
+
+def _format_duration(seconds) -> str:
+    """Convert seconds to H:MM:SS or MM:SS string."""
+    if not seconds:
+        return "Unknown"
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        return "Unknown"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_views(count) -> str:
+    """Format a view count with commas, e.g. 1,234,567 views."""
+    if count is None:
+        return "Unknown views"
+    try:
+        return f"{int(count):,} views"
+    except (TypeError, ValueError):
+        return "Unknown views"
 
 
 @retry_on_error(max_retries=2, delay=1.0)
-def search_youtube_web(query: str, max_results: int = 5) -> List[Dict]:
+def search_youtube_ytdlp(query: str, max_results: int = 5) -> List[Dict]:
     """
-    Search YouTube using web scraping approach.
+    Search YouTube via yt-dlp's ytsearch protocol.
 
     Args:
         query: Search query
         max_results: Maximum number of results to return
 
     Returns:
-        List of video dictionaries with title, url, channel, etc.
+        List of video dictionaries.
     """
-    # Use YouTube's search URL
-    search_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    cache_key = _cache.make_key("youtube", query, str(max_results))
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-    headers = {**DEFAULT_HTTP_HEADERS}
+    import yt_dlp
 
-    response = requests.get(search_url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
-    response.raise_for_status()
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "playlist_items": f"1:{max_results}",
+    }
 
-    html = response.text
+    search_url = f"ytsearch{max_results}:{query}"
 
-    # Extract video data from the page's initial data
-    # YouTube embeds JSON data in the page
+    def _do_search():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(search_url, download=False)
+
+    data = run_with_timeout(_do_search, timeout=DEFAULT_SEARCH_TIMEOUT)
+
     results = []
+    entries = data.get("entries") or []
 
-    # Find video IDs and titles using regex patterns
-    # Pattern for video renderer data
-    video_pattern = r'"videoId":"([^"]+)".*?"title":\{"runs":\[\{"text":"([^"]+)"\}\]'
-    channel_pattern = r'"ownerText":\{"runs":\[\{"text":"([^"]+)"'
-    view_pattern = r'"viewCountText":\{"simpleText":"([^"]+)"'
-    length_pattern = r'"lengthText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]+)"\}\},"simpleText":"([^"]+)"'
+    for entry in entries[:max_results]:
+        if not entry:
+            continue
 
-    # Try to find the ytInitialData JSON
-    data_match = re.search(r'var ytInitialData = ({.*?});', html)
+        video_id = entry.get("id", "")
+        results.append({
+            "title": entry.get("title", "Unknown"),
+            "video_id": video_id,
+            "url": entry.get("url") or f"https://www.youtube.com/watch?v={video_id}",
+            "channel": entry.get("channel") or entry.get("uploader") or "Unknown",
+            "views": _format_views(entry.get("view_count")),
+            "duration": _format_duration(entry.get("duration")),
+            "published": entry.get("upload_date") or "",
+            "description": (entry.get("description") or "")[:200],
+        })
 
-    if data_match:
-        try:
-            data = json.loads(data_match.group(1))
-
-            # Navigate to video results
-            contents = (
-                data.get("contents", {})
-                .get("twoColumnSearchResultsRenderer", {})
-                .get("primaryContents", {})
-                .get("sectionListRenderer", {})
-                .get("contents", [])
-            )
-
-            for section in contents:
-                items = (
-                    section.get("itemSectionRenderer", {})
-                    .get("contents", [])
-                )
-
-                for item in items:
-                    video_renderer = item.get("videoRenderer")
-                    if not video_renderer:
-                        continue
-
-                    video_id = video_renderer.get("videoId", "")
-                    if not video_id:
-                        continue
-
-                    # Extract title
-                    title_runs = video_renderer.get("title", {}).get("runs", [])
-                    title = title_runs[0].get("text", "Unknown") if title_runs else "Unknown"
-
-                    # Extract channel
-                    channel_runs = video_renderer.get("ownerText", {}).get("runs", [])
-                    channel = channel_runs[0].get("text", "Unknown") if channel_runs else "Unknown"
-
-                    # Extract view count
-                    view_count = video_renderer.get("viewCountText", {}).get("simpleText", "Unknown views")
-
-                    # Extract duration
-                    duration = video_renderer.get("lengthText", {}).get("simpleText", "Unknown")
-
-                    # Extract description snippet
-                    desc_snippets = video_renderer.get("detailedMetadataSnippets", [])
-                    description = ""
-                    if desc_snippets:
-                        snippet_runs = desc_snippets[0].get("snippetText", {}).get("runs", [])
-                        description = "".join(run.get("text", "") for run in snippet_runs)
-
-                    # Extract publish date
-                    published = video_renderer.get("publishedTimeText", {}).get("simpleText", "")
-
-                    results.append({
-                        "title": title,
-                        "video_id": video_id,
-                        "url": f"https://www.youtube.com/watch?v={video_id}",
-                        "channel": channel,
-                        "views": view_count,
-                        "duration": duration,
-                        "published": published,
-                        "description": description[:200] if description else "",
-                    })
-
-                    if len(results) >= max_results:
-                        break
-
-                if len(results) >= max_results:
-                    break
-
-        except json.JSONDecodeError:
-            # JSON parsing of embedded page data failed — fall through
-            # to the regex fallback below.
-            pass
-
-    # Fallback: simple regex extraction if JSON parsing failed
-    if not results:
-        # Find video IDs
-        video_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
-        titles = re.findall(r'"title":\{"runs":\[\{"text":"([^"]+)"\}\]', html)
-
-        seen_ids = set()
-        for i, vid_id in enumerate(video_ids):
-            if vid_id in seen_ids:
-                continue
-            seen_ids.add(vid_id)
-
-            title = titles[i] if i < len(titles) else "Unknown Title"
-
-            results.append({
-                "title": title,
-                "video_id": vid_id,
-                "url": f"https://www.youtube.com/watch?v={vid_id}",
-                "channel": "Unknown",
-                "views": "Unknown",
-                "duration": "Unknown",
-                "published": "",
-                "description": "",
-            })
-
-            if len(results) >= max_results:
-                break
-
+    _cache.set(cache_key, results)
     return results
 
 
 def format_results(results: List[Dict], query: str) -> str:
-    """Format YouTube video search results into a readable multi-line string.
-
-    Args:
-        results: List of video info dicts from search_youtube_web().
-        query: Original search query, shown in the header.
-
-    Returns:
-        Formatted string with numbered video entries, or a "no results" message.
-    """
+    """Format YouTube video search results into a readable multi-line string."""
     if not results:
         return f"No YouTube videos found for '{query}'"
 
@@ -177,10 +111,10 @@ def format_results(results: List[Dict], query: str) -> str:
         lines.append(f"{i}. {video['title']}")
         lines.append(f"   Channel: {video['channel']}")
         lines.append(f"   Duration: {video['duration']} | Views: {video['views']}")
-        if video.get('published'):
+        if video.get("published"):
             lines.append(f"   Published: {video['published']}")
         lines.append(f"   URL: {video['url']}")
-        if video.get('description'):
+        if video.get("description"):
             lines.append(f"   Description: {video['description'][:150]}...")
         lines.append("")
 
@@ -193,7 +127,6 @@ def youtube_search(input_str: str) -> str:
 
     Supports formats:
     - "python tutorial"
-    - "search: machine learning explained"
     - "5 results: quantum computing"
 
     Args:
@@ -218,7 +151,7 @@ def youtube_search(input_str: str) -> str:
     # Check for "N results:" prefix
     count_match = re.match(r'(\d+)\s+results?:\s*(.+)', input_str, re.IGNORECASE)
     if count_match:
-        max_results = min(int(count_match.group(1)), 10)  # Cap at 10
+        max_results = min(int(count_match.group(1)), 10)
         query = count_match.group(2)
 
     # Check for "search:" prefix
@@ -226,12 +159,10 @@ def youtube_search(input_str: str) -> str:
         query = query[7:].strip()
 
     try:
-        results = search_youtube_web(query, max_results)
+        results = search_youtube_ytdlp(query, max_results)
         return format_results(results, query)
-    except requests.exceptions.RequestException as e:
-        return f"Error searching YouTube: {str(e)}"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error searching YouTube: {str(e)}"
 
 
 def _get_help() -> str:

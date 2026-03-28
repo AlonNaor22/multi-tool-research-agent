@@ -1,8 +1,8 @@
 """PDF reader tool for the research agent.
 
 Fetches and extracts text content from PDF files at URLs.
-
-Useful for reading research papers, reports, documentation, etc.
+Uses pdfplumber for high-quality extraction (multi-column, tables),
+with pypdf as a fallback.
 """
 
 import io
@@ -14,17 +14,22 @@ from langchain_core.tools import Tool
 from src.utils import retry_on_error
 from src.constants import DEFAULT_USER_AGENT
 
-# Try to import PyPDF2 or pypdf
+# Try pdfplumber first (better quality), fall back to pypdf
 try:
-    from pypdf import PdfReader
-    PDF_LIBRARY = "pypdf"
+    import pdfplumber
+    PDF_LIBRARY = "pdfplumber"
 except ImportError:
+    pdfplumber = None
     try:
-        from PyPDF2 import PdfReader
-        PDF_LIBRARY = "PyPDF2"
+        from pypdf import PdfReader
+        PDF_LIBRARY = "pypdf"
     except ImportError:
-        PdfReader = None
-        PDF_LIBRARY = None
+        try:
+            from PyPDF2 import PdfReader
+            PDF_LIBRARY = "PyPDF2"
+        except ImportError:
+            PdfReader = None
+            PDF_LIBRARY = None
 
 
 @retry_on_error(max_retries=2, delay=1.0)
@@ -57,7 +62,7 @@ def fetch_pdf(url: str, timeout: int = 30) -> bytes:
 
 def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
     """
-    Extract text from PDF content.
+    Extract text from PDF content using the best available library.
 
     Args:
         pdf_content: PDF file content as bytes
@@ -66,9 +71,57 @@ def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -
     Returns:
         Extracted text content
     """
-    if PdfReader is None:
-        return "Error: PDF reading library not installed. Please install pypdf: pip install pypdf"
+    if PDF_LIBRARY == "pdfplumber":
+        return _extract_with_pdfplumber(pdf_content, max_pages)
+    elif PDF_LIBRARY in ("pypdf", "PyPDF2"):
+        return _extract_with_pypdf(pdf_content, max_pages)
+    else:
+        return "Error: No PDF library installed. Install pdfplumber (pip install pdfplumber) or pypdf (pip install pypdf)."
 
+
+def _extract_with_pdfplumber(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
+    """Extract text using pdfplumber (better for complex layouts, tables, multi-column)."""
+    try:
+        pdf_file = io.BytesIO(pdf_content)
+        text_parts = []
+
+        with pdfplumber.open(pdf_file) as pdf:
+            total_pages = len(pdf.pages)
+            pages_to_read = min(total_pages, max_pages) if max_pages else total_pages
+
+            text_parts.append(f"[PDF Document - {total_pages} pages]")
+
+            # Extract metadata if available
+            metadata = pdf.metadata or {}
+            if metadata.get("Title"):
+                text_parts.append(f"Title: {metadata['Title']}")
+            if metadata.get("Author"):
+                text_parts.append(f"Author: {metadata['Author']}")
+            if metadata.get("Subject"):
+                text_parts.append(f"Subject: {metadata['Subject']}")
+            if any(metadata.get(k) for k in ("Title", "Author", "Subject")):
+                text_parts.append("")
+
+            for i in range(pages_to_read):
+                page = pdf.pages[i]
+                page_text = page.extract_text()
+
+                if page_text:
+                    text_parts.append(f"--- Page {i + 1} ---")
+                    text_parts.append(page_text.strip())
+                    text_parts.append("")
+
+            if max_pages and total_pages > max_pages:
+                text_parts.append(f"[... {total_pages - max_pages} more pages not shown ...]")
+
+        return "\n".join(text_parts)
+
+    except Exception as e:
+        return f"Error extracting text from PDF: {str(e)}"
+
+
+def _extract_with_pypdf(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
+    """Extract text using pypdf (fallback)."""
     try:
         pdf_file = io.BytesIO(pdf_content)
         reader = PdfReader(pdf_file)
@@ -202,8 +255,6 @@ def read_pdf(input_str: str) -> str:
 
 def _get_help() -> str:
     """Return help text."""
-    library_status = f"PDF library: {PDF_LIBRARY}" if PDF_LIBRARY else "PDF library: NOT INSTALLED (pip install pypdf)"
-
     return f"""PDF Reader Help:
 
 FORMAT:
@@ -226,7 +277,7 @@ TIPS:
   - Use "summary:" for quick overview of long documents
   - Large PDFs are automatically truncated to ~15,000 characters
 
-{library_status}"""
+PDF library: {PDF_LIBRARY or 'NOT INSTALLED (pip install pdfplumber)'}"""
 
 
 # Create the LangChain Tool wrapper

@@ -1,8 +1,9 @@
-"""Tests for src/utils.py — retry decorator and safe_execute."""
+"""Tests for src/utils.py — retry decorator, safe_execute, TTLCache, rate limit detection."""
 
+import time
 import pytest
 from unittest.mock import patch
-from src.utils import retry_on_error, safe_execute
+from src.utils import retry_on_error, safe_execute, TTLCache, _is_rate_limit_error
 
 
 class TestRetryOnError:
@@ -89,3 +90,63 @@ class TestSafeExecute:
     def test_passes_args(self):
         result = safe_execute(lambda x, y: x + y, 3, 4)
         assert result == 7
+
+
+class TestTTLCache:
+    """Tests for the TTLCache."""
+
+    def test_set_and_get(self):
+        cache = TTLCache(ttl=60)
+        cache.set("key1", "value1")
+        assert cache.get("key1") == "value1"
+
+    def test_returns_none_for_missing_key(self):
+        cache = TTLCache(ttl=60)
+        assert cache.get("nonexistent") is None
+
+    def test_expiration(self):
+        cache = TTLCache(ttl=0)  # Immediately expires
+        cache.set("key1", "value1")
+        time.sleep(0.01)
+        assert cache.get("key1") is None
+
+    def test_clear(self):
+        cache = TTLCache(ttl=60)
+        cache.set("a", 1)
+        cache.set("b", 2)
+        cache.clear()
+        assert cache.get("a") is None
+        assert cache.get("b") is None
+
+    def test_make_key_deterministic(self):
+        key1 = TTLCache.make_key("a", "b", "c")
+        key2 = TTLCache.make_key("a", "b", "c")
+        assert key1 == key2
+
+    def test_make_key_different_inputs(self):
+        key1 = TTLCache.make_key("a", "b")
+        key2 = TTLCache.make_key("a", "c")
+        assert key1 != key2
+
+
+class TestRateLimitDetection:
+    """Tests for rate limit error detection."""
+
+    def test_detects_429_in_string(self):
+        error = Exception("HTTP Error 429: Too Many Requests")
+        assert _is_rate_limit_error(error) is True
+
+    def test_detects_rate_limit_text(self):
+        error = Exception("Rate limit exceeded")
+        assert _is_rate_limit_error(error) is True
+
+    def test_normal_error_not_rate_limited(self):
+        error = Exception("Connection refused")
+        assert _is_rate_limit_error(error) is False
+
+    def test_detects_response_status_429(self):
+        class MockResp:
+            status_code = 429
+        error = Exception("error")
+        error.response = MockResp()
+        assert _is_rate_limit_error(error) is True

@@ -30,7 +30,9 @@ API_KEY_REQUIREMENTS = {
 # Maps tool names to the Python module they require.
 LIBRARY_REQUIREMENTS = {
     "equation_solver": "sympy",
-    "pdf_reader": "pypdf",
+    "pdf_reader": "pdfplumber",
+    "youtube_search": "yt_dlp",
+    "translate": "deep_translator",
 }
 
 
@@ -87,10 +89,16 @@ def check_tool_health() -> Dict[str, dict]:
         if _check_library(module_name):
             health[tool_name] = {"available": True}
         else:
+            fallback_map = {
+                "equation_solver": "python_repl",
+                "pdf_reader": "fetch_url",
+                "youtube_search": "web_search with site:youtube.com",
+                "translate": "web_search for translation",
+            }
             health[tool_name] = {
                 "available": False,
                 "reason": f"{module_name} not installed",
-                "fallback": "python_repl" if tool_name == "equation_solver" else "fetch_url",
+                "fallback": fallback_map.get(tool_name, "web_search"),
             }
 
     return health

@@ -26,4 +26,7 @@ __all__ = [
     "visualization_tool",
     "parallel_tool",
     "weather_tool",
+    "translation_tool",
+    "reddit_tool",
+    "wikidata_tool",
 ]

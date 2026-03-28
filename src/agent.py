@@ -38,6 +38,9 @@ from src.tools.currency_tool import currency_tool
 from src.tools.youtube_tool import youtube_tool
 from src.tools.pdf_tool import pdf_tool
 from src.tools.google_scholar_tool import google_scholar_tool
+from src.tools.translation_tool import translation_tool
+from src.tools.reddit_tool import reddit_tool
+from src.tools.wikidata_tool import wikidata_tool
 
 
 # Tool categories for hierarchical selection — included in the system prompt
@@ -49,11 +52,23 @@ TOOL_CATEGORIES = {
     },
     "INFORMATION RETRIEVAL": {
         "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar"],
-        "guidance": "web_search for current events/news, wikipedia for general facts/explanations, news_search for recent news, arxiv_search for STEM/AI/ML/physics/math pre-prints, youtube_search for videos/tutorials, google_scholar for history/humanities/medicine/social sciences/ancient topics."
+        "guidance": "web_search for current events/general queries, wikipedia for established facts/explanations, news_search for recent news, arxiv_search for CS/physics/math/AI pre-prints on arxiv.org, youtube_search for videos/tutorials, google_scholar for peer-reviewed papers across ALL academic fields (history, medicine, social sciences, STEM)."
     },
     "WEB CONTENT": {
         "tools": ["fetch_url", "pdf_reader"],
         "guidance": "Use fetch_url for HTML web pages, pdf_reader for PDF documents (research papers, reports)."
+    },
+    "SOCIAL & DISCUSSION": {
+        "tools": ["reddit_search"],
+        "guidance": "Use reddit_search for community opinions, discussions, experiences, and recommendations. Great for 'what do people think about X' or 'best X for Y' questions."
+    },
+    "KNOWLEDGE BASE": {
+        "tools": ["wikidata"],
+        "guidance": "Use wikidata for precise structured facts — exact dates, populations, coordinates, relationships between entities. More precise than Wikipedia for specific data points."
+    },
+    "TRANSLATION": {
+        "tools": ["translate"],
+        "guidance": "Use translate when you encounter non-English text or need to translate content for the user. Supports 100+ languages."
     },
     "CODE EXECUTION": {
         "tools": ["python_repl"],
@@ -225,6 +240,12 @@ class ResearchAgent:
             # Web Content
             url_tool,
             pdf_tool,
+            # Social & Discussion
+            reddit_tool,
+            # Knowledge Base
+            wikidata_tool,
+            # Translation
+            translation_tool,
             # Code Execution
             python_repl_tool,
             # Visualization

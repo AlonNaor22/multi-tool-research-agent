@@ -1,13 +1,14 @@
 """Utility functions for the research agent.
 
-Contains helper functions like retry logic and timeout wrappers
-that can be used across tools.
+Contains helper functions like retry logic, timeout wrappers,
+and a simple TTL cache for reducing redundant API calls.
 """
 
 import time
 import functools
+import hashlib
 import concurrent.futures
-from typing import Callable, Any, Tuple, Type
+from typing import Callable, Any, Dict, Optional, Tuple, Type
 
 
 def retry_on_error(
@@ -71,12 +72,17 @@ def retry_on_error(
                         print(f"  ⚠️  All {max_retries} retries failed for {func.__name__}")
                         raise
 
+                    # Detect rate limiting (HTTP 429) and back off more aggressively
+                    is_rate_limited = _is_rate_limit_error(e)
+                    retry_delay = current_delay * 5 if is_rate_limited else current_delay
+                    reason = "rate limited" if is_rate_limited else str(e)[:50]
+
                     # Log the retry attempt
                     print(f"  🔄 Retry {attempt + 1}/{max_retries} for {func.__name__} "
-                          f"after error: {str(e)[:50]}...")
+                          f"after {reason}...")
 
                     # Wait before retrying (exponential backoff)
-                    time.sleep(current_delay)
+                    time.sleep(retry_delay)
                     current_delay *= backoff  # Increase delay for next retry
 
             # This shouldn't be reached, but just in case
@@ -84,6 +90,16 @@ def retry_on_error(
 
         return wrapper
     return decorator
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    """Check if an exception represents an HTTP 429 rate limit error."""
+    # requests.exceptions.HTTPError carries a response object
+    if hasattr(error, "response") and hasattr(error.response, "status_code"):
+        return error.response.status_code == 429
+    # Fall back to string matching for other HTTP libraries
+    error_str = str(error)
+    return "429" in error_str or "rate limit" in error_str.lower()
 
 
 def safe_execute(func: Callable, *args, default: Any = None, **kwargs) -> Any:
@@ -144,3 +160,45 @@ def run_with_timeout(func: Callable, args: tuple = (), timeout: int = 30) -> Any
                 f"{func.__name__ if hasattr(func, '__name__') else 'Function'} "
                 f"timed out after {timeout} seconds"
             )
+
+
+class TTLCache:
+    """Simple in-memory cache with per-entry TTL (time-to-live).
+
+    Avoids redundant API calls for identical queries within a short window.
+    Thread-safe for the typical single-threaded agent loop.
+
+    Usage:
+        cache = TTLCache(ttl=300)
+        cache.set("key", value)
+        hit = cache.get("key")  # returns value or None if expired
+    """
+
+    def __init__(self, ttl: int = 300):
+        self.ttl = ttl
+        self._store: Dict[str, Tuple[float, Any]] = {}
+
+    def get(self, key: str) -> Optional[Any]:
+        """Return cached value if present and not expired, else None."""
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        timestamp, value = entry
+        if time.time() - timestamp > self.ttl:
+            del self._store[key]
+            return None
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        """Store a value with the current timestamp."""
+        self._store[key] = (time.time(), value)
+
+    def clear(self) -> None:
+        """Remove all cached entries."""
+        self._store.clear()
+
+    @staticmethod
+    def make_key(*parts: str) -> str:
+        """Build a deterministic cache key from string parts."""
+        raw = "|".join(str(p) for p in parts)
+        return hashlib.md5(raw.encode()).hexdigest()

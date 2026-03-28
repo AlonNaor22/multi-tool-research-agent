@@ -1,25 +1,41 @@
-"""Google Scholar search tool for the research agent.
+"""Academic paper search tool using the Semantic Scholar API.
 
-Searches Google Scholar for academic papers, citations, and research.
+Searches for published research across ALL academic fields — STEM,
+humanities, medicine, social sciences, etc. Returns structured data
+(title, authors, year, citations, abstract, URL) without web scraping.
 
-Useful for historical research, scientific studies, and academic topics.
-Uses web scraping (no API key required).
+Free API, no key required.
 """
 
 import re
+import json
 import requests
-from typing import List, Dict
-from urllib.parse import quote_plus
+from typing import List, Dict, Optional
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error
-from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
+from src.utils import retry_on_error, TTLCache
+from src.constants import (
+    SEMANTIC_SCHOLAR_BASE_URL,
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_CACHE_TTL,
+)
+
+# Cache repeated queries for 5 minutes
+_cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
+
+# Fields to request from the Semantic Scholar API
+_PAPER_FIELDS = "title,authors,year,citationCount,abstract,url,externalIds,publicationTypes"
 
 
 @retry_on_error(max_retries=2, delay=2.0)
-def search_google_scholar(query: str, max_results: int = 5, year_from: int = None, year_to: int = None) -> List[Dict]:
+def search_semantic_scholar(
+    query: str,
+    max_results: int = 5,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
+) -> List[Dict]:
     """
-    Search Google Scholar for academic papers.
+    Search Semantic Scholar for academic papers.
 
     Args:
         query: Search query
@@ -28,150 +44,89 @@ def search_google_scholar(query: str, max_results: int = 5, year_from: int = Non
         year_to: Filter results up to this year
 
     Returns:
-        List of paper dictionaries with title, authors, snippet, url, etc.
+        List of paper dictionaries.
     """
-    # Build the search URL
-    base_url = "https://scholar.google.com/scholar"
+    cache_key = _cache.make_key("scholar", query, str(max_results), str(year_from), str(year_to))
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    url = f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search"
 
     params = {
-        "q": query,
-        "hl": "en",
-        "num": min(max_results, 10),
+        "query": query,
+        "limit": min(max_results, 10),
+        "fields": _PAPER_FIELDS,
     }
 
-    # Add year filters if specified
-    if year_from:
-        params["as_ylo"] = year_from
-    if year_to:
-        params["as_yhi"] = year_to
+    # Year range filter (Semantic Scholar uses "year" param as "YYYY-YYYY")
+    if year_from and year_to:
+        params["year"] = f"{year_from}-{year_to}"
+    elif year_from:
+        params["year"] = f"{year_from}-"
+    elif year_to:
+        params["year"] = f"-{year_to}"
 
-    headers = {
-        "User-Agent": DEFAULT_USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-    }
-
-    response = requests.get(base_url, params=params, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
+    response = requests.get(url, params=params, timeout=DEFAULT_HTTP_TIMEOUT)
     response.raise_for_status()
 
-    html = response.text
+    data = response.json()
+    papers = data.get("data", [])
+
     results = []
+    for paper in papers:
+        # Build a URL — prefer DOI, then Semantic Scholar page
+        paper_url = ""
+        external_ids = paper.get("externalIds") or {}
+        if external_ids.get("DOI"):
+            paper_url = f"https://doi.org/{external_ids['DOI']}"
+        elif external_ids.get("ArXiv"):
+            paper_url = f"https://arxiv.org/abs/{external_ids['ArXiv']}"
+        elif paper.get("url"):
+            paper_url = paper["url"]
 
-    # Parse results using regex (Google Scholar's structure)
-    # Each result is in a div with class "gs_r gs_or gs_scl"
+        # Format authors (first 3 + et al.)
+        authors_list = paper.get("authors") or []
+        author_names = [a.get("name", "") for a in authors_list[:3]]
+        if len(authors_list) > 3:
+            author_names.append("et al.")
+        authors_str = ", ".join(author_names) if author_names else "Unknown"
 
-    # Pattern for title and link
-    title_pattern = r'<h3 class="gs_rt"[^>]*>(?:<span[^>]*>[^<]*</span>)?(?:<a[^>]*href="([^"]*)"[^>]*>)?(.+?)</(?:a>)?</h3>'
+        results.append({
+            "title": paper.get("title", "Untitled"),
+            "authors": authors_str,
+            "year": paper.get("year"),
+            "citations": paper.get("citationCount", 0),
+            "abstract": (paper.get("abstract") or "")[:400],
+            "url": paper_url,
+        })
 
-    # Pattern for authors/source line
-    author_pattern = r'<div class="gs_a">(.+?)</div>'
-
-    # Pattern for snippet
-    snippet_pattern = r'<div class="gs_rs">(.+?)</div>'
-
-    # Pattern for citation count
-    cite_pattern = r'Cited by (\d+)'
-
-    # --- Stage 1: Primary parsing ---
-    # Try the full result container pattern used in standard Scholar pages.
-    result_blocks = re.findall(r'<div class="gs_r gs_or gs_scl"[^>]*>(.+?)</div>\s*</div>\s*</div>', html, re.DOTALL)
-
-    # --- Stage 2: Secondary parsing ---
-    # Alternative page layouts use a simpler result container.
-    if not result_blocks:
-        result_blocks = re.findall(r'<div class="gs_ri">(.+?)</div>\s*(?=<div class="gs_ri">|<div class="gs_r"|$)', html, re.DOTALL)
-
-    for block in result_blocks[:max_results]:
-        paper = {}
-
-        # Extract title and URL
-        title_match = re.search(title_pattern, block, re.DOTALL)
-        if title_match:
-            paper["url"] = title_match.group(1) if title_match.group(1) else ""
-            # Clean HTML tags from title
-            title = title_match.group(2)
-            title = re.sub(r'<[^>]+>', '', title)
-            paper["title"] = title.strip()
-        else:
-            # Try simpler pattern
-            simple_title = re.search(r'<a[^>]*>([^<]+)</a>', block)
-            if simple_title:
-                paper["title"] = simple_title.group(1).strip()
-            else:
-                continue  # Skip if no title found
-
-        # Extract authors and source
-        author_match = re.search(author_pattern, block, re.DOTALL)
-        if author_match:
-            author_text = author_match.group(1)
-            # Clean HTML tags
-            author_text = re.sub(r'<[^>]+>', '', author_text)
-            paper["authors_source"] = author_text.strip()
-
-            # Try to extract year
-            year_match = re.search(r'\b(19|20)\d{2}\b', author_text)
-            if year_match:
-                paper["year"] = year_match.group(0)
-
-        # Extract snippet
-        snippet_match = re.search(snippet_pattern, block, re.DOTALL)
-        if snippet_match:
-            snippet = snippet_match.group(1)
-            # Clean HTML tags
-            snippet = re.sub(r'<[^>]+>', '', snippet)
-            paper["snippet"] = snippet.strip()[:300]
-
-        # Extract citation count
-        cite_match = re.search(cite_pattern, block)
-        if cite_match:
-            paper["citations"] = cite_match.group(1)
-
-        if paper.get("title"):
-            results.append(paper)
-
-    # --- Stage 3: Fallback ---
-    # Minimal title+URL extraction when the page structure doesn't match
-    # expected patterns (e.g. CAPTCHA pages, layout changes).
-    if not results:
-        # Try to find any titles
-        all_titles = re.findall(r'<h3 class="gs_rt"[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>([^<]+)', html, re.DOTALL)
-        for url, title in all_titles[:max_results]:
-            results.append({
-                "title": title.strip(),
-                "url": url,
-                "authors_source": "See link for details",
-                "snippet": ""
-            })
-
+    _cache.set(cache_key, results)
     return results
 
 
 def format_results(results: List[Dict], query: str) -> str:
     """Format search results for display."""
     if not results:
-        return f"No Google Scholar results found for '{query}'. Try different search terms or check if the topic has academic coverage."
+        return f"No academic papers found for '{query}'. Try different search terms or broader keywords."
 
-    lines = [f"Google Scholar Results for '{query}':", ""]
+    lines = [f"Academic Paper Results for '{query}':", ""]
 
     for i, paper in enumerate(results, 1):
-        lines.append(f"{i}. {paper.get('title', 'Unknown Title')}")
+        lines.append(f"{i}. {paper['title']}")
+        lines.append(f"   Authors: {paper['authors']}")
 
-        if paper.get('authors_source'):
-            lines.append(f"   Source: {paper['authors_source']}")
-
-        if paper.get('year'):
+        if paper.get("year"):
             lines.append(f"   Year: {paper['year']}")
 
-        if paper.get('citations'):
+        if paper.get("citations"):
             lines.append(f"   Citations: {paper['citations']}")
 
-        if paper.get('url'):
+        if paper.get("url"):
             lines.append(f"   URL: {paper['url']}")
 
-        if paper.get('snippet'):
-            lines.append(f"   Summary: {paper['snippet'][:200]}...")
+        if paper.get("abstract"):
+            lines.append(f"   Abstract: {paper['abstract'][:250]}...")
 
         lines.append("")
 
@@ -182,7 +137,7 @@ def format_results(results: List[Dict], query: str) -> str:
 
 def scholar_search(input_str: str) -> str:
     """
-    Search Google Scholar for academic papers.
+    Search for academic papers across all fields.
 
     Supports formats:
     - "climate change effects"
@@ -211,8 +166,19 @@ def scholar_search(input_str: str) -> str:
     year_to = None
     query = input_str
 
+    # Try JSON input first
+    try:
+        if query.strip().startswith("{"):
+            options = json.loads(query)
+            query = options.get("query", query)
+            max_results = min(options.get("max_results", 5), 10)
+            year_from = options.get("year_from")
+            year_to = options.get("year_to")
+    except json.JSONDecodeError:
+        pass
+
     # Check for "N results:" prefix
-    count_match = re.match(r'(\d+)\s+results?:\s*(.+)', input_str, re.IGNORECASE)
+    count_match = re.match(r'(\d+)\s+results?:\s*(.+)', query, re.IGNORECASE)
     if count_match:
         max_results = min(int(count_match.group(1)), 10)
         query = count_match.group(2)
@@ -237,17 +203,17 @@ def scholar_search(input_str: str) -> str:
         query = to_match.group(2)
 
     try:
-        results = search_google_scholar(query, max_results, year_from, year_to)
+        results = search_semantic_scholar(query, max_results, year_from, year_to)
         return format_results(results, query)
     except requests.exceptions.RequestException as e:
-        return f"Error searching Google Scholar: {str(e)}"
+        return f"Error searching academic papers: {str(e)}"
     except Exception as e:
         return f"Error: {str(e)}"
 
 
 def _get_help() -> str:
     """Return help text."""
-    return """Google Scholar Search Help:
+    return """Academic Paper Search Help (powered by Semantic Scholar):
 
 FORMAT:
   paleoclimate ancient israel
@@ -264,24 +230,23 @@ OPTIONS:
 
 RETURNS:
   - Paper title
-  - Authors and source/journal
+  - Authors
   - Publication year
   - Citation count
-  - URL to paper
+  - URL (DOI or ArXiv link)
   - Abstract snippet
 
 TIPS:
+  - Covers ALL academic fields (STEM, humanities, medicine, social sciences)
   - Use specific academic terms for better results
   - Add "review" for overview papers
   - Add "meta-analysis" for comprehensive studies
-  - Use year filters for historical research
   - Combine with pdf_reader to read full papers
 
 EXAMPLES:
   "paleoclimate levant bronze age"
   "from 2015: deep learning survey"
-  "2000-2010: roman climate reconstruction"
-  "holocene climate mediterranean review" """
+  "2000-2010: roman climate reconstruction" """
 
 
 # Create the LangChain Tool wrapper
@@ -289,7 +254,7 @@ google_scholar_tool = Tool(
     name="google_scholar",
     func=scholar_search,
     description=(
-        "Search Google Scholar for published research across ALL academic fields. "
+        "Search for published academic research across ALL fields using Semantic Scholar. "
         "\n\nBEST FOR: History, humanities, medicine, social sciences, archaeology, climate history, ancient studies."
         "\n\nNOT FOR: Cutting-edge AI/ML or CS research (use arxiv_search instead)."
         "\n\nFORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'"

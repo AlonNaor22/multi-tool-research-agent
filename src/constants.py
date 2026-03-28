@@ -1,7 +1,7 @@
 """Shared constants used across multiple tools.
 
 Centralizes values that were previously duplicated in individual tool files:
-User-Agent strings, HTTP timeouts, content size limits, and chart defaults.
+User-Agent strings, HTTP timeouts, content size limits, API URLs, and chart defaults.
 """
 
 # ---------------------------------------------------------------------------
@@ -45,3 +45,15 @@ CHART_DPI = 150             # Dots per inch — produces 1500x900 px images
 # preserves at least this fraction of the target length. Avoids cutting too
 # aggressively when the nearest boundary is far from the limit.
 TRUNCATION_PRESERVE_RATIO = 0.7
+
+# ---------------------------------------------------------------------------
+# API URLs
+# ---------------------------------------------------------------------------
+SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
+REDDIT_SEARCH_URL = "https://www.reddit.com/search.json"
+WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
+
+# ---------------------------------------------------------------------------
+# Caching
+# ---------------------------------------------------------------------------
+DEFAULT_CACHE_TTL = 300  # Seconds before a cached result expires (5 minutes)
