@@ -12,6 +12,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
+from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
 from src.tool_health import check_tool_health, get_available_tools
 from config import (
     ANTHROPIC_API_KEY,
@@ -270,6 +271,8 @@ class ResearchAgent:
         # Create callback handlers
         self.timing_callback = TimingCallbackHandler()
         self.streaming_callback = StreamingCallbackHandler()
+        self.observability_callback = ObservabilityCallbackHandler(model_name=MODEL_NAME)
+        self.metrics_store = MetricsStore()
 
         # Build system prompt with disabled tools removed from categories
         system_prompt = _build_system_prompt(disabled_tools=self.disabled_tools)
@@ -295,8 +298,9 @@ class ResearchAgent:
             The agent's final answer as a string.
         """
         try:
-            # Reset timing data from previous query
+            # Reset callbacks for new query
             self.timing_callback.reset()
+            self.observability_callback.reset(question=question)
 
             # Build messages: conversation history + new question
             messages = self.memory.get_messages()
@@ -305,7 +309,7 @@ class ResearchAgent:
             # Run the agent with native tool calling
             result = self.agent.invoke(
                 {"messages": messages},
-                {"callbacks": [self.timing_callback],
+                {"callbacks": [self.timing_callback, self.observability_callback],
                  "recursion_limit": MAX_ITERATIONS * 2},
             )
 
@@ -315,9 +319,14 @@ class ResearchAgent:
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)
 
+            # Persist observability metrics
+            metrics = self.observability_callback.get_metrics()
+            self.metrics_store.save(metrics)
+
             # Print timing summary if requested
             if show_timing:
                 print(self.timing_callback.get_summary())
+                print(format_query_metrics(metrics))
 
             return answer
         except Exception as e:
@@ -342,6 +351,7 @@ class ResearchAgent:
             # Reset state from previous query
             self.timing_callback.reset()
             self.streaming_callback.reset()
+            self.observability_callback.reset(question=question)
 
             # Build messages: conversation history + new question
             messages = self.memory.get_messages()
@@ -351,7 +361,8 @@ class ResearchAgent:
             final_result = None
             for chunk in self.agent.stream(
                 {"messages": messages},
-                {"callbacks": [self.timing_callback, self.streaming_callback],
+                {"callbacks": [self.timing_callback, self.streaming_callback,
+                               self.observability_callback],
                  "recursion_limit": MAX_ITERATIONS * 2},
                 stream_mode="values",
             ):
@@ -363,9 +374,14 @@ class ResearchAgent:
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)
 
+            # Persist observability metrics
+            metrics = self.observability_callback.get_metrics()
+            self.metrics_store.save(metrics)
+
             # Print timing summary if requested
             if show_timing:
                 print(self.timing_callback.get_summary())
+                print(format_query_metrics(metrics))
 
             return answer
         except Exception as e:
@@ -393,6 +409,10 @@ class ResearchAgent:
     def get_last_timing(self) -> str:
         """Get the timing summary from the last query."""
         return self.timing_callback.get_summary()
+
+    def get_last_metrics(self):
+        """Get the observability metrics from the last query."""
+        return self.observability_callback.get_metrics()
 
     def clear_memory(self):
         """Clear the conversation history and start a new session."""

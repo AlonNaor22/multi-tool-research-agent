@@ -39,10 +39,12 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 - [x] Sidebar: tool health status, session save/load/clear, query timing
 - [x] Run with `streamlit run app.py`
 
-### 7. Observability
-- [ ] Token usage tracking (cost per query)
-- [ ] Tool call success/failure rates
-- [ ] Full trace logging (LangSmith or similar)
+### 7. ~~Observability~~ (DONE)
+- [x] `ObservabilityCallbackHandler` captures token usage, tool metrics, and timing per query
+- [x] `QueryMetrics` dataclass with cost calculation (model-aware pricing tables)
+- [x] `MetricsStore` persists metrics to `observability/metrics.jsonl` (JSONL append-only)
+- [x] Streamlit dashboard: token counts, cost, tool calls, performance history with bar chart
+- [x] CLI: metrics printed after each query + `stats` command for aggregate stats
 
 ### 8. Async / True Parallelism
 - [ ] Replace ThreadPoolExecutor workaround with native async (`ainvoke`)

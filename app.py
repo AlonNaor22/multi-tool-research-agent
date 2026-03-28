@@ -6,6 +6,7 @@ with real-time streaming feedback (thinking, tool calls, answers).
 
 import streamlit as st
 import time
+import pandas as pd
 from typing import Any, Dict
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, AIMessage
@@ -13,6 +14,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from src.agent import ResearchAgent
 from src.session_manager import list_sessions
 from src.tool_health import format_health_status
+from src.observability import MetricsStore
 from config import ANTHROPIC_API_KEY, MODEL_NAME
 
 
@@ -79,11 +81,12 @@ if "agent" not in st.session_state:
         st.session_state.agent = ResearchAgent()
     st.session_state.chat_history = []  # List of {"role": ..., "content": ...}
     st.session_state.tool_events = []   # Events from last query for display
+    st.session_state.last_metrics = None
 
 agent: ResearchAgent = st.session_state.agent
 
 # ---------------------------------------------------------------------------
-# Sidebar — tool status & session management
+# Sidebar — tool status, observability, session management
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
@@ -96,6 +99,48 @@ with st.sidebar:
         all_tool_names = [t.name for t in agent.tools] + agent.disabled_tools
         health_str = format_health_status(agent.tool_health, all_tool_names)
         st.text(health_str)
+
+    st.divider()
+
+    # --- Observability: Last Query Metrics ---
+    last_metrics = st.session_state.last_metrics
+    if last_metrics:
+        with st.expander("Last Query Metrics", expanded=True):
+            col_in, col_out = st.columns(2)
+            col_in.metric("Input Tokens", f"{last_metrics.input_tokens:,}")
+            col_out.metric("Output Tokens", f"{last_metrics.output_tokens:,}")
+
+            col_cost, col_dur = st.columns(2)
+            col_cost.metric("Est. Cost", f"${last_metrics.estimated_cost_usd:.5f}")
+            col_dur.metric("Duration", f"{last_metrics.total_duration_s:.1f}s")
+
+            if last_metrics.tools_called:
+                st.caption("Tool calls:")
+                for t in last_metrics.tools_called:
+                    icon = "✅" if t["status"] == "success" else "❌"
+                    st.text(f"  {icon} {t['name']} ({t['duration_s']:.1f}s)")
+
+    # --- Observability: Performance History ---
+    store = MetricsStore()
+    summary = store.get_summary_stats()
+    if summary["total_queries"] > 0:
+        with st.expander("Performance History", expanded=False):
+            col_q, col_t = st.columns(2)
+            col_q.metric("Total Queries", summary["total_queries"])
+            col_t.metric("Total Cost", f"${summary['total_cost_usd']:.4f}")
+
+            col_avg, col_rate = st.columns(2)
+            col_avg.metric("Avg Tokens/Query", f"{summary['avg_tokens_per_query']:,}")
+            col_rate.metric("Tool Success Rate", f"{summary['tool_success_rate']}%")
+
+            # Tool usage bar chart
+            if summary["tool_usage"]:
+                st.caption("Tool usage distribution:")
+                tool_df = pd.DataFrame(
+                    list(summary["tool_usage"].items()),
+                    columns=["Tool", "Calls"]
+                ).set_index("Tool")
+                st.bar_chart(tool_df)
 
     st.divider()
 
@@ -116,6 +161,7 @@ with st.sidebar:
             agent.current_session_id = None
             st.session_state.chat_history = []
             st.session_state.tool_events = []
+            st.session_state.last_metrics = None
             st.rerun()
 
     # Load session
@@ -132,18 +178,6 @@ with st.sidebar:
                             st.session_state.chat_history.append({"role": "user", "content": user_input})
                             st.session_state.chat_history.append({"role": "assistant", "content": agent_output})
                         st.rerun()
-
-    st.divider()
-
-    # Last query timing
-    if agent.timing_callback.tool_times:
-        with st.expander("Last Query Timing", expanded=True):
-            total = 0.0
-            for entry in agent.timing_callback.tool_times:
-                dur = entry["duration"]
-                total += dur
-                st.text(f"  {entry['tool']}: {dur:.2f}s")
-            st.text(f"  Total: {total:.2f}s")
 
 # ---------------------------------------------------------------------------
 # Chat display
@@ -168,9 +202,10 @@ if prompt := st.chat_input("Ask a research question..."):
         # Show tool activity in a status widget
         status = st.status("Researching...", expanded=True)
 
-        # Set up our Streamlit callback
+        # Set up callbacks
         sl_callback = StreamlitCallbackHandler()
         agent.timing_callback.reset()
+        agent.observability_callback.reset(question=prompt)
 
         # Build messages and stream
         messages = agent.memory.get_messages()
@@ -182,7 +217,8 @@ if prompt := st.chat_input("Ask a research question..."):
         try:
             for chunk in agent.agent.stream(
                 {"messages": messages},
-                {"callbacks": [agent.timing_callback, sl_callback],
+                {"callbacks": [agent.timing_callback, sl_callback,
+                               agent.observability_callback],
                  "recursion_limit": 20},
                 stream_mode="values",
             ):
@@ -210,6 +246,11 @@ if prompt := st.chat_input("Ask a research question..."):
 
             # Save to memory
             agent.memory.add_exchange(prompt, answer)
+
+            # Persist and store metrics
+            metrics = agent.observability_callback.get_metrics()
+            agent.metrics_store.save(metrics)
+            st.session_state.last_metrics = metrics
 
             status.update(label=f"Done in {elapsed:.1f}s", state="complete", expanded=False)
 

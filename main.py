@@ -8,6 +8,7 @@ import sys
 from src.agent import ResearchAgent
 from src.session_manager import list_sessions, get_session_preview
 from src.tool_health import format_health_status
+from src.observability import MetricsStore
 
 
 def print_banner():
@@ -22,6 +23,7 @@ def print_banner():
     print("  'save'     - Save current session")
     print("  'load'     - Load a previous session")
     print("  'sessions' - List all saved sessions")
+    print("  'stats'    - Show performance stats")
     print("  'quit'     - Exit the program")
     print()
 
@@ -121,6 +123,13 @@ def main():
                             print(f"Restored {len(agent.memory.history)} messages.\n")
                         else:
                             print(f"Could not load session: {session_id}\n")
+                continue
+
+            # Check for stats command
+            if query.lower() == "stats":
+                store = MetricsStore()
+                print(store.format_summary())
+                print()
                 continue
 
             # Check for list sessions command
