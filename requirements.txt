@@ -18,6 +18,9 @@ pypdf>=3.17.0                    # PDF text extraction
 python-dotenv>=1.0.0             # Load environment variables from .env
 requests>=2.31.0                 # HTTP requests (for Wolfram Alpha, etc.)
 
+# Web UI
+streamlit>=1.32.0                # Chat-based web interface
+
 # Testing
 pytest>=7.0                      # Test framework
 pytest-mock>=3.10                # Mock fixtures for pytest

@@ -33,9 +33,11 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 
 ## Medium Impact
 
-### 6. Web UI
-- [ ] Simple Streamlit or Gradio frontend (even 50 lines)
-- [ ] Makes the project demo-able in interviews instead of CLI-only
+### 6. ~~Web UI~~ (DONE)
+- [x] Streamlit chat interface with `st.chat_message` / `st.chat_input`
+- [x] Real-time streaming feedback (thinking, tool calls) via `st.status` widget
+- [x] Sidebar: tool health status, session save/load/clear, query timing
+- [x] Run with `streamlit run app.py`
 
 ### 7. Observability
 - [ ] Token usage tracking (cost per query)
