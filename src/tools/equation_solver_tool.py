@@ -1,97 +1,377 @@
-"""Equation solver tool for the research agent.
+"""Equation solver and symbolic math tool for the research agent.
 
-A dedicated tool for solving mathematical equations with unknown variables.
-Uses SymPy for symbolic mathematics.
-
-Supports:
-- Linear equations: x + 2 = 5
-- Quadratic equations: x^2 - 4 = 0
-- Equations with multiple variables: solve for one variable
-- Systems of equations (basic support)
+A comprehensive math tool powered by SymPy for:
+- Single-variable equations: x + 2 = 5
+- Systems of equations: x + y = 5, 2x - y = 1
+- Matrix operations: multiply, inverse, determinant, eigenvalues, transpose
+- Symbolic algebra: simplify, expand, factor
+- Calculus: derivatives and integrals
 """
 
 import re
+import json
 from typing import List, Optional
 from langchain_core.tools import Tool
 
 try:
-    from sympy import symbols, Eq, solve, sympify, SympifyError
-    from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+    from sympy import (
+        symbols, Eq, solve, sympify, SympifyError, Matrix,
+        simplify as sym_simplify, expand as sym_expand, factor as sym_factor,
+        diff as sym_diff, integrate as sym_integrate, pretty,
+    )
+    from sympy.parsing.sympy_parser import (
+        parse_expr, standard_transformations, implicit_multiplication_application,
+    )
     SYMPY_AVAILABLE = True
 except ImportError:
     SYMPY_AVAILABLE = False
 
 
+# ---------------------------------------------------------------------------
+# Preprocessing helpers
+# ---------------------------------------------------------------------------
+
+_KNOWN_FUNCTIONS = {'sin', 'cos', 'tan', 'log', 'exp', 'sqrt', 'abs',
+                     'sinh', 'cosh', 'tanh', 'asin', 'acos', 'atan'}
+
+
 def _preprocess_equation(equation_str: str) -> str:
-    """
-    Preprocess equation string to make it SymPy-compatible.
-
-    Converts:
-    - x^2 to x**2 (power notation)
-    - 2x to 2*x (implicit multiplication)
-    """
-    # Replace ^ with ** for powers
+    """Make an equation string SymPy-compatible (^ → **, implicit multiplication)."""
     equation_str = equation_str.replace("^", "**")
-
-    # Add multiplication between number and variable (e.g., 2x -> 2*x)
+    # 2x → 2*x
     equation_str = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', equation_str)
-
-    # Add multiplication between closing paren and variable (e.g., (2)x -> (2)*x)
+    # )x → )*x
     equation_str = re.sub(r'\)([a-zA-Z])', r')*\1', equation_str)
-
-    # Add multiplication between variable and opening paren (e.g., x(2) -> x*(2))
-    equation_str = re.sub(r'([a-zA-Z])\(', r'\1*(', equation_str)
-
+    # x( → x*( BUT skip known functions like sin(, cos(, etc.
+    equation_str = re.sub(
+        r'([a-zA-Z])\(',
+        lambda m: m.group(0) if _is_function_prefix(equation_str, m.start()) else m.group(1) + '*(',
+        equation_str,
+    )
     return equation_str
+
+
+def _is_function_prefix(s: str, pos: int) -> bool:
+    """Check if the letter at pos is the end of a known function name."""
+    for func in _KNOWN_FUNCTIONS:
+        start = pos - len(func) + 1
+        if start >= 0 and s[start:pos + 1] == func:
+            # Make sure it's not part of a longer word
+            if start == 0 or not s[start - 1].isalpha():
+                return True
+    return False
 
 
 def _extract_variables(expression_str: str) -> List[str]:
     """Extract variable names from an expression string."""
-    # Find all single letters that could be variables
-    # Exclude common function names
     reserved = {'sin', 'cos', 'tan', 'log', 'exp', 'sqrt', 'abs', 'pi', 'e'}
-
-    # Find potential variables (single letters or letter followed by numbers)
     potential_vars = re.findall(r'\b([a-zA-Z])\b', expression_str)
-
-    # Filter out reserved names and duplicates
     variables = []
     seen = set()
     for var in potential_vars:
         if var.lower() not in reserved and var not in seen:
             variables.append(var)
             seen.add(var)
-
     return variables
 
 
+def _parse_sympy_expr(expr_str: str, local_dict: dict):
+    """Parse a string into a SymPy expression with standard transformations."""
+    transformations = standard_transformations + (implicit_multiplication_application,)
+    return parse_expr(expr_str, local_dict=local_dict, transformations=transformations)
+
+
+def _format_number(val) -> str:
+    """Format a SymPy numeric value for display."""
+    if val.is_number:
+        numeric = complex(val.evalf())
+        if numeric.imag == 0:
+            real = numeric.real
+            if real == int(real):
+                return str(int(real))
+            return f"{real:.6g}"
+        return str(val)
+    return str(val)
+
+
+# ---------------------------------------------------------------------------
+# Single equation (existing)
+# ---------------------------------------------------------------------------
+
+def _solve_single_equation(input_str: str, target_var: Optional[str] = None) -> str:
+    """Solve a single equation for one variable."""
+    if "=" not in input_str:
+        input_str = input_str + " = 0"
+
+    parts = input_str.split("=")
+    if len(parts) != 2:
+        return "Error: Equation must have exactly one '=' sign"
+
+    left_side = _preprocess_equation(parts[0].strip())
+    right_side = _preprocess_equation(parts[1].strip())
+
+    all_vars = _extract_variables(left_side + " " + right_side)
+    if not all_vars:
+        return "Error: No variables found in equation"
+
+    sym_vars = {var: symbols(var) for var in all_vars}
+    left_expr = _parse_sympy_expr(left_side, sym_vars)
+    right_expr = _parse_sympy_expr(right_side, sym_vars)
+    equation = Eq(left_expr, right_expr)
+
+    if target_var and target_var in sym_vars:
+        solve_var = sym_vars[target_var]
+    elif len(all_vars) == 1:
+        solve_var = sym_vars[all_vars[0]]
+    elif 'x' in all_vars:
+        solve_var = sym_vars['x']
+    else:
+        solve_var = sym_vars[all_vars[0]]
+
+    solutions = solve(equation, solve_var)
+    if not solutions:
+        return f"No solution found for {solve_var}"
+
+    var_name = str(solve_var)
+    if len(solutions) == 1:
+        return f"{var_name} = {_format_number(solutions[0])}"
+
+    formatted = [_format_number(sol) for sol in solutions]
+    return f"{var_name} = {', '.join(formatted)}"
+
+
+# ---------------------------------------------------------------------------
+# Systems of equations (new)
+# ---------------------------------------------------------------------------
+
+def _solve_system(input_str: str) -> str:
+    """Solve a system of equations with multiple variables.
+
+    Input: "x + y = 5, 2x - y = 1"
+    """
+    equations_str = [eq.strip() for eq in input_str.split(",")]
+    if len(equations_str) < 2:
+        return "Error: System needs at least 2 equations separated by commas."
+
+    all_vars_set = set()
+    equations = []
+
+    for eq_str in equations_str:
+        if "=" not in eq_str:
+            return f"Error: Each equation needs '='. Problem: '{eq_str}'"
+
+        parts = eq_str.split("=")
+        if len(parts) != 2:
+            return f"Error: Invalid equation: '{eq_str}'"
+
+        left = _preprocess_equation(parts[0].strip())
+        right = _preprocess_equation(parts[1].strip())
+        all_vars_set.update(_extract_variables(left + " " + right))
+        equations.append((left, right))
+
+    if not all_vars_set:
+        return "Error: No variables found in system"
+
+    sym_vars = {var: symbols(var) for var in sorted(all_vars_set)}
+
+    sym_equations = []
+    for left, right in equations:
+        left_expr = _parse_sympy_expr(left, sym_vars)
+        right_expr = _parse_sympy_expr(right, sym_vars)
+        sym_equations.append(Eq(left_expr, right_expr))
+
+    solve_for = [sym_vars[v] for v in sorted(all_vars_set)]
+    solutions = solve(sym_equations, solve_for)
+
+    if not solutions:
+        return "No solution found for this system."
+
+    # Solutions can be a dict (unique solution) or list of tuples (multiple)
+    if isinstance(solutions, dict):
+        lines = ["Solution:"]
+        for var, val in solutions.items():
+            lines.append(f"  {var} = {_format_number(val)}")
+        return "\n".join(lines)
+    elif isinstance(solutions, list):
+        if len(solutions) == 1 and isinstance(solutions[0], tuple):
+            lines = ["Solution:"]
+            for var, val in zip(solve_for, solutions[0]):
+                lines.append(f"  {var} = {_format_number(val)}")
+            return "\n".join(lines)
+        lines = [f"Found {len(solutions)} solutions:"]
+        for i, sol in enumerate(solutions, 1):
+            if isinstance(sol, tuple):
+                parts = [f"{v} = {_format_number(s)}" for v, s in zip(solve_for, sol)]
+                lines.append(f"  {i}. {', '.join(parts)}")
+            else:
+                lines.append(f"  {i}. {sol}")
+        return "\n".join(lines)
+
+    return f"Solution: {solutions}"
+
+
+# ---------------------------------------------------------------------------
+# Matrix operations (new)
+# ---------------------------------------------------------------------------
+
+def _parse_matrix(matrix_str: str) -> "Matrix":
+    """Parse a matrix from string like '[[1,2],[3,4]]'."""
+    matrix_str = matrix_str.strip()
+    try:
+        data = json.loads(matrix_str)
+        return Matrix(data)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Try SymPy parsing
+    try:
+        cleaned = matrix_str.replace(" ", "")
+        data = eval(cleaned, {"__builtins__": {}})
+        return Matrix(data)
+    except Exception:
+        raise ValueError(f"Cannot parse matrix: '{matrix_str}'. Use format: [[1,2],[3,4]]")
+
+
+def _format_matrix(m: "Matrix") -> str:
+    """Format a matrix for readable display."""
+    rows = m.tolist()
+    # Format each element
+    formatted_rows = []
+    for row in rows:
+        formatted_row = [_format_number(sympify(val)) if not isinstance(val, (int, float)) else
+                         str(int(val)) if isinstance(val, float) and val == int(val) else str(val)
+                         for val in row]
+        formatted_rows.append("[" + ", ".join(formatted_row) + "]")
+    return "[" + ", ".join(formatted_rows) + "]"
+
+
+def _handle_matrix_operation(op: str, input_str: str) -> str:
+    """Handle matrix operations: multiply, inverse, determinant, eigenvalues, transpose."""
+    try:
+        if op == "multiply":
+            # Parse two matrices separated by *
+            parts = input_str.split("*")
+            if len(parts) != 2:
+                return "Error: Matrix multiplication needs two matrices separated by *. Example: [[1,2],[3,4]] * [[5,6],[7,8]]"
+            m1 = _parse_matrix(parts[0])
+            m2 = _parse_matrix(parts[1])
+            result = m1 * m2
+            return f"Result:\n{_format_matrix(result)}"
+
+        m = _parse_matrix(input_str)
+
+        if op == "inverse":
+            if m.det() == 0:
+                return "Error: Matrix is singular (determinant = 0), cannot invert."
+            result = m.inv()
+            return f"Inverse:\n{_format_matrix(result)}"
+
+        elif op == "determinant":
+            det = m.det()
+            return f"Determinant = {_format_number(det)}"
+
+        elif op == "eigenvalues":
+            eigenvals = m.eigenvals()
+            lines = ["Eigenvalues:"]
+            for val, mult in eigenvals.items():
+                val_str = _format_number(val)
+                if mult > 1:
+                    lines.append(f"  {val_str} (multiplicity {mult})")
+                else:
+                    lines.append(f"  {val_str}")
+            return "\n".join(lines)
+
+        elif op == "transpose":
+            result = m.T
+            return f"Transpose:\n{_format_matrix(result)}"
+
+        elif op == "rank":
+            return f"Rank = {m.rank()}"
+
+        elif op == "rref":
+            rref_matrix, pivots = m.rref()
+            return f"Row echelon form:\n{_format_matrix(rref_matrix)}\nPivot columns: {list(pivots)}"
+
+        else:
+            return f"Error: Unknown matrix operation '{op}'"
+
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error in matrix operation: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Symbolic algebra (new)
+# ---------------------------------------------------------------------------
+
+def _handle_symbolic(op: str, input_str: str) -> str:
+    """Handle symbolic algebra: simplify, expand, factor, derivative, integrate."""
+    try:
+        preprocessed = _preprocess_equation(input_str.strip())
+        all_vars = _extract_variables(preprocessed)
+        sym_vars = {var: symbols(var) for var in all_vars}
+
+        expr = _parse_sympy_expr(preprocessed, sym_vars)
+
+        # Determine the primary variable (for calculus operations)
+        if 'x' in sym_vars:
+            primary_var = sym_vars['x']
+        elif all_vars:
+            primary_var = sym_vars[all_vars[0]]
+        else:
+            primary_var = None
+
+        if op == "simplify":
+            result = sym_simplify(expr)
+            return f"Simplified: {result}"
+
+        elif op == "expand":
+            result = sym_expand(expr)
+            return f"Expanded: {result}"
+
+        elif op == "factor":
+            result = sym_factor(expr)
+            return f"Factored: {result}"
+
+        elif op in ("derivative", "diff"):
+            if primary_var is None:
+                return "Error: No variable found for differentiation"
+            result = sym_diff(expr, primary_var)
+            return f"d/d{primary_var}({expr}) = {result}"
+
+        elif op in ("integrate", "integral"):
+            if primary_var is None:
+                return "Error: No variable found for integration"
+            result = sym_integrate(expr, primary_var)
+            return f"∫({expr}) d{primary_var} = {result} + C"
+
+        else:
+            return f"Error: Unknown operation '{op}'"
+
+    except SympifyError as e:
+        return f"Error parsing expression: {str(e)}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
 def solve_equation(input_str: str) -> str:
     """
-    Solve an equation for unknown variable(s).
+    Solve equations, systems, matrix operations, and symbolic algebra.
 
-    Supports formats:
-    - "x + 2 = 5"
-    - "solve x + 2 = 5"
-    - "x^2 - 4 = 0"
-    - "2x + 3 = 11"
-    - "solve for x: 2x + y = 10" (when y is known or solving for x in terms of y)
-
-    Args:
-        input_str: The equation to solve
-
-    Returns:
-        Solution string or error message
+    Detects the operation from a prefix and dispatches to the right handler.
+    Default (no prefix): solves a single equation.
     """
     if not SYMPY_AVAILABLE:
         return "Error: SymPy library is not installed. Run: pip install sympy"
 
     input_str = input_str.strip()
-
-    # Handle empty input
     if not input_str:
-        return "Error: Empty equation"
-
-    # Command: help
+        return "Error: Empty input"
     if input_str.lower() in ("help", "?"):
         return _get_help()
 
@@ -99,101 +379,47 @@ def solve_equation(input_str: str) -> str:
     if input_str.lower().startswith("solve"):
         input_str = input_str[5:].strip()
 
-    # Remove "for x:" type prefix if present
-    solve_for_match = re.match(r'for\s+([a-zA-Z])\s*:\s*(.+)', input_str, re.IGNORECASE)
+    lower = input_str.lower()
+
+    # --- Systems of equations ---
+    if lower.startswith("system:"):
+        return _solve_system(input_str[7:].strip())
+
+    # --- Matrix operations ---
+    matrix_ops = {
+        "matrix:": "multiply", "multiply:": "multiply",
+        "inverse:": "inverse", "inv:": "inverse",
+        "determinant:": "determinant", "det:": "determinant",
+        "eigenvalues:": "eigenvalues", "eigen:": "eigenvalues",
+        "transpose:": "transpose",
+        "rank:": "rank",
+        "rref:": "rref",
+    }
+    for prefix, op in matrix_ops.items():
+        if lower.startswith(prefix):
+            return _handle_matrix_operation(op, input_str[len(prefix):].strip())
+
+    # --- Symbolic algebra ---
+    symbolic_ops = {
+        "simplify:": "simplify",
+        "expand:": "expand",
+        "factor:": "factor",
+        "derivative:": "derivative", "diff:": "diff",
+        "integrate:": "integrate", "integral:": "integral",
+    }
+    for prefix, op in symbolic_ops.items():
+        if lower.startswith(prefix):
+            return _handle_symbolic(op, input_str[len(prefix):].strip())
+
+    # --- Default: solve for x with optional "for x:" prefix ---
     target_var = None
+    solve_for_match = re.match(r'for\s+([a-zA-Z])\s*:\s*(.+)', input_str, re.IGNORECASE)
     if solve_for_match:
         target_var = solve_for_match.group(1)
         input_str = solve_for_match.group(2)
 
-    # Check if there's an equals sign
-    if "=" not in input_str:
-        # Try to solve expression = 0
-        input_str = input_str + " = 0"
-
-    # Split by equals sign
-    parts = input_str.split("=")
-    if len(parts) != 2:
-        return "Error: Equation must have exactly one '=' sign"
-
-    left_side = parts[0].strip()
-    right_side = parts[1].strip()
-
-    # Preprocess both sides
-    left_side = _preprocess_equation(left_side)
-    right_side = _preprocess_equation(right_side)
-
     try:
-        # Extract variables
-        all_vars = _extract_variables(left_side + " " + right_side)
-
-        if not all_vars:
-            return "Error: No variables found in equation"
-
-        # Create SymPy symbols
-        sym_vars = {var: symbols(var) for var in all_vars}
-
-        # Parse expressions
-        transformations = standard_transformations + (implicit_multiplication_application,)
-
-        left_expr = parse_expr(left_side, local_dict=sym_vars, transformations=transformations)
-        right_expr = parse_expr(right_side, local_dict=sym_vars, transformations=transformations)
-
-        # Create equation
-        equation = Eq(left_expr, right_expr)
-
-        # Determine which variable to solve for
-        if target_var and target_var in sym_vars:
-            solve_var = sym_vars[target_var]
-        elif len(all_vars) == 1:
-            solve_var = sym_vars[all_vars[0]]
-        else:
-            # Default to 'x' if present, otherwise first variable
-            if 'x' in all_vars:
-                solve_var = sym_vars['x']
-            else:
-                solve_var = sym_vars[all_vars[0]]
-
-        # Solve the equation
-        solutions = solve(equation, solve_var)
-
-        # Format the result
-        if not solutions:
-            return f"No solution found for {solve_var}"
-
-        var_name = str(solve_var)
-
-        if len(solutions) == 1:
-            sol = solutions[0]
-            # Check if solution is numeric
-            if sol.is_number:
-                # Evaluate to get decimal if it's a complex expression
-                numeric_val = float(sol.evalf())
-                if numeric_val == int(numeric_val):
-                    return f"{var_name} = {int(numeric_val)}"
-                else:
-                    return f"{var_name} = {numeric_val:.6g}"
-            else:
-                return f"{var_name} = {sol}"
-        else:
-            # Multiple solutions
-            formatted_solutions = []
-            for sol in solutions:
-                if sol.is_number:
-                    numeric_val = complex(sol.evalf())
-                    if numeric_val.imag == 0:
-                        real_val = numeric_val.real
-                        if real_val == int(real_val):
-                            formatted_solutions.append(str(int(real_val)))
-                        else:
-                            formatted_solutions.append(f"{real_val:.6g}")
-                    else:
-                        formatted_solutions.append(str(sol))
-                else:
-                    formatted_solutions.append(str(sol))
-
-            return f"{var_name} = {', '.join(formatted_solutions)}"
-
+        return _solve_single_equation(input_str, target_var)
     except SympifyError as e:
         return f"Error parsing equation: {str(e)}"
     except Exception as e:
@@ -202,33 +428,34 @@ def solve_equation(input_str: str) -> str:
 
 def _get_help() -> str:
     """Return help text."""
-    return """Equation Solver Help:
+    return """Equation Solver & Symbolic Math Help:
 
-BASIC USAGE:
-  x + 2 = 5           -> x = 3
-  2x + 3 = 11         -> x = 4
-  x^2 - 4 = 0         -> x = -2, 2
-  x^2 + 2x + 1 = 0    -> x = -1
+EQUATIONS:
+  x + 2 = 5              -> x = 3
+  x^2 - 4 = 0            -> x = -2, 2
+  solve for x: 2x + y = 10
 
-WITH 'SOLVE' PREFIX:
-  solve x + 2 = 5
-  solve 3x - 9 = 0
+SYSTEMS OF EQUATIONS:
+  system: x + y = 5, 2x - y = 1
+  system: a + b + c = 6, 2a - b = 1, b + c = 4
 
-IMPLICIT ZERO:
-  x^2 - 9             -> solves x^2 - 9 = 0
+MATRIX OPERATIONS:
+  matrix: [[1,2],[3,4]] * [[5,6],[7,8]]    (multiply)
+  inverse: [[1,2],[3,4]]
+  determinant: [[1,2],[3,4]]
+  eigenvalues: [[4,-2],[1,1]]
+  transpose: [[1,2,3],[4,5,6]]
+  rank: [[1,2],[2,4]]
+  rref: [[1,2,3],[4,5,6]]
 
-MULTIPLE VARIABLES:
-  solve for x: 2x + y = 10    -> x = 5 - y/2
+SYMBOLIC ALGEBRA:
+  simplify: (x^2 - 1)/(x - 1)
+  expand: (x + 1)^3
+  factor: x^2 + 5x + 6
 
-SUPPORTED OPERATIONS:
-  + - * / ^           (power: x^2 or x**2)
-  sqrt(), sin(), cos(), tan(), log(), exp()
-
-EXAMPLES:
-  x/2 + 3 = 7         -> x = 8
-  sqrt(x) = 4         -> x = 16
-  x^2 + 5x + 6 = 0    -> x = -3, -2
-  2^x = 8             -> x = 3"""
+CALCULUS:
+  derivative: x^3 + 2x
+  integrate: x^2 + 3x"""
 
 
 async def async_solve_equation(input_str: str) -> str:
@@ -242,13 +469,11 @@ equation_solver_tool = Tool(
     func=solve_equation,
     coroutine=async_solve_equation,
     description=(
-        "Solve mathematical equations for unknown variables. "
-        "\n\nEXAMPLES:"
-        "\n- 'x + 2 = 5' -> x = 3"
-        "\n- '2x + 3 = 11' -> x = 4"
-        "\n- 'x^2 - 4 = 0' -> x = -2, 2"
-        "\n- 'x^2 + 2x + 1 = 0' -> x = -1"
-        "\n\nSupports linear, quadratic, and more complex equations. "
-        "Use ^ or ** for powers. Implicit multiplication works (2x = 2*x)."
+        "Solve equations, systems of equations, matrix operations, and symbolic algebra. "
+        "\n\nEQUATIONS: 'x^2 - 4 = 0', 'solve for x: 2x + y = 10'"
+        "\n\nSYSTEMS: 'system: x + y = 5, 2x - y = 1'"
+        "\n\nMATRIX: 'inverse: [[1,2],[3,4]]', 'determinant: [[1,2],[3,4]]', 'eigenvalues: [[4,-2],[1,1]]'"
+        "\n\nALGEBRA: 'simplify: expr', 'expand: expr', 'factor: expr'"
+        "\n\nCALCULUS: 'derivative: x^3 + 2x', 'integrate: x^2'"
     )
 )
