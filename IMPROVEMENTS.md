@@ -5,7 +5,7 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 ## High Impact
 
 ### 1. ~~Tests~~ (DONE)
-- [x] 188 tests across all tools, memory, sessions, callbacks, and utilities
+- [x] 283 tests across all tools, memory, sessions, callbacks, observability, and utilities
 
 ### 2. ~~Migrate to Native Tool Calling~~ (DONE)
 - [x] Replaced `create_react_agent` (string-based ReAct parsing) with `create_agent` (LangGraph-based)
@@ -58,7 +58,7 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 
 ### 9. ~~Config Cleanup~~ (DONE)
 - [x] Make model selectable (currently hardcoded to claude-sonnet-4-5-20250929)
-- [x] Fix banner to list all 17 tools
+- [x] Fix banner to list all tools
 
 ### 10. ~~Rate Limiting~~ (DONE)
 - [x] `RateLimiter` class with per-session token budget enforcement

@@ -46,7 +46,7 @@ from src.tools.wikidata_tool import wikidata_tool
 
 
 # Tool categories for hierarchical selection — included in the system prompt
-# so the LLM can navigate 18+ tools effectively.
+# so the LLM can navigate 20 tools effectively.
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
         "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha"],
