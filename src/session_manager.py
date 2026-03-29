@@ -34,6 +34,9 @@ from typing import List, Dict, Optional
 # Directory to store session files
 SESSIONS_DIR = "sessions"
 
+# Schema version — bump when the session JSON format changes
+SESSION_SCHEMA_VERSION = "1.0"
+
 
 def ensure_sessions_dir():
     """Create the sessions directory if it doesn't exist."""
@@ -102,6 +105,7 @@ def save_session(history: List[tuple], session_id: Optional[str] = None, descrip
 
     # Build the session data structure
     session_data = {
+        "version": SESSION_SCHEMA_VERSION,
         "session_id": session_id,
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat(),
@@ -138,6 +142,10 @@ def load_session(session_id: str) -> Optional[List[tuple]]:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             session_data = json.load(f)
+
+        # Backward-compatible version handling — sessions without a version
+        # field are treated as v1.0 (the original format).
+        version = session_data.get("version", "1.0")
 
         # Convert back to list of tuples
         history = [

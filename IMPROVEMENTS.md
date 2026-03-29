@@ -60,8 +60,12 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 - [x] Make model selectable (currently hardcoded to claude-sonnet-4-5-20250929)
 - [x] Fix banner to list all 17 tools
 
-### 10. Rate Limiting
-- [ ] Prevent burning API credits if someone hammers the agent
+### 10. ~~Rate Limiting~~ (DONE)
+- [x] `RateLimiter` class with per-session token budget enforcement
+- [x] Disabled by default — enable and set budget from Streamlit UI in real-time
+- [x] Progress bar, warnings at 80%, error when exhausted
+- [x] Resets on session clear
 
-### 11. Session Schema Versioning
-- [ ] Add version field to session JSON for forward compatibility
+### 11. ~~Session Schema Versioning~~ (DONE)
+- [x] Added `version: "1.0"` field to session JSON format
+- [x] Backward compatible — old sessions without version field still load

@@ -16,6 +16,7 @@ from src.agent import ResearchAgent
 from src.session_manager import list_sessions
 from src.tool_health import format_health_status
 from src.observability import MetricsStore
+from src.rate_limiter import RateLimitExceeded
 from config import ANTHROPIC_API_KEY, MODEL_NAME
 
 
@@ -145,6 +146,31 @@ with st.sidebar:
 
     st.divider()
 
+    # --- Rate Limiting ---
+    st.header("Rate Limiting")
+    rl_enabled = st.toggle("Enable token budget", value=agent.rate_limiter.enabled)
+    rl_budget = st.number_input(
+        "Token budget", min_value=1000, max_value=10_000_000,
+        value=agent.rate_limiter.budget, step=10_000,
+        disabled=not rl_enabled,
+    )
+    agent.rate_limiter.set_config(enabled=rl_enabled, budget=rl_budget)
+
+    if rl_enabled:
+        remaining = agent.rate_limiter.tokens_remaining
+        spent = agent.rate_limiter.tokens_spent
+        pct = agent.rate_limiter.usage_fraction
+
+        st.progress(min(pct, 1.0))
+        if pct >= 1.0:
+            st.error(f"Budget exhausted: {spent:,} / {rl_budget:,} tokens")
+        elif pct >= 0.8:
+            st.warning(f"Tokens remaining: {remaining:,} / {rl_budget:,}")
+        else:
+            st.caption(f"Tokens remaining: {remaining:,} / {rl_budget:,}")
+
+    st.divider()
+
     # Session management
     st.header("Sessions")
 
@@ -242,6 +268,9 @@ if prompt := st.chat_input("Ask a research question..."):
             return results[-1] if results else None
 
         try:
+            # Check rate limit before starting
+            agent.rate_limiter.check_budget()
+
             final_result = asyncio.run(_run_stream())
 
             elapsed = time.time() - start_time
@@ -258,9 +287,14 @@ if prompt := st.chat_input("Ask a research question..."):
             # Persist and store metrics
             metrics = agent.observability_callback.get_metrics()
             agent.metrics_store.save(metrics)
+            agent.rate_limiter.record_tokens(metrics.total_tokens)
             st.session_state.last_metrics = metrics
 
             status.update(label=f"Done in {elapsed:.1f}s", state="complete", expanded=False)
+
+        except RateLimitExceeded as e:
+            answer = str(e)
+            status.update(label="Rate limit exceeded", state="error", expanded=False)
 
         except Exception as e:
             answer = f"Error: {str(e)}"

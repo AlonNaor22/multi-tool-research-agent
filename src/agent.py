@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
+from src.rate_limiter import RateLimiter
 from src.tool_health import check_tool_health, get_available_tools
 from config import (
     ANTHROPIC_API_KEY,
@@ -273,6 +274,7 @@ class ResearchAgent:
         self.streaming_callback = StreamingCallbackHandler()
         self.observability_callback = ObservabilityCallbackHandler(model_name=MODEL_NAME)
         self.metrics_store = MetricsStore()
+        self.rate_limiter = RateLimiter()
 
         # Build system prompt with disabled tools removed from categories
         system_prompt = _build_system_prompt(disabled_tools=self.disabled_tools)
@@ -298,6 +300,9 @@ class ResearchAgent:
             The agent's final answer as a string.
         """
         try:
+            # Check rate limit before starting
+            self.rate_limiter.check_budget()
+
             # Reset callbacks for new query
             self.timing_callback.reset()
             self.observability_callback.reset(question=question)
@@ -319,9 +324,10 @@ class ResearchAgent:
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)
 
-            # Persist observability metrics
+            # Persist observability metrics and update rate limiter
             metrics = self.observability_callback.get_metrics()
             self.metrics_store.save(metrics)
+            self.rate_limiter.record_tokens(metrics.total_tokens)
 
             # Print timing summary if requested
             if show_timing:
@@ -348,6 +354,9 @@ class ResearchAgent:
             The agent's final answer as a string.
         """
         try:
+            # Check rate limit before starting
+            self.rate_limiter.check_budget()
+
             # Reset state from previous query
             self.timing_callback.reset()
             self.streaming_callback.reset()
@@ -374,9 +383,10 @@ class ResearchAgent:
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)
 
-            # Persist observability metrics
+            # Persist observability metrics and update rate limiter
             metrics = self.observability_callback.get_metrics()
             self.metrics_store.save(metrics)
+            self.rate_limiter.record_tokens(metrics.total_tokens)
 
             # Print timing summary if requested
             if show_timing:
@@ -415,8 +425,9 @@ class ResearchAgent:
         return self.observability_callback.get_metrics()
 
     def clear_memory(self):
-        """Clear the conversation history and start a new session."""
+        """Clear the conversation history, reset rate limiter, and start a new session."""
         self.memory.clear()
+        self.rate_limiter.reset()
         self.current_session_id = None  # Next save will create a new file
         print("Conversation memory cleared.")
 

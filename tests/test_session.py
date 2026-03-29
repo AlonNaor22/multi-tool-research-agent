@@ -12,6 +12,7 @@ from src.session_manager import (
     get_session_preview,
     generate_session_id,
     SESSIONS_DIR,
+    SESSION_SCHEMA_VERSION,
 )
 
 
@@ -177,3 +178,46 @@ class TestSessionPreview:
             save_session([(long_msg, "short")], session_id="long_test")
             preview = get_session_preview("long_test")
             assert "..." in preview
+
+
+class TestSessionVersioning:
+    """Test session schema versioning."""
+
+    async def test_saved_session_has_version(self, sessions_dir):
+        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
+            filepath = save_session([("Q1", "A1")], session_id="versioned")
+
+            with open(filepath, "r") as f:
+                data = json.load(f)
+
+            assert "version" in data
+            assert data["version"] == SESSION_SCHEMA_VERSION
+
+    async def test_loads_session_without_version_field(self, sessions_dir):
+        """Old sessions without a version field should still load (backward compat)."""
+        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
+            # Write a session file without a version field (old format)
+            old_session = {
+                "session_id": "old_format",
+                "created_at": "2025-01-01T00:00:00",
+                "updated_at": "2025-01-01T00:00:00",
+                "message_count": 1,
+                "history": [{"input": "Hello", "output": "Hi there"}]
+            }
+            filepath = os.path.join(sessions_dir, "old_format.json")
+            with open(filepath, "w") as f:
+                json.dump(old_session, f)
+
+            history = load_session("old_format")
+            assert history is not None
+            assert len(history) == 1
+            assert history[0] == ("Hello", "Hi there")
+
+    async def test_version_is_string(self, sessions_dir):
+        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
+            filepath = save_session([("Q1", "A1")], session_id="v_check")
+
+            with open(filepath, "r") as f:
+                data = json.load(f)
+
+            assert isinstance(data["version"], str)
