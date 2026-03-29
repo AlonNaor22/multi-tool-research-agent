@@ -39,6 +39,7 @@ An AI-powered research agent that autonomously selects and uses 20 tools (web se
 | **Weather** | `weather` | Current conditions and forecasts |
 
 ### Engineering Highlights
+- **Custom tool implementations** over LangChain community built-ins — adds async retry with rate-limit detection, timeout protection, structured output formatting, JSON input parsing with advanced options (category filtering, region, sorting), and help commands that the built-in tools lack
 - **283 tests** with pytest-asyncio
 - **Evaluation suite** with tool selection accuracy and answer quality scoring
 - **TTL caching** on search tools to reduce redundant API calls
