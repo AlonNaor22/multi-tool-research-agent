@@ -6,11 +6,12 @@ No authentication required — appends .json to search URLs.
 
 import re
 import json
-import requests
+import asyncio
+import aiohttp
 from typing import List, Dict
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error, TTLCache
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync, TTLCache
 from src.constants import (
     DEFAULT_USER_AGENT,
     DEFAULT_HTTP_TIMEOUT,
@@ -22,8 +23,8 @@ from src.constants import (
 _cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
 
 
-@retry_on_error(max_retries=2, delay=2.0)
-def search_reddit(
+@async_retry_on_error(max_retries=2, delay=2.0)
+async def search_reddit(
     query: str,
     max_results: int = 5,
     subreddit: str = None,
@@ -58,10 +59,11 @@ def search_reddit(
 
     headers = {"User-Agent": f"{DEFAULT_USER_AGENT} ResearchAgent/1.0"}
 
-    response = requests.get(url, params=params, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
-    response.raise_for_status()
+    session = await get_aiohttp_session()
+    async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT)) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
 
-    data = response.json()
     posts = data.get("data", {}).get("children", [])
 
     results = []
@@ -119,7 +121,7 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
-def reddit_search(input_str: str) -> str:
+async def reddit_search(input_str: str) -> str:
     """
     Search Reddit for posts and discussions.
 
@@ -184,9 +186,9 @@ def reddit_search(input_str: str) -> str:
         query = query[query.index(":") + 1:].strip()
 
     try:
-        results = search_reddit(query, max_results, subreddit, sort, time_filter)
+        results = await search_reddit(query, max_results, subreddit, sort, time_filter)
         return format_results(results, query)
-    except requests.exceptions.RequestException as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return f"Error searching Reddit: {str(e)}"
     except Exception as e:
         return f"Error: {str(e)}"
@@ -230,7 +232,8 @@ EXAMPLES:
 # Create the LangChain Tool wrapper
 reddit_tool = Tool(
     name="reddit_search",
-    func=reddit_search,
+    func=make_sync(reddit_search),
+    coroutine=reddit_search,
     description=(
         "Search Reddit for posts, discussions, and community opinions. "
         "\n\nFORMAT: 'query', 'r/subreddit: query', 'top week: query'"

@@ -1,35 +1,29 @@
 """Parallel execution tool for the research agent.
 
-This is a "meta-tool" that runs multiple searches in parallel.
-Instead of the agent making 3 sequential searches, it can use this
-tool to run all 3 at once, significantly speeding up research.
+This is a "meta-tool" that runs multiple searches concurrently using
+asyncio.gather(). Instead of the agent making 3 sequential searches,
+it can use this tool to run all 3 at once, significantly speeding up research.
 
 Features:
 - Supports web, wikipedia, news, and arxiv searches
-- Runs searches concurrently using ThreadPoolExecutor
+- Runs searches concurrently using asyncio.gather
 - Smart result truncation based on content type
 - Maximum 10 parallel searches
-
-Python's ThreadPoolExecutor manages a pool of worker threads. When we submit
-multiple tasks, they run simultaneously (truly parallel for I/O operations
-like HTTP requests).
 """
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
 from typing import Dict, List
 from langchain_core.tools import Tool
 from src.constants import TRUNCATION_PRESERVE_RATIO
+from src.utils import make_sync
 
-# Import the actual search functions from our tools
+# Import the async search functions from our tools
 from src.tools.search_tool import web_search
 from src.tools.wikipedia_tool import search_wikipedia
 from src.tools.news_tool import search_news
 from src.tools.arxiv_tool import search_arxiv
 
-
-# Maximum number of parallel workers
-MAX_WORKERS = 5
 
 # Timeout for the entire parallel operation (seconds)
 PARALLEL_TIMEOUT = 60
@@ -45,7 +39,7 @@ TRUNCATION_LIMITS = {
 
 
 def get_search_function(search_type: str):
-    """Get the appropriate search function based on type."""
+    """Get the appropriate async search function based on type."""
     search_functions = {
         "web": web_search,
         "wikipedia": search_wikipedia,
@@ -80,9 +74,9 @@ def truncate_result(result: str, search_type: str) -> str:
     return truncated + "..."
 
 
-def execute_single_search(search_spec: Dict) -> Dict:
+async def execute_single_search(search_spec: Dict) -> Dict:
     """
-    Execute a single search and return the result with metadata.
+    Execute a single search asynchronously and return the result with metadata.
 
     Args:
         search_spec: Dict with 'type' and 'query' keys
@@ -104,7 +98,7 @@ def execute_single_search(search_spec: Dict) -> Dict:
         }
 
     try:
-        result = search_func(query)
+        result = await search_func(query)
         return {
             "type": search_type,
             "query": query,
@@ -120,9 +114,9 @@ def execute_single_search(search_spec: Dict) -> Dict:
         }
 
 
-def parallel_search(input_str: str) -> str:
+async def parallel_search(input_str: str) -> str:
     """
-    Execute multiple searches in parallel.
+    Execute multiple searches concurrently using asyncio.gather.
 
     INPUT FORMAT:
     {
@@ -163,39 +157,38 @@ def parallel_search(input_str: str) -> str:
         if "query" not in s:
             return f"Error: Search {i+1} is missing 'query' field."
 
-    # Execute searches in parallel
-    results = []
+    # Execute all searches concurrently with asyncio.gather
+    try:
+        tasks = [execute_single_search(search) for search in searches]
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=PARALLEL_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        return f"Error: Parallel search timed out after {PARALLEL_TIMEOUT}s"
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Submit all searches
-        future_to_search = {
-            executor.submit(execute_single_search, search): search
-            for search in searches
-        }
-
-        # Collect results as they complete
-        for future in as_completed(future_to_search, timeout=PARALLEL_TIMEOUT):
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as e:
-                search = future_to_search[future]
-                results.append({
-                    "type": search.get("type", "unknown"),
-                    "query": search.get("query", ""),
-                    "result": f"Execution error: {str(e)}",
-                    "success": False
-                })
+    # Process results (gather with return_exceptions may return Exception objects)
+    processed = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            processed.append({
+                "type": searches[i].get("type", "unknown"),
+                "query": searches[i].get("query", ""),
+                "result": f"Execution error: {str(result)}",
+                "success": False
+            })
+        else:
+            processed.append(result)
 
     # Count successes
-    success_count = sum(1 for r in results if r["success"])
+    success_count = sum(1 for r in processed if r["success"])
 
     # Format the results
     output_lines = [
-        f"Parallel search completed: {success_count}/{len(results)} successful\n"
+        f"Parallel search completed: {success_count}/{len(processed)} successful\n"
     ]
 
-    for i, r in enumerate(results, 1):
+    for i, r in enumerate(processed, 1):
         status = "SUCCESS" if r["success"] else "FAILED"
         search_type = r["type"].upper()
 
@@ -214,7 +207,8 @@ def parallel_search(input_str: str) -> str:
 # Create the LangChain Tool wrapper
 parallel_tool = Tool(
     name="parallel_search",
-    func=parallel_search,
+    func=make_sync(parallel_search),
+    coroutine=parallel_search,
     description=(
         "Execute multiple searches in parallel for faster results. "
         "Use this when you need to gather information from multiple sources at once. "

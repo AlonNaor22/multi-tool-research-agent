@@ -1,8 +1,8 @@
-"""Main research agent using Claude's native tool calling.
+"""Main research agent using Claude's native async tool calling.
 
 The agent uses Claude's structured tool-use API to decide which tools to call
-and in what order. This replaces the older ReAct text-parsing approach with
-native tool calling — the same pattern used in production agents.
+and in what order. All I/O is async — the agent uses ainvoke()/astream() for
+non-blocking execution, the same pattern used in production agents.
 
 Includes conversation memory for follow-up questions.
 """
@@ -285,9 +285,9 @@ class ResearchAgent:
             debug=VERBOSE,
         )
 
-    def query(self, question: str, show_timing: bool = True) -> str:
+    async def query(self, question: str, show_timing: bool = True) -> str:
         """
-        Run a research query and return the answer.
+        Run a research query asynchronously and return the answer.
         Memory is automatically updated.
 
         Args:
@@ -306,8 +306,8 @@ class ResearchAgent:
             messages = self.memory.get_messages()
             messages.append(HumanMessage(content=question))
 
-            # Run the agent with native tool calling
-            result = self.agent.invoke(
+            # Run the agent with native async tool calling
+            result = await self.agent.ainvoke(
                 {"messages": messages},
                 {"callbacks": [self.timing_callback, self.observability_callback],
                  "recursion_limit": MAX_ITERATIONS * 2},
@@ -332,9 +332,9 @@ class ResearchAgent:
         except Exception as e:
             return f"Error running research query: {str(e)}"
 
-    def stream_query(self, question: str, show_timing: bool = True) -> str:
+    async def stream_query(self, question: str, show_timing: bool = True) -> str:
         """
-        Run a research query with real-time streaming output.
+        Run a research query with real-time async streaming output.
 
         Instead of blocking until the full answer is ready, this streams
         intermediate steps (thinking, tool calls) and the final answer
@@ -357,9 +357,9 @@ class ResearchAgent:
             messages = self.memory.get_messages()
             messages.append(HumanMessage(content=question))
 
-            # Stream the agent execution — yields state updates after each node
+            # Stream the agent execution asynchronously
             final_result = None
-            for chunk in self.agent.stream(
+            async for chunk in self.agent.astream(
                 {"messages": messages},
                 {"callbacks": [self.timing_callback, self.streaming_callback,
                                self.observability_callback],
@@ -485,30 +485,32 @@ def create_research_agent():
     return ResearchAgent()
 
 
-def run_research_query(query: str) -> str:
-    """Run a single research query (without memory). Kept for backward compatibility."""
+async def run_research_query(query: str) -> str:
+    """Run a single research query (without memory)."""
     agent = ResearchAgent()
-    return agent.query(query)
+    return await agent.query(query)
 
 
 # For testing
 if __name__ == "__main__":
-    # Test with memory
-    print("Testing agent with memory...\n")
-    agent = ResearchAgent()
+    import asyncio
 
-    # First question
-    q1 = "What is the population of France?"
-    print(f"Q1: {q1}")
-    print("=" * 60)
-    a1 = agent.query(q1)
-    print("=" * 60)
-    print(f"A1: {a1}\n")
+    async def _test():
+        print("Testing agent with memory...\n")
+        agent = ResearchAgent()
 
-    # Follow-up question (uses memory)
-    q2 = "How does that compare to Germany?"
-    print(f"Q2: {q2}")
-    print("=" * 60)
-    a2 = agent.query(q2)
-    print("=" * 60)
-    print(f"A2: {a2}")
+        q1 = "What is the population of France?"
+        print(f"Q1: {q1}")
+        print("=" * 60)
+        a1 = await agent.query(q1)
+        print("=" * 60)
+        print(f"A1: {a1}\n")
+
+        q2 = "How does that compare to Germany?"
+        print(f"Q2: {q2}")
+        print("=" * 60)
+        a2 = await agent.query(q2)
+        print("=" * 60)
+        print(f"A2: {a2}")
+
+    asyncio.run(_test())

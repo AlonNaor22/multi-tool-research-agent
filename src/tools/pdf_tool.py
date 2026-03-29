@@ -7,11 +7,12 @@ with pypdf as a fallback.
 
 import io
 import re
-import requests
+import asyncio
+import aiohttp
 from typing import Optional
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
 from src.constants import DEFAULT_USER_AGENT
 
 # Try pdfplumber first (better quality), fall back to pypdf
@@ -32,8 +33,8 @@ except ImportError:
             PDF_LIBRARY = None
 
 
-@retry_on_error(max_retries=2, delay=1.0)
-def fetch_pdf(url: str, timeout: int = 30) -> bytes:
+@async_retry_on_error(max_retries=2, delay=1.0)
+async def fetch_pdf(url: str, timeout: int = 30) -> bytes:
     """
     Fetch PDF content from a URL.
 
@@ -49,15 +50,17 @@ def fetch_pdf(url: str, timeout: int = 30) -> bytes:
         "Accept": "application/pdf,*/*",
     }
 
-    response = requests.get(url, headers=headers, timeout=timeout)
-    response.raise_for_status()
+    session = await get_aiohttp_session()
+    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+        resp.raise_for_status()
 
-    # Verify it's actually a PDF
-    content_type = response.headers.get("Content-Type", "")
-    if "pdf" not in content_type.lower() and not response.content[:4] == b'%PDF':
-        raise ValueError(f"URL does not point to a PDF file (Content-Type: {content_type})")
+        # Verify it's actually a PDF
+        content_type = resp.headers.get("Content-Type", "")
+        content_bytes = await resp.read()
+        if "pdf" not in content_type.lower() and not content_bytes[:4] == b'%PDF':
+            raise ValueError(f"URL does not point to a PDF file (Content-Type: {content_type})")
 
-    return response.content
+        return content_bytes
 
 
 def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
@@ -187,7 +190,7 @@ def clean_text(text: str, max_length: int = 15000) -> str:
     return text.strip()
 
 
-def read_pdf(input_str: str) -> str:
+async def read_pdf(input_str: str) -> str:
     """
     Fetch and read a PDF from a URL.
 
@@ -237,7 +240,7 @@ def read_pdf(input_str: str) -> str:
 
     try:
         # Fetch the PDF
-        pdf_content = fetch_pdf(url)
+        pdf_content = await fetch_pdf(url)
 
         # Extract text
         text = extract_text_from_pdf(pdf_content, max_pages)
@@ -245,7 +248,7 @@ def read_pdf(input_str: str) -> str:
         # Clean and return
         return clean_text(text)
 
-    except requests.exceptions.RequestException as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return f"Error fetching PDF: {str(e)}"
     except ValueError as e:
         return str(e)
@@ -283,7 +286,8 @@ PDF library: {PDF_LIBRARY or 'NOT INSTALLED (pip install pdfplumber)'}"""
 # Create the LangChain Tool wrapper
 pdf_tool = Tool(
     name="pdf_reader",
-    func=read_pdf,
+    func=make_sync(read_pdf),
+    coroutine=read_pdf,
     description=(
         "Read and extract text content from PDF files at URLs. "
         "\n\nFORMAT: 'https://example.com/paper.pdf', '5 pages: URL', 'summary: URL'"

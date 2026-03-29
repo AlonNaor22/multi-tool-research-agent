@@ -16,7 +16,7 @@ No API key required - ArXiv is completely free and open.
 import json
 import arxiv
 from langchain_core.tools import Tool
-from src.utils import retry_on_error, run_with_timeout
+from src.utils import async_retry_on_error, async_run_with_timeout, make_sync
 from src.constants import DEFAULT_SEARCH_TIMEOUT
 
 
@@ -44,8 +44,45 @@ ARXIV_CATEGORIES = {
 }
 
 
-@retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
-def search_arxiv(query: str) -> str:
+@async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
+async def async_search_arxiv(search_query: str, max_results: int = DEFAULT_MAX_RESULTS,
+                             sort_by: str = "relevance"):
+    """
+    Perform an ArXiv search asynchronously.
+
+    Args:
+        search_query: Search query string (may include category prefix)
+        max_results: Maximum number of results
+        sort_by: Sort criterion ('relevance' or 'date')
+
+    Returns:
+        List of paper objects.
+    """
+    client = arxiv.Client()
+
+    # Determine sort criterion
+    if sort_by == "date":
+        sort_criterion = arxiv.SortCriterion.SubmittedDate
+    else:
+        sort_criterion = arxiv.SortCriterion.Relevance
+
+    search = arxiv.Search(
+        query=search_query,
+        max_results=max_results,
+        sort_by=sort_criterion,
+    )
+
+    # Execute the search with a timeout -- the arxiv library has no
+    # built-in timeout, so a slow network could block indefinitely.
+    papers = await async_run_with_timeout(
+        lambda: list(client.results(search)),
+        timeout=DEFAULT_SEARCH_TIMEOUT,
+    )
+
+    return papers
+
+
+async def search_arxiv(query: str) -> str:
     """
     Search ArXiv for academic papers.
 
@@ -86,28 +123,7 @@ def search_arxiv(query: str) -> str:
         search_query = f"cat:{category} AND {search_query}"
 
     try:
-        # Create a client to interact with ArXiv API
-        client = arxiv.Client()
-
-        # Determine sort criterion
-        if sort_by == "date":
-            sort_criterion = arxiv.SortCriterion.SubmittedDate
-        else:
-            sort_criterion = arxiv.SortCriterion.Relevance
-
-        # Create a search query
-        search = arxiv.Search(
-            query=search_query,
-            max_results=max_results,
-            sort_by=sort_criterion
-        )
-
-        # Execute the search with a timeout — the arxiv library has no
-        # built-in timeout, so a slow network could block indefinitely.
-        papers = run_with_timeout(
-            lambda: list(client.results(search)),
-            timeout=DEFAULT_SEARCH_TIMEOUT,
-        )
+        papers = await async_search_arxiv(search_query, max_results, sort_by)
 
         if not papers:
             return f"No academic papers found for '{search_query}'"
@@ -150,7 +166,8 @@ def search_arxiv(query: str) -> str:
 # Create the LangChain Tool wrapper
 arxiv_tool = Tool(
     name="arxiv_search",
-    func=search_arxiv,
+    func=make_sync(search_arxiv),
+    coroutine=search_arxiv,
     description=(
         "Search ArXiv for STEM pre-prints: Physics, Math, Computer Science, AI/ML, Statistics. "
         "\n\nBEST FOR: Cutting-edge AI/ML research, neural networks, algorithms, physics, mathematics."

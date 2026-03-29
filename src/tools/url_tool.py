@@ -1,7 +1,7 @@
 """URL content fetcher tool for the research agent.
 
 Fetches and extracts readable text content from web pages and PDFs.
-Uses requests for HTTP, BeautifulSoup for HTML parsing, and pypdf for PDFs.
+Uses aiohttp for HTTP, BeautifulSoup for HTML parsing, and pypdf for PDFs.
 No API key required.
 
 Features:
@@ -11,11 +11,12 @@ Features:
 - Smart content detection (main article vs full page)
 """
 
-import requests
+import asyncio
+import aiohttp
 from bs4 import BeautifulSoup
 from io import BytesIO
 from langchain_core.tools import Tool
-from src.utils import retry_on_error
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
 
 # Try to import pypdf for PDF support
@@ -178,12 +179,12 @@ def _extract_html_content(html: str, url: str) -> str:
     return "\n".join(result_parts)
 
 
-@retry_on_error(
+@async_retry_on_error(
     max_retries=2,
     delay=1.0,
-    exceptions=(requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+    exceptions=(aiohttp.ClientError, asyncio.TimeoutError)
 )
-def fetch_url_content(url: str) -> str:
+async def fetch_url_content(url: str) -> str:
     """
     Fetch and extract readable content from a URL (HTML or PDF).
 
@@ -197,24 +198,27 @@ def fetch_url_content(url: str) -> str:
         headers = {"User-Agent": DEFAULT_USER_AGENT}
 
         # Fetch the content
-        response = requests.get(url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
-        response.raise_for_status()
+        session = await get_aiohttp_session()
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT)) as resp:
+            resp.raise_for_status()
 
-        # Check content type to determine how to parse
-        content_type = response.headers.get("Content-Type", "").lower()
+            # Check content type to determine how to parse
+            content_type = resp.headers.get("Content-Type", "").lower()
 
-        if "application/pdf" in content_type or url.lower().endswith(".pdf"):
-            # Handle PDF
-            return _extract_pdf_content(response.content, url)
-        else:
-            # Handle HTML
-            return _extract_html_content(response.text, url)
+            if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+                # Handle PDF — read full bytes
+                content_bytes = await resp.read()
+                return _extract_pdf_content(content_bytes, url)
+            else:
+                # Handle HTML — read text
+                html_text = await resp.text()
+                return _extract_html_content(html_text, url)
 
-    except requests.exceptions.Timeout:
+    except asyncio.TimeoutError:
         return f"Request timed out while fetching {url}"
-    except requests.exceptions.HTTPError as e:
-        return f"HTTP error fetching {url}: {e.response.status_code}"
-    except requests.exceptions.RequestException as e:
+    except aiohttp.ClientResponseError as e:
+        return f"HTTP error fetching {url}: {e.status}"
+    except aiohttp.ClientError as e:
         return f"Error fetching URL: {str(e)}"
     except Exception as e:
         return f"Error processing content: {str(e)}"
@@ -223,7 +227,8 @@ def fetch_url_content(url: str) -> str:
 # Create the LangChain Tool wrapper
 url_tool = Tool(
     name="fetch_url",
-    func=fetch_url_content,
+    func=make_sync(fetch_url_content),
+    coroutine=fetch_url_content,
     description=(
         "Fetch and read content from a web page or PDF URL. Use this when you "
         "have a specific URL to read, or when web_search returns a relevant link "

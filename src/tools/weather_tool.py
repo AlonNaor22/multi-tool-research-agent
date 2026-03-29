@@ -12,9 +12,10 @@ Features:
 
 import os
 import json
-import requests
+import asyncio
+import aiohttp
 from langchain_core.tools import Tool
-from src.utils import retry_on_error
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
 
 
 # API endpoints
@@ -28,7 +29,7 @@ def _format_current_weather(data: dict, units: str) -> str:
     Uses .get() with defaults throughout to handle unexpected API responses
     gracefully instead of crashing with KeyError.
     """
-    temp_unit = "°C" if units == "metric" else "°F"
+    temp_unit = "\u00b0C" if units == "metric" else "\u00b0F"
     speed_unit = "m/s" if units == "metric" else "mph"
 
     weather_list = data.get("weather", [{}])
@@ -74,7 +75,7 @@ def _format_forecast(data: dict, units: str, days: int = 3) -> str:
     Groups the 3-hour interval forecasts by date and picks the reading
     closest to noon for each day. Uses .get() to handle unexpected formats.
     """
-    temp_unit = "°C" if units == "metric" else "°F"
+    temp_unit = "\u00b0C" if units == "metric" else "\u00b0F"
 
     city = data.get("city", {})
     city_name = city.get("name", "Unknown")
@@ -114,12 +115,12 @@ def _format_forecast(data: dict, units: str, days: int = 3) -> str:
     return "\n".join(result_parts)
 
 
-@retry_on_error(
+@async_retry_on_error(
     max_retries=2,
     delay=1.0,
-    exceptions=(requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+    exceptions=(aiohttp.ClientError, asyncio.TimeoutError)
 )
-def get_weather(query: str) -> str:
+async def get_weather(query: str) -> str:
     """
     Get weather information for a location.
 
@@ -184,32 +185,34 @@ def get_weather(query: str) -> str:
         return "Error: Provide a location (city name) or coordinates (lat/lon)."
 
     try:
+        session = await get_aiohttp_session()
+
         if forecast:
             # Get forecast
-            response = requests.get(FORECAST_URL, params=params, timeout=10)
-            data = response.json()
+            async with session.get(FORECAST_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                data = await resp.json()
 
-            if response.status_code == 200:
-                return _format_forecast(data, units, forecast_days)
-            elif response.status_code == 404:
-                return f"Location not found. Try a different city name."
-            else:
-                return f"Weather API error: {data.get('message', 'Unknown error')}"
+                if resp.status == 200:
+                    return _format_forecast(data, units, forecast_days)
+                elif resp.status == 404:
+                    return f"Location not found. Try a different city name."
+                else:
+                    return f"Weather API error: {data.get('message', 'Unknown error')}"
         else:
             # Get current weather
-            response = requests.get(CURRENT_WEATHER_URL, params=params, timeout=10)
-            data = response.json()
+            async with session.get(CURRENT_WEATHER_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                data = await resp.json()
 
-            if response.status_code == 200:
-                return _format_current_weather(data, units)
-            elif response.status_code == 404:
-                return f"City not found. Try a different city name."
-            else:
-                return f"Weather API error: {data.get('message', 'Unknown error')}"
+                if resp.status == 200:
+                    return _format_current_weather(data, units)
+                elif resp.status == 404:
+                    return f"City not found. Try a different city name."
+                else:
+                    return f"Weather API error: {data.get('message', 'Unknown error')}"
 
-    except requests.exceptions.Timeout:
+    except asyncio.TimeoutError:
         return "Weather request timed out. Please try again."
-    except requests.exceptions.RequestException as e:
+    except aiohttp.ClientError as e:
         return f"Weather request failed: {str(e)}"
     except KeyError as e:
         return f"Unexpected weather data format: missing {str(e)}"
@@ -218,7 +221,8 @@ def get_weather(query: str) -> str:
 # Create the LangChain Tool wrapper
 weather_tool = Tool(
     name="weather",
-    func=get_weather,
+    func=make_sync(get_weather),
+    coroutine=get_weather,
     description=(
         "Get current weather or forecast for a location. "
         "\n\nSIMPLE USAGE: Just provide a city name: 'London', 'New York', 'Tokyo'"

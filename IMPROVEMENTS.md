@@ -46,9 +46,13 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 - [x] Streamlit dashboard: token counts, cost, tool calls, performance history with bar chart
 - [x] CLI: metrics printed after each query + `stats` command for aggregate stats
 
-### 8. Async / True Parallelism
-- [ ] Replace ThreadPoolExecutor workaround with native async (`ainvoke`)
-- [ ] What production agents actually use
+### 8. ~~Async / True Parallelism~~ (DONE)
+- [x] All I/O replaced with native async: `aiohttp` for HTTP, `asyncio.to_thread()` for blocking libraries
+- [x] Agent uses `ainvoke()`/`astream()` (LangGraph's native async API)
+- [x] `parallel_tool` uses `asyncio.gather()` instead of ThreadPoolExecutor
+- [x] `async_retry_on_error` with `asyncio.sleep()`, `async_run_with_timeout` with `asyncio.wait_for()`
+- [x] All 20 tools have `coroutine=` for native async execution
+- [x] CLI and Streamlit use `asyncio.run()` entry points
 
 ## Nice to Have
 

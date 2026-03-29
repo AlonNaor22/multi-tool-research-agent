@@ -1,33 +1,35 @@
-"""Tests for src/tools/pdf_tool.py — PDF document reading."""
+"""Tests for src/tools/pdf_tool.py -- PDF document reading."""
 
 import io
 import pytest
-from unittest.mock import patch, MagicMock
-from tests.conftest import MockResponse
+from unittest.mock import AsyncMock, MagicMock, patch
+from tests.conftest import AsyncMockResponse
 
 
 class TestPdfReader:
     """Test PDF reading with mocked HTTP and PDF library."""
 
-    def test_missing_pdf_library(self):
+    async def test_missing_pdf_library(self):
         with patch("src.tools.pdf_tool.PDF_LIBRARY", None):
             from src.tools.pdf_tool import extract_text_from_pdf
             result = extract_text_from_pdf(b"fake pdf content")
             assert "not installed" in result.lower() or "install" in result.lower()
 
-    def test_invalid_url(self):
+    async def test_invalid_url(self):
         from src.tools.pdf_tool import read_pdf
-        result = read_pdf("")
+        result = await read_pdf("")
         assert len(result) > 0  # Should return error, not crash
 
-    def test_successful_pdf_read_pdfplumber(self):
+    async def test_successful_pdf_read_pdfplumber(self):
         """Test PDF reading with pdfplumber mocked."""
         pdf_bytes = b"%PDF-1.4 fake pdf content"
-        mock_resp = MockResponse(
+        mock_resp = AsyncMockResponse(
             content=pdf_bytes,
-            status_code=200,
+            status=200,
             headers={"Content-Type": "application/pdf"}
         )
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
         # Mock pdfplumber.open context manager
         mock_page = MagicMock()
@@ -39,20 +41,22 @@ class TestPdfReader:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("src.tools.pdf_tool.requests.get", return_value=mock_resp), \
+        with patch("src.tools.pdf_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.pdf_tool.pdfplumber") as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
             from src.tools.pdf_tool import read_pdf
-            result = read_pdf("https://example.com/paper.pdf")
+            result = await read_pdf("https://example.com/paper.pdf")
 
             assert "extracted PDF text" in result or "Test PDF" in result
 
-    def test_handles_download_error(self):
-        import requests
-        with patch("src.tools.pdf_tool.requests.get",
-                   side_effect=requests.exceptions.ConnectionError("failed")):
+    async def test_handles_download_error(self):
+        import aiohttp
+        mock_session = MagicMock()
+        mock_session.get.side_effect = aiohttp.ClientError("failed")
+
+        with patch("src.tools.pdf_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.pdf_tool import read_pdf
-            result = read_pdf("https://example.com/paper.pdf")
+            result = await read_pdf("https://example.com/paper.pdf")
 
             assert "Error" in result or "error" in result.lower()
 
@@ -105,19 +109,21 @@ class TestPdfReader:
         assert len(result) < 200
         assert "truncated" in result.lower()
 
-    def test_help_command(self):
+    async def test_help_command(self):
         from src.tools.pdf_tool import read_pdf
-        result = read_pdf("help")
+        result = await read_pdf("help")
         assert "FORMAT" in result
 
-    def test_summary_prefix(self):
+    async def test_summary_prefix(self):
         """Test that summary: prefix sets max_pages to 3."""
         pdf_bytes = b"%PDF-1.4 fake"
-        mock_resp = MockResponse(
+        mock_resp = AsyncMockResponse(
             content=pdf_bytes,
-            status_code=200,
+            status=200,
             headers={"Content-Type": "application/pdf"}
         )
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
         mock_page = MagicMock()
         mock_page.extract_text.return_value = "Page content."
@@ -128,10 +134,10 @@ class TestPdfReader:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("src.tools.pdf_tool.requests.get", return_value=mock_resp), \
+        with patch("src.tools.pdf_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.pdf_tool.pdfplumber") as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
             from src.tools.pdf_tool import read_pdf
-            result = read_pdf("summary: https://example.com/paper.pdf")
+            result = await read_pdf("summary: https://example.com/paper.pdf")
 
             assert "more pages not shown" in result

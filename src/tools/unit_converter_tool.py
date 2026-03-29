@@ -283,10 +283,16 @@ Temperature: C (Celsius), F (Fahrenheit), K (Kelvin)
 Data: b (bytes), kb, mb, gb, tb, pb"""
 
 
+async def async_convert(input_str: str) -> str:
+    """Async wrapper for the unit converter tool."""
+    return convert(input_str)
+
+
 # Create the LangChain Tool wrapper
 unit_converter_tool = Tool(
     name="unit_converter",
     func=convert,
+    coroutine=async_convert,
     description=(
         "Convert between different units of measurement. "
         "\n\nFORMAT: '5 km to miles', 'convert 100 F to C', '10 pounds to kg'"

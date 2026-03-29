@@ -270,10 +270,16 @@ def generate_chart(input_str: str) -> str:
         return f"Error generating chart: {str(e)}"
 
 
+async def async_generate_chart(input_str: str) -> str:
+    """Async wrapper for the chart generation tool."""
+    return generate_chart(input_str)
+
+
 # Create the LangChain Tool wrapper
 visualization_tool = Tool(
     name="create_chart",
     func=generate_chart,
+    coroutine=async_generate_chart,
     description=(
         "Generate charts and graphs from data. Saves PNG images to output/ folder. "
         "\n\nCHART TYPES: bar, line, pie, scatter, histogram, area"

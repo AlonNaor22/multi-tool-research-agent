@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import pytest
+import aiohttp
 
 # Ensure the project root is on the Python path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,11 +34,54 @@ class MockResponse:
             raise HTTPError(f"{self.status_code} Error")
 
 
+class AsyncMockResponse:
+    """Reusable mock for aiohttp responses."""
+
+    def __init__(self, json_data=None, text="", status=200, content=b"",
+                 headers=None):
+        self._json_data = json_data
+        self._text = text
+        self.status = status
+        self._content = content
+        self.headers = headers or {"Content-Type": "text/html"}
+
+    async def json(self):
+        if self._json_data is not None:
+            return self._json_data
+        raise ValueError("No JSON data")
+
+    async def text(self):
+        return self._text
+
+    async def read(self):
+        return self._content
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise aiohttp.ClientResponseError(
+                None, None, status=self.status, message=f"{self.status} Error"
+            )
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
 @pytest.fixture
 def mock_response():
     """Factory fixture for creating MockResponse objects."""
     def _make(**kwargs):
         return MockResponse(**kwargs)
+    return _make
+
+
+@pytest.fixture
+def async_mock_response():
+    """Factory fixture for creating AsyncMockResponse objects."""
+    def _make(**kwargs):
+        return AsyncMockResponse(**kwargs)
     return _make
 
 

@@ -9,7 +9,7 @@ from unittest.mock import patch
 class TestChartGeneration:
     """Test chart generation with temporary output directory."""
 
-    def test_bar_chart_creates_file(self, tmp_path):
+    async def test_bar_chart_creates_file(self, tmp_path):
         with patch("src.tools.visualization_tool.OUTPUT_DIR", str(tmp_path)):
             from src.tools.visualization_tool import generate_chart
 
@@ -25,7 +25,7 @@ class TestChartGeneration:
 
             assert "saved" in result.lower() or "created" in result.lower() or ".png" in result
 
-    def test_line_chart(self, tmp_path):
+    async def test_line_chart(self, tmp_path):
         with patch("src.tools.visualization_tool.OUTPUT_DIR", str(tmp_path)):
             from src.tools.visualization_tool import generate_chart
 
@@ -41,7 +41,7 @@ class TestChartGeneration:
 
             assert ".png" in result or "saved" in result.lower()
 
-    def test_pie_chart(self, tmp_path):
+    async def test_pie_chart(self, tmp_path):
         with patch("src.tools.visualization_tool.OUTPUT_DIR", str(tmp_path)):
             from src.tools.visualization_tool import generate_chart
 
@@ -57,12 +57,12 @@ class TestChartGeneration:
 
             assert ".png" in result or "saved" in result.lower()
 
-    def test_invalid_json(self):
+    async def test_invalid_json(self):
         from src.tools.visualization_tool import generate_chart
         result = generate_chart("not valid json {{{")
         assert "Error" in result
 
-    def test_missing_chart_type(self, tmp_path):
+    async def test_missing_chart_type(self, tmp_path):
         with patch("src.tools.visualization_tool.OUTPUT_DIR", str(tmp_path)):
             from src.tools.visualization_tool import generate_chart
 
@@ -74,7 +74,7 @@ class TestChartGeneration:
 
             assert "chart_type" in result
 
-    def test_missing_data(self, tmp_path):
+    async def test_missing_data(self, tmp_path):
         with patch("src.tools.visualization_tool.OUTPUT_DIR", str(tmp_path)):
             from src.tools.visualization_tool import generate_chart
 

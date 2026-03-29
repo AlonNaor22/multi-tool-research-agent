@@ -267,10 +267,16 @@ def calculate(expression: str) -> str:
     return _calculator.calculate(expression)
 
 
+async def async_calculate(expression: str) -> str:
+    """Async wrapper for the calculator tool."""
+    return calculate(expression)
+
+
 # Create the LangChain Tool wrapper
 calculator_tool = Tool(
     name="calculator",
     func=calculate,
+    coroutine=async_calculate,
     description=(
         "Perform mathematical calculations with variables. "
         "\n\nBASIC MATH: '2 + 2', '100 * 0.15', '2 ** 10' (power), '17 % 5' (modulo)"

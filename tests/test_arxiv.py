@@ -22,7 +22,7 @@ class MockArxivResult:
 class TestArxivSearch:
     """Test arxiv search with mocked API."""
 
-    def test_returns_formatted_papers(self):
+    async def test_returns_formatted_papers(self):
         mock_results = [
             MockArxivResult(
                 title="Attention Is All You Need",
@@ -43,12 +43,12 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
             from src.tools.arxiv_tool import search_arxiv
-            result = search_arxiv("transformer attention")
+            result = await search_arxiv("transformer attention")
 
             assert "Attention Is All You Need" in result
             assert "Vaswani" in result
 
-    def test_no_results(self):
+    async def test_no_results(self):
         with patch("src.tools.arxiv_tool.arxiv") as mock_arxiv:
             mock_client = MagicMock()
             mock_client.results.return_value = iter([])
@@ -59,11 +59,11 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
             from src.tools.arxiv_tool import search_arxiv
-            result = search_arxiv("xyznonexistent123")
+            result = await search_arxiv("xyznonexistent123")
 
             assert "No" in result or "no" in result.lower()
 
-    def test_author_truncation(self):
+    async def test_author_truncation(self):
         """Papers with 4+ authors should show first 3 + et al."""
         mock_results = [
             MockArxivResult(
@@ -85,11 +85,11 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
             from src.tools.arxiv_tool import search_arxiv
-            result = search_arxiv("big paper")
+            result = await search_arxiv("big paper")
 
             assert "et al" in result
 
-    def test_json_input_with_options(self):
+    async def test_json_input_with_options(self):
         with patch("src.tools.arxiv_tool.arxiv") as mock_arxiv:
             mock_client = MagicMock()
             mock_client.results.return_value = iter([])
@@ -100,6 +100,6 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
             from src.tools.arxiv_tool import search_arxiv
-            result = search_arxiv('{"query": "neural networks", "max_results": 3, "sort": "date"}')
+            result = await search_arxiv('{"query": "neural networks", "max_results": 3, "sort": "date"}')
 
             assert len(result) > 0  # Should not crash on JSON input

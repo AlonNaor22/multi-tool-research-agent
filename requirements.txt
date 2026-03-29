@@ -19,7 +19,8 @@ deep-translator>=1.11.0          # Translation (Google Translate, no API key)
 
 # Utilities
 python-dotenv>=1.0.0             # Load environment variables from .env
-requests>=2.31.0                 # HTTP requests (for Wolfram Alpha, etc.)
+aiohttp>=3.9.0                   # Async HTTP client (replaces requests in tool code)
+requests>=2.31.0                 # HTTP (transitive dependency, not used directly)
 
 # Web UI
 streamlit>=1.32.0                # Chat-based web interface
@@ -27,3 +28,4 @@ streamlit>=1.32.0                # Chat-based web interface
 # Testing
 pytest>=7.0                      # Test framework
 pytest-mock>=3.10                # Mock fixtures for pytest
+pytest-asyncio>=0.23.0           # Async test support

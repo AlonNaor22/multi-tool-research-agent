@@ -1,8 +1,8 @@
-"""Tests for src/tools/url_tool.py — web page content extraction."""
+"""Tests for src/tools/url_tool.py -- web page content extraction."""
 
 import pytest
-from unittest.mock import patch, MagicMock
-from tests.conftest import MockResponse
+from unittest.mock import AsyncMock, MagicMock, patch
+from tests.conftest import AsyncMockResponse
 
 
 SAMPLE_HTML = """
@@ -24,66 +24,77 @@ SAMPLE_HTML = """
 class TestUrlFetch:
     """Test URL content fetching with mocked HTTP."""
 
-    def test_extracts_html_content(self):
-        mock_resp = MockResponse(
+    async def test_extracts_html_content(self):
+        mock_resp = AsyncMockResponse(
             text=SAMPLE_HTML,
-            status_code=200,
+            status=200,
             headers={"Content-Type": "text/html"}
         )
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.url_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.url_tool import fetch_url_content
-            result = fetch_url_content("https://example.com")
+            result = await fetch_url_content("https://example.com")
 
             assert "Main Heading" in result or "main content" in result
 
-    def test_extracts_metadata(self):
-        mock_resp = MockResponse(
+    async def test_extracts_metadata(self):
+        mock_resp = AsyncMockResponse(
             text=SAMPLE_HTML,
-            status_code=200,
+            status=200,
             headers={"Content-Type": "text/html"}
         )
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.url_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.url_tool import fetch_url_content
-            result = fetch_url_content("https://example.com")
+            result = await fetch_url_content("https://example.com")
 
             assert "Test Page" in result or "test page" in result.lower()
 
-    def test_handles_404(self):
-        from requests.exceptions import HTTPError
-        mock_error = HTTPError("404 Not Found")
-        mock_error.response = MagicMock(status_code=404)
+    async def test_handles_404(self):
+        import aiohttp
+        mock_resp = AsyncMockResponse(text="Not Found", status=404)
+        mock_resp.raise_for_status = MagicMock(
+            side_effect=aiohttp.ClientResponseError(
+                None, None, status=404, message="Not Found"
+            )
+        )
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.side_effect = mock_error
-
-        with patch("src.tools.url_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.url_tool import fetch_url_content
-            result = fetch_url_content("https://example.com/404")
+            result = await fetch_url_content("https://example.com/404")
 
             assert "404" in result or "error" in result.lower()
 
-    def test_handles_timeout(self):
-        import requests
-        with patch("src.tools.url_tool.requests.get",
-                   side_effect=requests.exceptions.Timeout("timeout")):
+    async def test_handles_timeout(self):
+        import asyncio
+        mock_session = MagicMock()
+        mock_session.get.side_effect = asyncio.TimeoutError("timeout")
+
+        with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.url_tool import fetch_url_content
-            result = fetch_url_content("https://example.com")
+            result = await fetch_url_content("https://example.com")
 
             assert "timed out" in result.lower()
 
-    def test_truncates_long_content(self):
+    async def test_truncates_long_content(self):
         long_html = f"<html><body>{'A' * 10000}</body></html>"
-        mock_resp = MockResponse(
+        mock_resp = AsyncMockResponse(
             text=long_html,
-            status_code=200,
+            status=200,
             headers={"Content-Type": "text/html"}
         )
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.url_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.url_tool import fetch_url_content
-            result = fetch_url_content("https://example.com")
+            result = await fetch_url_content("https://example.com")
 
             # Should be truncated, not the full 10000 chars
             assert len(result) < 10000

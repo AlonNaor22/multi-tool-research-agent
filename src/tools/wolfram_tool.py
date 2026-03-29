@@ -29,9 +29,10 @@ This tool queries Wolfram Alpha's Short Answers API for concise responses.
 Requires WOLFRAM_ALPHA_APP_ID in your .env file.
 """
 
-import requests
+import asyncio
+import aiohttp
 from langchain_core.tools import Tool
-from src.utils import retry_on_error
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
 from config import WOLFRAM_ALPHA_APP_ID
 
 
@@ -39,8 +40,8 @@ from config import WOLFRAM_ALPHA_APP_ID
 WOLFRAM_API_URL = "https://api.wolframalpha.com/v1/result"
 
 
-@retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
-def query_wolfram_alpha(query: str) -> str:
+@async_retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
+async def query_wolfram_alpha(query: str) -> str:
     """
     Query Wolfram Alpha for factual/computational knowledge.
 
@@ -72,47 +73,48 @@ def query_wolfram_alpha(query: str) -> str:
         }
 
         # Make the request with timeout
-        response = requests.get(
+        session = await get_aiohttp_session()
+        async with session.get(
             WOLFRAM_API_URL,
             params=params,
-            timeout=10
-        )
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as resp:
+            # Handle response
+            if resp.status == 200:
+                answer = (await resp.text()).strip()
 
-        # Handle response
-        if response.status_code == 200:
-            answer = response.text.strip()
+                # Wolfram returns specific messages for issues
+                if answer == "Wolfram|Alpha did not understand your input":
+                    return (
+                        f"Wolfram Alpha couldn't understand: '{query}'. "
+                        "Try rephrasing as a simple factual question."
+                    )
+                elif answer == "No short answer available":
+                    return (
+                        f"Wolfram Alpha has data on this but no short answer available. "
+                        f"Query: '{query}'. Try being more specific."
+                    )
+                else:
+                    return f"Wolfram Alpha: {answer}"
 
-            # Wolfram returns specific messages for issues
-            if answer == "Wolfram|Alpha did not understand your input":
-                return (
-                    f"Wolfram Alpha couldn't understand: '{query}'. "
-                    "Try rephrasing as a simple factual question."
-                )
-            elif answer == "No short answer available":
-                return (
-                    f"Wolfram Alpha has data on this but no short answer available. "
-                    f"Query: '{query}'. Try being more specific."
-                )
+            elif resp.status == 403:
+                return "Error: Invalid Wolfram Alpha API key."
+            elif resp.status == 501:
+                return f"Wolfram Alpha couldn't process: '{query}'. Try a different phrasing."
             else:
-                return f"Wolfram Alpha: {answer}"
+                return f"Wolfram Alpha API error (status {resp.status})"
 
-        elif response.status_code == 403:
-            return "Error: Invalid Wolfram Alpha API key."
-        elif response.status_code == 501:
-            return f"Wolfram Alpha couldn't process: '{query}'. Try a different phrasing."
-        else:
-            return f"Wolfram Alpha API error (status {response.status_code})"
-
-    except requests.exceptions.Timeout:
+    except asyncio.TimeoutError:
         return "Error: Wolfram Alpha request timed out. Try again."
-    except requests.exceptions.RequestException as e:
+    except aiohttp.ClientError as e:
         return f"Error connecting to Wolfram Alpha: {str(e)}"
 
 
 # Create the LangChain Tool wrapper
 wolfram_tool = Tool(
     name="wolfram_alpha",
-    func=query_wolfram_alpha,
+    func=make_sync(query_wolfram_alpha),
+    coroutine=query_wolfram_alpha,
     description=(
         "Get PRECISE NUMERICAL DATA and exact measurements. Use when you need "
         "a specific number, not an explanation. "

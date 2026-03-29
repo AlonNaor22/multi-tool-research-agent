@@ -1,8 +1,8 @@
-"""Tests for src/tools/reddit_tool.py — Reddit post search."""
+"""Tests for src/tools/reddit_tool.py -- Reddit post search."""
 
 import pytest
-from unittest.mock import patch
-from tests.conftest import MockResponse
+from unittest.mock import AsyncMock, MagicMock, patch
+from tests.conftest import AsyncMockResponse
 
 
 REDDIT_API_RESPONSE = {
@@ -42,58 +42,67 @@ REDDIT_API_RESPONSE = {
 class TestRedditSearch:
     """Test Reddit search with mocked HTTP."""
 
-    def test_returns_formatted_results(self):
-        mock_resp = MockResponse(json_data=REDDIT_API_RESPONSE, status_code=200)
+    async def test_returns_formatted_results(self):
+        mock_resp = AsyncMockResponse(json_data=REDDIT_API_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
-            result = reddit_search("python data science")
+            result = await reddit_search("python data science")
 
             assert "Best Python libraries" in result
             assert "r/Python" in result
             assert "1.5k" in result  # Score formatting
 
-    def test_no_results(self):
+    async def test_no_results(self):
         empty_response = {"data": {"children": []}}
-        mock_resp = MockResponse(json_data=empty_response, status_code=200)
+        mock_resp = AsyncMockResponse(json_data=empty_response, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
-            result = reddit_search("xyznonexistent123")
+            result = await reddit_search("xyznonexistent123")
 
             assert "No Reddit posts found" in result
 
-    def test_handles_request_error(self):
-        import requests
-        with patch("src.tools.reddit_tool.requests.get",
-                   side_effect=requests.exceptions.ConnectionError("failed")):
+    async def test_handles_request_error(self):
+        import aiohttp
+        mock_session = MagicMock()
+        mock_session.get.side_effect = aiohttp.ClientError("failed")
+
+        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
-            result = reddit_search("test")
+            result = await reddit_search("test")
 
             assert "Error" in result
 
-    def test_subreddit_filter(self):
-        mock_resp = MockResponse(json_data=REDDIT_API_RESPONSE, status_code=200)
+    async def test_subreddit_filter(self):
+        mock_resp = AsyncMockResponse(json_data=REDDIT_API_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.requests.get", return_value=mock_resp) as mock_get:
+        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
-            reddit_search("r/Python: best libraries")
+            await reddit_search("r/Python: best libraries")
 
-            call_url = mock_get.call_args[0][0]
+            call_args = mock_session.get.call_args
+            call_url = call_args[0][0] if call_args[0] else ""
             assert "r/Python" in call_url
 
-    def test_empty_query(self):
+    async def test_empty_query(self):
         from src.tools.reddit_tool import reddit_search
-        result = reddit_search("")
+        result = await reddit_search("")
         assert "Error" in result
 
-    def test_help_command(self):
+    async def test_help_command(self):
         from src.tools.reddit_tool import reddit_search
-        result = reddit_search("help")
+        result = await reddit_search("help")
         assert "FORMAT" in result
 
     def test_score_formatting(self):
@@ -101,13 +110,15 @@ class TestRedditSearch:
         assert _format_score(1500) == "1.5k"
         assert _format_score(500) == "500"
 
-    def test_caching(self):
-        mock_resp = MockResponse(json_data=REDDIT_API_RESPONSE, status_code=200)
+    async def test_caching(self):
+        mock_resp = AsyncMockResponse(json_data=REDDIT_API_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.requests.get", return_value=mock_resp) as mock_get:
+        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
-            reddit_search("cache test query")
-            reddit_search("cache test query")  # Should hit cache
+            await reddit_search("cache test query")
+            await reddit_search("cache test query")  # Should hit cache
 
-            assert mock_get.call_count == 1
+            assert mock_session.get.call_count == 1

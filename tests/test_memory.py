@@ -49,20 +49,20 @@ def memory():
 class TestMemoryBasics:
     """Test basic memory operations."""
 
-    def test_empty_memory(self, memory):
+    async def test_empty_memory(self, memory):
         assert memory.get_history_string() == "No previous conversation."
 
-    def test_add_exchange(self, memory):
+    async def test_add_exchange(self, memory):
         memory.add_exchange("What is AI?", "AI is artificial intelligence.")
         assert len(memory.history) == 1
 
-    def test_history_grows(self, memory):
+    async def test_history_grows(self, memory):
         memory.add_exchange("Q1", "A1")
         memory.add_exchange("Q2", "A2")
         memory.add_exchange("Q3", "A3")
         assert len(memory.history) == 3
 
-    def test_history_string_contains_exchanges(self, memory):
+    async def test_history_string_contains_exchanges(self, memory):
         memory.add_exchange("What is Python?", "A programming language.")
         result = memory.get_history_string()
         assert "What is Python?" in result
@@ -72,7 +72,7 @@ class TestMemoryBasics:
 class TestMemoryWindow:
     """Test that only last k exchanges are sent to prompt."""
 
-    def test_window_limits_prompt(self):
+    async def test_window_limits_prompt(self):
         memory = SimpleMemory(k=2)
         memory.add_exchange("Q1", "A1")
         memory.add_exchange("Q2", "A2")
@@ -84,7 +84,7 @@ class TestMemoryWindow:
         assert "Q2" in result
         assert "Q3" in result
 
-    def test_full_history_preserved(self):
+    async def test_full_history_preserved(self):
         memory = SimpleMemory(k=2)
         memory.add_exchange("Q1", "A1")
         memory.add_exchange("Q2", "A2")
@@ -97,7 +97,7 @@ class TestMemoryWindow:
 class TestMemoryClear:
     """Test clearing memory."""
 
-    def test_clear_empties_history(self, memory):
+    async def test_clear_empties_history(self, memory):
         memory.add_exchange("Q1", "A1")
         memory.add_exchange("Q2", "A2")
         memory.clear()
@@ -108,6 +108,6 @@ class TestMemoryClear:
 class TestMemoryBuffer:
     """Test buffer property for compatibility."""
 
-    def test_buffer_returns_history_string(self, memory):
+    async def test_buffer_returns_history_string(self, memory):
         memory.add_exchange("Q1", "A1")
         assert memory.buffer == memory.get_history_string()

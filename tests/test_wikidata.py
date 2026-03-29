@@ -1,8 +1,8 @@
-"""Tests for src/tools/wikidata_tool.py — Wikidata knowledge base queries."""
+"""Tests for src/tools/wikidata_tool.py -- Wikidata knowledge base queries."""
 
 import pytest
-from unittest.mock import patch
-from tests.conftest import MockResponse
+from unittest.mock import AsyncMock, MagicMock, patch
+from tests.conftest import AsyncMockResponse
 
 
 SPARQL_ENTITY_RESPONSE = {
@@ -46,77 +46,89 @@ SPARQL_SEARCH_RESPONSE = {
 class TestWikidataQuery:
     """Test Wikidata queries with mocked SPARQL endpoint."""
 
-    def test_entity_lookup(self):
-        mock_resp = MockResponse(json_data=SPARQL_ENTITY_RESPONSE, status_code=200)
+    async def test_entity_lookup(self):
+        mock_resp = AsyncMockResponse(json_data=SPARQL_ENTITY_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.wikidata_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.wikidata_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.wikidata_tool import wikidata_query, _cache
             _cache.clear()
-            result = wikidata_query("Albert Einstein")
+            result = await wikidata_query("Albert Einstein")
 
             assert "date of birth" in result
             assert "14 March 1879" in result
 
-    def test_search_mode(self):
-        mock_resp = MockResponse(json_data=SPARQL_SEARCH_RESPONSE, status_code=200)
+    async def test_search_mode(self):
+        mock_resp = AsyncMockResponse(json_data=SPARQL_SEARCH_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.wikidata_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.wikidata_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.wikidata_tool import wikidata_query, _cache
             _cache.clear()
-            result = wikidata_query("search: Einstein")
+            result = await wikidata_query("search: Einstein")
 
             assert "Albert Einstein" in result
 
-    def test_sparql_mode(self):
-        mock_resp = MockResponse(json_data=SPARQL_SEARCH_RESPONSE, status_code=200)
+    async def test_sparql_mode(self):
+        mock_resp = AsyncMockResponse(json_data=SPARQL_SEARCH_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.wikidata_tool.requests.get", return_value=mock_resp):
+        with patch("src.tools.wikidata_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.wikidata_tool import wikidata_query, _cache
             _cache.clear()
-            result = wikidata_query("sparql: SELECT ?item WHERE { ?item rdfs:label 'test'@en }")
+            result = await wikidata_query("sparql: SELECT ?item WHERE { ?item rdfs:label 'test'@en }")
 
             assert "SPARQL Results" in result or "no results" in result.lower()
 
-    def test_no_results_falls_back_to_search(self):
-        empty_resp = MockResponse(json_data={"results": {"bindings": []}}, status_code=200)
-        search_resp = MockResponse(json_data=SPARQL_SEARCH_RESPONSE, status_code=200)
+    async def test_no_results_falls_back_to_search(self):
+        empty_resp = AsyncMockResponse(json_data={"results": {"bindings": []}}, status=200)
+        search_resp = AsyncMockResponse(json_data=SPARQL_SEARCH_RESPONSE, status=200)
 
+        mock_session = MagicMock()
         # First call returns empty (entity lookup), second returns results (search)
-        with patch("src.tools.wikidata_tool.requests.get",
-                   side_effect=[empty_resp, search_resp]):
+        mock_session.get.side_effect = [empty_resp, search_resp]
+
+        with patch("src.tools.wikidata_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.wikidata_tool import wikidata_query, _cache
             _cache.clear()
-            result = wikidata_query("Einstein")
+            result = await wikidata_query("Einstein")
 
             assert "Albert Einstein" in result
 
-    def test_handles_request_error(self):
-        import requests
-        with patch("src.tools.wikidata_tool.requests.get",
-                   side_effect=requests.exceptions.ConnectionError("failed")):
+    async def test_handles_request_error(self):
+        import aiohttp
+        mock_session = MagicMock()
+        mock_session.get.side_effect = aiohttp.ClientError("failed")
+
+        with patch("src.tools.wikidata_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.wikidata_tool import wikidata_query, _cache
             _cache.clear()
-            result = wikidata_query("test")
+            result = await wikidata_query("test")
 
             assert "Error" in result
 
-    def test_empty_query(self):
+    async def test_empty_query(self):
         from src.tools.wikidata_tool import wikidata_query
-        result = wikidata_query("")
+        result = await wikidata_query("")
         assert "Error" in result
 
-    def test_help_command(self):
+    async def test_help_command(self):
         from src.tools.wikidata_tool import wikidata_query
-        result = wikidata_query("help")
+        result = await wikidata_query("help")
         assert "SPARQL" in result
 
-    def test_caching(self):
-        mock_resp = MockResponse(json_data=SPARQL_ENTITY_RESPONSE, status_code=200)
+    async def test_caching(self):
+        mock_resp = AsyncMockResponse(json_data=SPARQL_ENTITY_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.wikidata_tool.requests.get", return_value=mock_resp) as mock_get:
+        with patch("src.tools.wikidata_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.wikidata_tool import wikidata_query, _cache
             _cache.clear()
-            wikidata_query("Albert Einstein")
-            wikidata_query("Albert Einstein")  # Should hit cache
+            await wikidata_query("Albert Einstein")
+            await wikidata_query("Albert Einstein")  # Should hit cache
 
-            assert mock_get.call_count == 1
+            assert mock_session.get.call_count == 1

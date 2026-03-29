@@ -13,7 +13,7 @@ Features:
 import json
 import wikipedia
 from langchain_core.tools import Tool
-from src.utils import run_with_timeout
+from src.utils import async_run_with_timeout, make_sync
 from src.constants import DEFAULT_SEARCH_TIMEOUT
 
 
@@ -22,7 +22,7 @@ DEFAULT_SENTENCES = 5  # Number of sentences in summary
 MAX_CHARS = 3000  # Maximum characters to return
 
 
-def search_wikipedia(query: str) -> str:
+async def search_wikipedia(query: str) -> str:
     """
     Search Wikipedia for information about a topic.
 
@@ -60,7 +60,7 @@ def search_wikipedia(query: str) -> str:
         if search_results_count > 1:
             # Return multiple search results (titles only, for disambiguation).
             # The wikipedia library has no timeout parameter, so we wrap the call.
-            search_results = run_with_timeout(
+            search_results = await async_run_with_timeout(
                 lambda: wikipedia.search(search_query, results=search_results_count),
                 timeout=DEFAULT_SEARCH_TIMEOUT,
             )
@@ -73,11 +73,11 @@ def search_wikipedia(query: str) -> str:
             for i, title in enumerate(search_results, 1):
                 try:
                     # Get a brief summary of each (with timeout protection)
-                    page = run_with_timeout(
+                    page = await async_run_with_timeout(
                         lambda t=title: wikipedia.page(t, auto_suggest=False),
                         timeout=DEFAULT_SEARCH_TIMEOUT,
                     )
-                    summary = run_with_timeout(
+                    summary = await async_run_with_timeout(
                         lambda t=title: wikipedia.summary(t, sentences=2, auto_suggest=False),
                         timeout=DEFAULT_SEARCH_TIMEOUT,
                     )
@@ -98,14 +98,14 @@ def search_wikipedia(query: str) -> str:
         else:
             # Get single article summary
             try:
-                # Wrap calls with timeout — wikipedia library has no timeout parameter
-                summary = run_with_timeout(
+                # Wrap calls with timeout -- wikipedia library has no timeout parameter
+                summary = await async_run_with_timeout(
                     lambda: wikipedia.summary(search_query, sentences=sentences, auto_suggest=auto_suggest),
                     timeout=DEFAULT_SEARCH_TIMEOUT,
                 )
 
                 # Get the actual page to retrieve the title and URL
-                page = run_with_timeout(
+                page = await async_run_with_timeout(
                     lambda: wikipedia.page(search_query, auto_suggest=auto_suggest),
                     timeout=DEFAULT_SEARCH_TIMEOUT,
                 )
@@ -133,8 +133,8 @@ def search_wikipedia(query: str) -> str:
                 )
 
             except wikipedia.exceptions.PageError:
-                # Page not found — try to suggest alternatives
-                suggestions = run_with_timeout(
+                # Page not found -- try to suggest alternatives
+                suggestions = await async_run_with_timeout(
                     lambda: wikipedia.search(search_query, results=5),
                     timeout=DEFAULT_SEARCH_TIMEOUT,
                 )
@@ -155,7 +155,8 @@ def search_wikipedia(query: str) -> str:
 # Create the LangChain Tool wrapper
 wikipedia_tool = Tool(
     name="wikipedia",
-    func=search_wikipedia,
+    func=make_sync(search_wikipedia),
+    coroutine=search_wikipedia,
     description=(
         "Look up EXPLANATIONS, HISTORY, and CONTEXT on Wikipedia. Use for understanding "
         "topics, not for getting specific numbers. "

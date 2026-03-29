@@ -14,7 +14,7 @@ def handler():
 class TestToolTracking:
     """Test that tool execution is tracked correctly."""
 
-    def test_tool_start_and_end(self, handler):
+    async def test_tool_start_and_end(self, handler):
         handler.on_tool_start({"name": "calculator"}, "2 + 2")
         handler.on_tool_end("4")
 
@@ -22,7 +22,7 @@ class TestToolTracking:
         assert handler.tool_times[0]["tool"] == "calculator"
         assert handler.tool_times[0]["duration"] >= 0
 
-    def test_multiple_tools(self, handler):
+    async def test_multiple_tools(self, handler):
         handler.on_tool_start({"name": "calculator"}, "2 + 2")
         handler.on_tool_end("4")
 
@@ -33,7 +33,7 @@ class TestToolTracking:
         assert handler.tool_times[0]["tool"] == "calculator"
         assert handler.tool_times[1]["tool"] == "web_search"
 
-    def test_unknown_tool_name(self, handler):
+    async def test_unknown_tool_name(self, handler):
         handler.on_tool_start({}, "input")
         handler.on_tool_end("output")
 
@@ -43,7 +43,7 @@ class TestToolTracking:
 class TestToolError:
     """Test error tracking."""
 
-    def test_error_resets_state(self, handler):
+    async def test_error_resets_state(self, handler):
         handler.on_tool_start({"name": "weather"}, "London")
         handler.on_tool_error(Exception("API timeout"))
 
@@ -55,10 +55,10 @@ class TestToolError:
 class TestSummary:
     """Test summary generation."""
 
-    def test_empty_summary(self, handler):
+    async def test_empty_summary(self, handler):
         assert handler.get_summary() == "No tools were used."
 
-    def test_summary_with_tools(self, handler):
+    async def test_summary_with_tools(self, handler):
         handler.on_tool_start({"name": "calculator"}, "2+2")
         handler.on_tool_end("4")
 
@@ -66,7 +66,7 @@ class TestSummary:
         assert "calculator" in summary
         assert "Total tool time" in summary
 
-    def test_summary_shows_all_tools(self, handler):
+    async def test_summary_shows_all_tools(self, handler):
         for name in ["calculator", "web_search", "wikipedia"]:
             handler.on_tool_start({"name": name}, "input")
             handler.on_tool_end("output")
@@ -80,7 +80,7 @@ class TestSummary:
 class TestReset:
     """Test reset functionality."""
 
-    def test_reset_clears_data(self, handler):
+    async def test_reset_clears_data(self, handler):
         handler.on_tool_start({"name": "calculator"}, "2+2")
         handler.on_tool_end("4")
         handler.reset()

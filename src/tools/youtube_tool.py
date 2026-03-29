@@ -10,7 +10,7 @@ import json
 from typing import List, Dict
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error, run_with_timeout, TTLCache
+from src.utils import async_retry_on_error, async_run_with_timeout, make_sync, TTLCache
 from src.constants import DEFAULT_SEARCH_TIMEOUT, DEFAULT_CACHE_TTL
 
 # Cache repeated queries for 5 minutes
@@ -42,10 +42,10 @@ def _format_views(count) -> str:
         return "Unknown views"
 
 
-@retry_on_error(max_retries=2, delay=1.0)
-def search_youtube_ytdlp(query: str, max_results: int = 5) -> List[Dict]:
+@async_retry_on_error(max_retries=2, delay=1.0)
+async def async_search_youtube_ytdlp(query: str, max_results: int = 5) -> List[Dict]:
     """
-    Search YouTube via yt-dlp's ytsearch protocol.
+    Search YouTube via yt-dlp's ytsearch protocol asynchronously.
 
     Args:
         query: Search query
@@ -75,7 +75,7 @@ def search_youtube_ytdlp(query: str, max_results: int = 5) -> List[Dict]:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(search_url, download=False)
 
-    data = run_with_timeout(_do_search, timeout=DEFAULT_SEARCH_TIMEOUT)
+    data = await async_run_with_timeout(_do_search, timeout=DEFAULT_SEARCH_TIMEOUT)
 
     results = []
     entries = data.get("entries") or []
@@ -121,7 +121,7 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
-def youtube_search(input_str: str) -> str:
+async def youtube_search(input_str: str) -> str:
     """
     Search YouTube for videos.
 
@@ -159,7 +159,7 @@ def youtube_search(input_str: str) -> str:
         query = query[7:].strip()
 
     try:
-        results = search_youtube_ytdlp(query, max_results)
+        results = await async_search_youtube_ytdlp(query, max_results)
         return format_results(results, query)
     except Exception as e:
         return f"Error searching YouTube: {str(e)}"
@@ -195,7 +195,8 @@ TIPS:
 # Create the LangChain Tool wrapper
 youtube_tool = Tool(
     name="youtube_search",
-    func=youtube_search,
+    func=make_sync(youtube_search),
+    coroutine=youtube_search,
     description=(
         "Search YouTube for videos on any topic. "
         "\n\nFORMAT: 'python tutorial', '5 results: machine learning'"

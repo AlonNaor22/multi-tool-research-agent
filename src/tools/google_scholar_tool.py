@@ -9,11 +9,12 @@ Free API, no key required.
 
 import re
 import json
-import requests
+import asyncio
+import aiohttp
 from typing import List, Dict, Optional
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error, TTLCache
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync, TTLCache
 from src.constants import (
     SEMANTIC_SCHOLAR_BASE_URL,
     DEFAULT_HTTP_TIMEOUT,
@@ -27,8 +28,8 @@ _cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
 _PAPER_FIELDS = "title,authors,year,citationCount,abstract,url,externalIds,publicationTypes"
 
 
-@retry_on_error(max_retries=2, delay=2.0)
-def search_semantic_scholar(
+@async_retry_on_error(max_retries=2, delay=2.0)
+async def search_semantic_scholar(
     query: str,
     max_results: int = 5,
     year_from: Optional[int] = None,
@@ -67,10 +68,11 @@ def search_semantic_scholar(
     elif year_to:
         params["year"] = f"-{year_to}"
 
-    response = requests.get(url, params=params, timeout=DEFAULT_HTTP_TIMEOUT)
-    response.raise_for_status()
+    session = await get_aiohttp_session()
+    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT)) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
 
-    data = response.json()
     papers = data.get("data", [])
 
     results = []
@@ -135,7 +137,7 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
-def scholar_search(input_str: str) -> str:
+async def scholar_search(input_str: str) -> str:
     """
     Search for academic papers across all fields.
 
@@ -203,9 +205,9 @@ def scholar_search(input_str: str) -> str:
         query = to_match.group(2)
 
     try:
-        results = search_semantic_scholar(query, max_results, year_from, year_to)
+        results = await search_semantic_scholar(query, max_results, year_from, year_to)
         return format_results(results, query)
-    except requests.exceptions.RequestException as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return f"Error searching academic papers: {str(e)}"
     except Exception as e:
         return f"Error: {str(e)}"
@@ -252,7 +254,8 @@ EXAMPLES:
 # Create the LangChain Tool wrapper
 google_scholar_tool = Tool(
     name="google_scholar",
-    func=scholar_search,
+    func=make_sync(scholar_search),
+    coroutine=scholar_search,
     description=(
         "Search for published academic research across ALL fields using Semantic Scholar. "
         "\n\nBEST FOR: History, humanities, medicine, social sciences, archaeology, climate history, ancient studies."

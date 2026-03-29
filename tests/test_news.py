@@ -16,7 +16,7 @@ from src.tools.news_tool import search_news
 class TestNewsSearch:
     """Test news search with mocked DuckDuckGo News API."""
 
-    def test_returns_formatted_results(self):
+    async def test_returns_formatted_results(self):
         mock_results = [
             {
                 "title": "AI Breakthrough",
@@ -38,21 +38,21 @@ class TestNewsSearch:
         mock_instance.news.return_value = mock_results
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = search_news("AI news")
+        result = await search_news("AI news")
 
         assert "AI Breakthrough" in result
         assert "Market Update" in result
 
-    def test_no_results(self):
+    async def test_no_results(self):
         mock_instance = MagicMock()
         mock_instance.news.return_value = []
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = search_news("obscure topic no results")
+        result = await search_news("obscure topic no results")
 
         assert "No news" in result or "no" in result.lower()
 
-    def test_json_input_with_timelimit(self):
+    async def test_json_input_with_timelimit(self):
         mock_results = [{
             "title": "Recent News",
             "url": "https://example.com",
@@ -65,19 +65,19 @@ class TestNewsSearch:
         mock_instance.news.return_value = mock_results
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = search_news('{"query": "tech", "timelimit": "d"}')
+        result = await search_news('{"query": "tech", "timelimit": "d"}')
 
         assert "Recent News" in result
 
-    def test_empty_query(self):
-        result = search_news("")
+    async def test_empty_query(self):
+        result = await search_news("")
         assert len(result) > 0
 
-    def test_handles_api_error(self):
+    async def test_handles_api_error(self):
         mock_instance = MagicMock()
         mock_instance.news.side_effect = Exception("API error")
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = search_news("test")
+        result = await search_news("test")
 
         assert "Error" in result or "error" in result.lower()

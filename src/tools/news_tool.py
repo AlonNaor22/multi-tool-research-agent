@@ -13,7 +13,7 @@ Features:
 import json
 from duckduckgo_search import DDGS
 from langchain_core.tools import Tool
-from src.utils import retry_on_error, run_with_timeout
+from src.utils import async_retry_on_error, async_run_with_timeout, make_sync
 from src.constants import DEFAULT_SEARCH_TIMEOUT
 
 
@@ -23,8 +23,42 @@ MAX_ALLOWED_RESULTS = 10
 DEFAULT_TIMELIMIT = "w"  # Past week
 
 
-@retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
-def search_news(query: str) -> str:
+@async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
+async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
+                            timelimit: str = DEFAULT_TIMELIMIT, region: str = None):
+    """
+    Perform a DuckDuckGo news search asynchronously.
+
+    Args:
+        query: Search query string
+        max_results: Maximum number of results
+        timelimit: Time range ('d', 'w', 'm')
+        region: Optional region filter
+
+    Returns:
+        List of news result dicts.
+    """
+    ddgs = DDGS()
+
+    search_kwargs = {
+        "keywords": query,
+        "max_results": max_results,
+        "timelimit": timelimit,
+    }
+
+    if region:
+        search_kwargs["region"] = region
+
+    # DDGS has no timeout parameter -- wrap to prevent indefinite blocking
+    results = await async_run_with_timeout(
+        lambda: list(ddgs.news(**search_kwargs)),
+        timeout=DEFAULT_SEARCH_TIMEOUT,
+    )
+
+    return results
+
+
+async def search_news(query: str) -> str:
     """
     Search for recent news articles using DuckDuckGo News.
 
@@ -63,23 +97,7 @@ def search_news(query: str) -> str:
         timelimit = DEFAULT_TIMELIMIT
 
     try:
-        ddgs = DDGS()
-
-        # Build search parameters
-        search_kwargs = {
-            "keywords": search_query,
-            "max_results": max_results,
-            "timelimit": timelimit
-        }
-
-        if region:
-            search_kwargs["region"] = region
-
-        # DDGS has no timeout parameter — wrap to prevent indefinite blocking
-        results = run_with_timeout(
-            lambda: list(ddgs.news(**search_kwargs)),
-            timeout=DEFAULT_SEARCH_TIMEOUT,
-        )
+        results = await async_search_news(search_query, max_results, timelimit, region)
 
         if not results:
             time_desc = {"d": "past day", "w": "past week", "m": "past month"}[timelimit]
@@ -116,7 +134,8 @@ def search_news(query: str) -> str:
 # Create the LangChain Tool wrapper
 news_tool = Tool(
     name="news_search",
-    func=search_news,
+    func=make_sync(search_news),
+    coroutine=search_news,
     description=(
         "Search for recent news articles on a topic. Use this for current events, "
         "breaking news, or recent developments. "

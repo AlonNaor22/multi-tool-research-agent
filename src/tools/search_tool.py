@@ -13,7 +13,7 @@ Features:
 import json
 from duckduckgo_search import DDGS
 from langchain_core.tools import Tool
-from src.utils import retry_on_error, run_with_timeout
+from src.utils import async_retry_on_error, async_run_with_timeout, make_sync
 from src.constants import DEFAULT_SEARCH_TIMEOUT
 
 
@@ -22,8 +22,39 @@ DEFAULT_MAX_RESULTS = 5
 MAX_ALLOWED_RESULTS = 10
 
 
-@retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
-def web_search(query: str) -> str:
+@async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
+async def async_web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS, region: str = None):
+    """
+    Perform a DuckDuckGo web search asynchronously.
+
+    Args:
+        query: Search query string
+        max_results: Maximum number of results
+        region: Optional region filter (e.g., "us-en")
+
+    Returns:
+        List of search result dicts.
+    """
+    ddgs = DDGS()
+
+    search_kwargs = {
+        "keywords": query,
+        "max_results": max_results,
+    }
+
+    if region:
+        search_kwargs["region"] = region
+
+    # DDGS has no timeout parameter -- wrap to prevent indefinite blocking
+    results = await async_run_with_timeout(
+        lambda: list(ddgs.text(**search_kwargs)),
+        timeout=DEFAULT_SEARCH_TIMEOUT,
+    )
+
+    return results
+
+
+async def web_search(query: str) -> str:
     """
     Search the web using DuckDuckGo.
 
@@ -57,23 +88,7 @@ def web_search(query: str) -> str:
         return "Error: No search query provided."
 
     try:
-        # Create DuckDuckGo Search instance
-        ddgs = DDGS()
-
-        # Perform the search
-        search_kwargs = {
-            "keywords": search_query,
-            "max_results": max_results,
-        }
-
-        if region:
-            search_kwargs["region"] = region
-
-        # DDGS has no timeout parameter — wrap to prevent indefinite blocking
-        results = run_with_timeout(
-            lambda: list(ddgs.text(**search_kwargs)),
-            timeout=DEFAULT_SEARCH_TIMEOUT,
-        )
+        results = await async_web_search(search_query, max_results, region)
 
         if not results:
             return f"No search results found for '{search_query}'"
@@ -105,7 +120,8 @@ def web_search(query: str) -> str:
 # Create the LangChain Tool wrapper
 search_tool = Tool(
     name="web_search",
-    func=web_search,
+    func=make_sync(web_search),
+    coroutine=web_search,
     description=(
         "Search the web for CURRENT and RECENT information. Use for things that "
         "change over time or need multiple perspectives from websites. "

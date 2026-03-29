@@ -5,12 +5,13 @@ Free, no API key required, supports 100+ languages.
 """
 
 import re
+import asyncio
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error
+from src.utils import async_retry_on_error, make_sync
 
 
-# Common language name → code mapping for user-friendly input
+# Common language name -> code mapping for user-friendly input
 LANGUAGE_ALIASES = {
     "english": "en", "spanish": "es", "french": "fr", "german": "de",
     "italian": "it", "portuguese": "pt", "dutch": "nl", "russian": "ru",
@@ -40,15 +41,19 @@ def _normalize_language(lang: str) -> str:
     return LANGUAGE_ALIASES.get(lang, lang)
 
 
-@retry_on_error(max_retries=2, delay=1.0)
-def _do_translate(text: str, source: str, target: str) -> str:
-    """Perform the translation using deep-translator."""
+@async_retry_on_error(max_retries=2, delay=1.0)
+async def _async_do_translate(text: str, source: str, target: str) -> str:
+    """Perform the translation using deep-translator, offloaded to a thread."""
     from deep_translator import GoogleTranslator
-    translator = GoogleTranslator(source=source, target=target)
-    return translator.translate(text)
+
+    def _translate():
+        translator = GoogleTranslator(source=source, target=target)
+        return translator.translate(text)
+
+    return await asyncio.to_thread(_translate)
 
 
-def translate_text(input_str: str) -> str:
+async def translate_text(input_str: str) -> str:
     """
     Translate text between languages.
 
@@ -104,10 +109,10 @@ def translate_text(input_str: str) -> str:
         return "Error: No text provided for translation"
 
     try:
-        result = _do_translate(text, source, target)
+        result = await _async_do_translate(text, source, target)
         source_label = source if source != "auto" else "auto-detected"
         return (
-            f"Translation ({source_label} → {target}):\n\n"
+            f"Translation ({source_label} -> {target}):\n\n"
             f"{result}"
         )
     except Exception as e:
@@ -142,7 +147,8 @@ EXAMPLES:
 # Create the LangChain Tool wrapper
 translation_tool = Tool(
     name="translate",
-    func=translate_text,
+    func=make_sync(translate_text),
+    coroutine=translate_text,
     description=(
         "Translate text between 100+ languages using Google Translate. "
         "\n\nFORMAT: 'text | source | target', 'text | to language', 'text to language'"

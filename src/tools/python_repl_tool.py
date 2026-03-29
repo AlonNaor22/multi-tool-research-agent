@@ -33,7 +33,7 @@ def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
     """
     Execute code in a child process.
 
-    Runs in a separate process so it can be killed on timeout —
+    Runs in a separate process so it can be killed on timeout --
     unlike threads, processes CAN be forcefully terminated.
 
     Args:
@@ -173,7 +173,7 @@ def execute_python(code: str) -> str:
 
     # If the process is still running, kill it
     if process.is_alive():
-        process.kill()    # Forcefully terminate — no orphaned loops
+        process.kill()    # Forcefully terminate -- no orphaned loops
         process.join(1)   # Wait briefly for cleanup
         return f"Timeout Error: Code execution exceeded {EXECUTION_TIMEOUT} seconds. The operation was too slow or contains an infinite loop."
 
@@ -193,10 +193,16 @@ def execute_python(code: str) -> str:
     return output
 
 
+async def async_execute_python(code: str) -> str:
+    """Async wrapper for the Python REPL tool."""
+    return execute_python(code)
+
+
 # Create the LangChain Tool wrapper
 python_repl_tool = Tool(
     name="python_repl",
     func=execute_python,
+    coroutine=async_execute_python,
     description=(
         "Execute Python code and return the output. Use this for complex calculations, "
         "data manipulation, string processing, working with lists/dicts, or any task "

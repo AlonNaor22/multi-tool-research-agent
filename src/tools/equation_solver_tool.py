@@ -231,10 +231,16 @@ EXAMPLES:
   2^x = 8             -> x = 3"""
 
 
+async def async_solve_equation(input_str: str) -> str:
+    """Async wrapper for the equation solver tool."""
+    return solve_equation(input_str)
+
+
 # Create the LangChain Tool wrapper
 equation_solver_tool = Tool(
     name="equation_solver",
     func=solve_equation,
+    coroutine=async_solve_equation,
     description=(
         "Solve mathematical equations for unknown variables. "
         "\n\nEXAMPLES:"

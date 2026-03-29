@@ -6,11 +6,12 @@ Uses the free exchangerate-api.com or falls back to frankfurter.app API.
 """
 
 import re
-import requests
+import asyncio
+import aiohttp
 from typing import Optional, Dict
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
 from src.constants import DEFAULT_HTTP_TIMEOUT
 
 
@@ -18,19 +19,19 @@ from src.constants import DEFAULT_HTTP_TIMEOUT
 CURRENCY_ALIASES = {
     # Major currencies
     "dollar": "USD", "dollars": "USD", "usd": "USD", "$": "USD",
-    "euro": "EUR", "euros": "EUR", "eur": "EUR", "€": "EUR",
-    "pound": "GBP", "pounds": "GBP", "gbp": "GBP", "sterling": "GBP", "£": "GBP",
-    "yen": "JPY", "jpy": "JPY", "¥": "JPY",
+    "euro": "EUR", "euros": "EUR", "eur": "EUR", "\u20ac": "EUR",
+    "pound": "GBP", "pounds": "GBP", "gbp": "GBP", "sterling": "GBP", "\u00a3": "GBP",
+    "yen": "JPY", "jpy": "JPY", "\u00a5": "JPY",
     "yuan": "CNY", "cny": "CNY", "rmb": "CNY", "renminbi": "CNY",
     "franc": "CHF", "francs": "CHF", "chf": "CHF",
-    "rupee": "INR", "rupees": "INR", "inr": "INR", "₹": "INR",
-    "ruble": "RUB", "rubles": "RUB", "rub": "RUB", "₽": "RUB",
+    "rupee": "INR", "rupees": "INR", "inr": "INR", "\u20b9": "INR",
+    "ruble": "RUB", "rubles": "RUB", "rub": "RUB", "\u20bd": "RUB",
 
     # Other common currencies
     "cad": "CAD", "canadian": "CAD",
     "aud": "AUD", "australian": "AUD",
     "nzd": "NZD",
-    "krw": "KRW", "won": "KRW", "₩": "KRW",
+    "krw": "KRW", "won": "KRW", "\u20a9": "KRW",
     "brl": "BRL", "real": "BRL", "reais": "BRL",
     "mxn": "MXN", "peso": "MXN", "pesos": "MXN",
     "sgd": "SGD", "singapore": "SGD",
@@ -43,10 +44,10 @@ CURRENCY_ALIASES = {
     "idr": "IDR", "rupiah": "IDR",
     "try": "TRY", "lira": "TRY",
     "zar": "ZAR", "rand": "ZAR",
-    "ils": "ILS", "shekel": "ILS", "shekels": "ILS", "₪": "ILS",
+    "ils": "ILS", "shekel": "ILS", "shekels": "ILS", "\u20aa": "ILS",
     "aed": "AED", "dirham": "AED",
     "sar": "SAR", "riyal": "SAR",
-    "btc": "BTC", "bitcoin": "BTC", "₿": "BTC",
+    "btc": "BTC", "bitcoin": "BTC", "\u20bf": "BTC",
 }
 
 # List of valid ISO currency codes (most common ones)
@@ -75,8 +76,8 @@ def normalize_currency(currency: str) -> Optional[str]:
     return None
 
 
-@retry_on_error(max_retries=2, delay=1.0)
-def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
+@async_retry_on_error(max_retries=2, delay=1.0)
+async def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
     """
     Fetch exchange rate from API.
 
@@ -89,13 +90,13 @@ def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
         "to": to_currency,
     }
 
-    response = requests.get(base_url, params=params, timeout=DEFAULT_HTTP_TIMEOUT)
-    response.raise_for_status()
+    session = await get_aiohttp_session()
+    async with session.get(base_url, params=params, timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT)) as resp:
+        resp.raise_for_status()
+        return await resp.json()
 
-    return response.json()
 
-
-def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
+async def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
     """
     Convert an amount from one currency to another.
 
@@ -120,7 +121,7 @@ def convert_currency(amount: float, from_currency: str, to_currency: str) -> str
         return f"{amount} {from_code} = {amount} {to_code} (same currency)"
 
     try:
-        data = get_exchange_rate(from_code, to_code)
+        data = await get_exchange_rate(from_code, to_code)
 
         if "rates" not in data or to_code not in data["rates"]:
             return f"Error: Could not get exchange rate for {from_code} to {to_code}"
@@ -142,13 +143,13 @@ def convert_currency(amount: float, from_currency: str, to_currency: str) -> str
             f"(Rate as of {data.get('date', 'today')})"
         )
 
-    except requests.exceptions.RequestException as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return f"Error fetching exchange rate: {str(e)}"
     except Exception as e:
         return f"Error converting currency: {str(e)}"
 
 
-def currency_convert(input_str: str) -> str:
+async def currency_convert(input_str: str) -> str:
     """
     Parse and execute a currency conversion request.
 
@@ -175,18 +176,18 @@ def currency_convert(input_str: str) -> str:
 
     # Command: rate only (e.g., "rate USD EUR")
     rate_match = re.match(
-        r'rate\s+([a-zA-Z$€£¥₹₽₩₪₿]+)\s+([a-zA-Z$€£¥₹₽₩₪₿]+)',
+        r'rate\s+([a-zA-Z$\u20ac\u00a3\u00a5\u20b9\u20bd\u20a9\u20aa\u20bf]+)\s+([a-zA-Z$\u20ac\u00a3\u00a5\u20b9\u20bd\u20a9\u20aa\u20bf]+)',
         input_str,
         re.IGNORECASE
     )
     if rate_match:
         from_curr = rate_match.group(1)
         to_curr = rate_match.group(2)
-        return convert_currency(1.0, from_curr, to_curr)
+        return await convert_currency(1.0, from_curr, to_curr)
 
     # Parse conversion pattern: "[convert] AMOUNT FROM_CURRENCY to TO_CURRENCY"
     conversion_match = re.match(
-        r'(?:convert\s+)?(-?[\d,]+\.?\d*)\s*([a-zA-Z$€£¥₹₽₩₪₿]+)\s+to\s+([a-zA-Z$€£¥₹₽₩₪₿]+)',
+        r'(?:convert\s+)?(-?[\d,]+\.?\d*)\s*([a-zA-Z$\u20ac\u00a3\u00a5\u20b9\u20bd\u20a9\u20aa\u20bf]+)\s+to\s+([a-zA-Z$\u20ac\u00a3\u00a5\u20b9\u20bd\u20a9\u20aa\u20bf]+)',
         input_str,
         re.IGNORECASE
     )
@@ -198,7 +199,7 @@ def currency_convert(input_str: str) -> str:
             amount = float(amount_str)
             from_currency = conversion_match.group(2)
             to_currency = conversion_match.group(3)
-            return convert_currency(amount, from_currency, to_currency)
+            return await convert_currency(amount, from_currency, to_currency)
         except ValueError as e:
             return f"Error parsing amount: {str(e)}"
 
@@ -220,15 +221,15 @@ FORMAT:
 
 SUPPORTED CURRENCIES:
 
-Major: USD ($), EUR (€), GBP (£), JPY (¥), CNY, CHF, INR (₹), RUB
+Major: USD ($), EUR (\u20ac), GBP (\u00a3), JPY (\u00a5), CNY, CHF, INR (\u20b9), RUB
 
 Americas: CAD, BRL, MXN, ARS, CLP, COP, PEN
 
-Asia-Pacific: AUD, NZD, SGD, HKD, KRW (₩), TWD, THB, IDR, MYR, PHP, VND
+Asia-Pacific: AUD, NZD, SGD, HKD, KRW (\u20a9), TWD, THB, IDR, MYR, PHP, VND
 
 Europe: SEK, NOK, DKK, PLN, CZK, HUF, RON, CHF, TRY
 
-Middle East/Africa: ILS (₪), AED, SAR, QAR, ZAR, EGP, NGN, KES
+Middle East/Africa: ILS (\u20aa), AED, SAR, QAR, ZAR, EGP, NGN, KES
 
 You can use currency names (dollar, euro, pound, yen) or ISO codes (USD, EUR, GBP, JPY).
 
@@ -238,7 +239,8 @@ Note: Exchange rates are fetched in real-time from frankfurter.app"""
 # Create the LangChain Tool wrapper
 currency_tool = Tool(
     name="currency_converter",
-    func=currency_convert,
+    func=make_sync(currency_convert),
+    coroutine=currency_convert,
     description=(
         "Convert between currencies using real-time exchange rates. "
         "\n\nFORMAT: '100 USD to EUR', 'convert 50 dollars to pounds', 'rate EUR GBP'"

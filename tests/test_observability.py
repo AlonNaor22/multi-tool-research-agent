@@ -20,31 +20,31 @@ from src.observability import (
 class TestQueryMetrics:
     """Tests for the QueryMetrics dataclass."""
 
-    def test_defaults(self):
+    async def test_defaults(self):
         m = QueryMetrics()
         assert m.total_tokens == 0
         assert m.estimated_cost_usd == 0.0
         assert m.tools_called == []
 
-    def test_to_dict(self):
+    async def test_to_dict(self):
         m = QueryMetrics(query_id="abc", input_tokens=100, output_tokens=50)
         d = m.to_dict()
         assert d["query_id"] == "abc"
         assert d["input_tokens"] == 100
         assert isinstance(d, dict)
 
-    def test_from_dict(self):
+    async def test_from_dict(self):
         data = {"query_id": "xyz", "input_tokens": 200, "output_tokens": 100, "total_tokens": 300}
         m = QueryMetrics.from_dict(data)
         assert m.query_id == "xyz"
         assert m.input_tokens == 200
 
-    def test_from_dict_ignores_unknown_fields(self):
+    async def test_from_dict_ignores_unknown_fields(self):
         data = {"query_id": "xyz", "unknown_field": "ignored"}
         m = QueryMetrics.from_dict(data)
         assert m.query_id == "xyz"
 
-    def test_roundtrip(self):
+    async def test_roundtrip(self):
         original = QueryMetrics(
             query_id="test123",
             input_tokens=500,
@@ -62,13 +62,13 @@ class TestQueryMetrics:
 class TestObservabilityCallbackHandler:
     """Tests for the callback handler."""
 
-    def test_reset_sets_query_start(self):
+    async def test_reset_sets_query_start(self):
         handler = ObservabilityCallbackHandler(model_name="test-model")
         handler.reset(question="What is AI?")
         assert handler._query_start is not None
         assert handler._question == "What is AI?"
 
-    def test_tool_tracking(self):
+    async def test_tool_tracking(self):
         handler = ObservabilityCallbackHandler(model_name="test-model")
         handler.reset()
 
@@ -84,7 +84,7 @@ class TestObservabilityCallbackHandler:
         assert metrics.tools_called[0]["name"] == "calculator"
         assert metrics.tools_called[0]["status"] == "success"
 
-    def test_tool_error_tracking(self):
+    async def test_tool_error_tracking(self):
         handler = ObservabilityCallbackHandler(model_name="test-model")
         handler.reset()
 
@@ -96,7 +96,7 @@ class TestObservabilityCallbackHandler:
         assert metrics.tool_failure_count == 1
         assert metrics.tools_called[0]["status"] == "error"
 
-    def test_thinking_time_tracking(self):
+    async def test_thinking_time_tracking(self):
         handler = ObservabilityCallbackHandler(model_name="test-model")
         handler.reset()
 
@@ -107,7 +107,7 @@ class TestObservabilityCallbackHandler:
         metrics = handler.get_metrics()
         assert metrics.thinking_duration_s >= 0.04
 
-    def test_cost_calculation(self):
+    async def test_cost_calculation(self):
         handler = ObservabilityCallbackHandler(model_name="claude-sonnet-4-5-20250929")
         handler.reset()
         handler._input_tokens = 1000
@@ -118,7 +118,7 @@ class TestObservabilityCallbackHandler:
         expected = 1000 * 3.0 / 1_000_000 + 500 * 15.0 / 1_000_000
         assert abs(metrics.estimated_cost_usd - expected) < 0.0001
 
-    def test_cost_calculation_unknown_model(self):
+    async def test_cost_calculation_unknown_model(self):
         handler = ObservabilityCallbackHandler(model_name="unknown-model")
         handler.reset()
         handler._input_tokens = 1000
@@ -129,7 +129,7 @@ class TestObservabilityCallbackHandler:
         expected = 1000 * DEFAULT_PRICING["input"] / 1_000_000 + 500 * DEFAULT_PRICING["output"] / 1_000_000
         assert abs(metrics.estimated_cost_usd - expected) < 0.0001
 
-    def test_multiple_tool_calls(self):
+    async def test_multiple_tool_calls(self):
         handler = ObservabilityCallbackHandler(model_name="test-model")
         handler.reset()
 
@@ -145,7 +145,7 @@ class TestObservabilityCallbackHandler:
         assert metrics.tool_failure_count == 1
         assert len(metrics.tools_called) == 3
 
-    def test_duration_tracking(self):
+    async def test_duration_tracking(self):
         handler = ObservabilityCallbackHandler(model_name="test-model")
         handler.reset()
         time.sleep(0.05)
@@ -153,7 +153,7 @@ class TestObservabilityCallbackHandler:
         metrics = handler.get_metrics()
         assert metrics.total_duration_s >= 0.04
 
-    def test_token_extraction_from_llm_output(self):
+    async def test_token_extraction_from_llm_output(self):
         handler = ObservabilityCallbackHandler(model_name="test-model")
         handler.reset()
 
@@ -173,7 +173,7 @@ class TestObservabilityCallbackHandler:
 class TestMetricsStore:
     """Tests for metrics persistence."""
 
-    def test_save_and_load(self):
+    async def test_save_and_load(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "metrics.jsonl")
             store = MetricsStore(filepath=filepath)
@@ -186,7 +186,7 @@ class TestMetricsStore:
             assert loaded[0].query_id == "test1"
             assert loaded[0].input_tokens == 100
 
-    def test_multiple_saves(self):
+    async def test_multiple_saves(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "metrics.jsonl")
             store = MetricsStore(filepath=filepath)
@@ -198,7 +198,7 @@ class TestMetricsStore:
             loaded = store.load()
             assert len(loaded) == 5
 
-    def test_load_with_limit(self):
+    async def test_load_with_limit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "metrics.jsonl")
             store = MetricsStore(filepath=filepath)
@@ -210,14 +210,14 @@ class TestMetricsStore:
             assert len(loaded) == 3
             assert loaded[-1].query_id == "q9"  # Most recent
 
-    def test_load_empty_file(self):
+    async def test_load_empty_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "metrics.jsonl")
             store = MetricsStore(filepath=filepath)
             loaded = store.load()
             assert loaded == []
 
-    def test_summary_stats(self):
+    async def test_summary_stats(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "metrics.jsonl")
             store = MetricsStore(filepath=filepath)
@@ -247,7 +247,7 @@ class TestMetricsStore:
             assert stats["tool_usage"]["calculator"] == 2
             assert stats["tool_success_rate"] == 75.0
 
-    def test_summary_stats_empty(self):
+    async def test_summary_stats_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "metrics.jsonl")
             store = MetricsStore(filepath=filepath)
@@ -256,7 +256,7 @@ class TestMetricsStore:
             assert stats["total_queries"] == 0
             assert stats["tool_success_rate"] == 0.0
 
-    def test_format_summary(self):
+    async def test_format_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "metrics.jsonl")
             store = MetricsStore(filepath=filepath)
@@ -274,7 +274,7 @@ class TestMetricsStore:
 class TestFormatQueryMetrics:
     """Tests for the CLI formatting function."""
 
-    def test_format_output(self):
+    async def test_format_output(self):
         m = QueryMetrics(
             input_tokens=500, output_tokens=200, total_tokens=700,
             estimated_cost_usd=0.0045,

@@ -4,6 +4,7 @@ A chat interface that showcases the agent's multi-tool capabilities
 with real-time streaming feedback (thinking, tool calls, answers).
 """
 
+import asyncio
 import streamlit as st
 import time
 import pandas as pd
@@ -214,15 +215,17 @@ if prompt := st.chat_input("Ask a research question..."):
         start_time = time.time()
         final_result = None
 
-        try:
-            for chunk in agent.agent.stream(
+        # Async streaming helper
+        async def _run_stream():
+            results = []
+            async for chunk in agent.agent.astream(
                 {"messages": messages},
                 {"callbacks": [agent.timing_callback, sl_callback,
                                agent.observability_callback],
                  "recursion_limit": 20},
                 stream_mode="values",
             ):
-                final_result = chunk
+                results.append(chunk)
 
                 # Render new events in the status widget
                 for event in sl_callback.events:
@@ -235,6 +238,11 @@ if prompt := st.chat_input("Ask a research question..."):
                     elif event["type"] == "tool_error":
                         status.write(f"⚠️ Error: {event['error']}")
                 sl_callback.events.clear()
+
+            return results[-1] if results else None
+
+        try:
+            final_result = asyncio.run(_run_stream())
 
             elapsed = time.time() - start_time
 

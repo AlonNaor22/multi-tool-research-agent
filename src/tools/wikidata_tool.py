@@ -9,11 +9,12 @@ Free, no API key required.
 
 import re
 import json
-import requests
+import asyncio
+import aiohttp
 from typing import Dict, List, Optional
 from langchain_core.tools import Tool
 
-from src.utils import retry_on_error, TTLCache
+from src.utils import async_retry_on_error, get_aiohttp_session, make_sync, TTLCache
 from src.constants import (
     WIKIDATA_SPARQL_URL,
     DEFAULT_HTTP_TIMEOUT,
@@ -24,23 +25,24 @@ from src.constants import (
 _cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
 
 
-@retry_on_error(max_retries=2, delay=2.0)
-def _run_sparql(sparql_query: str) -> List[Dict]:
+@async_retry_on_error(max_retries=2, delay=2.0)
+async def _run_sparql(sparql_query: str) -> List[Dict]:
     """Execute a SPARQL query against Wikidata and return results."""
     headers = {
         "Accept": "application/sparql-results+json",
         "User-Agent": "ResearchAgent/1.0",
     }
 
-    response = requests.get(
+    session = await get_aiohttp_session()
+    async with session.get(
         WIKIDATA_SPARQL_URL,
         params={"query": sparql_query},
         headers=headers,
-        timeout=DEFAULT_HTTP_TIMEOUT,
-    )
-    response.raise_for_status()
+        timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT),
+    ) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
 
-    data = response.json()
     bindings = data.get("results", {}).get("bindings", [])
 
     # Simplify bindings: extract just the values
@@ -140,14 +142,14 @@ def format_search_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
-def wikidata_query(input_str: str) -> str:
+async def wikidata_query(input_str: str) -> str:
     """
     Query Wikidata for structured facts about entities.
 
     Supports formats:
-    - "Albert Einstein"        → look up facts about an entity
-    - "search: quantum physics" → search for matching entities
-    - "sparql: SELECT ..."     → run a raw SPARQL query
+    - "Albert Einstein"        -> look up facts about an entity
+    - "search: quantum physics" -> search for matching entities
+    - "sparql: SELECT ..."     -> run a raw SPARQL query
 
     Args:
         input_str: Entity name, search term, or SPARQL query
@@ -172,7 +174,7 @@ def wikidata_query(input_str: str) -> str:
         # Raw SPARQL mode
         if input_str.lower().startswith("sparql:"):
             sparql = input_str[7:].strip()
-            results = _run_sparql(sparql)
+            results = await _run_sparql(sparql)
             if not results:
                 output = "SPARQL query returned no results."
             else:
@@ -191,7 +193,7 @@ def wikidata_query(input_str: str) -> str:
         if input_str.lower().startswith("search:"):
             search_term = input_str[7:].strip()
             sparql = _search_entities_sparql(search_term)
-            results = _run_sparql(sparql)
+            results = await _run_sparql(sparql)
             output = format_search_results(results, search_term)
             _cache.set(cache_key, output)
             return output
@@ -199,12 +201,12 @@ def wikidata_query(input_str: str) -> str:
         # Default: entity fact lookup
         entity = input_str
         sparql = _entity_lookup_sparql(entity)
-        results = _run_sparql(sparql)
+        results = await _run_sparql(sparql)
 
         if not results:
             # Try searching instead of exact match
             sparql = _search_entities_sparql(entity)
-            results = _run_sparql(sparql)
+            results = await _run_sparql(sparql)
             output = format_search_results(results, entity)
         else:
             output = format_entity_facts(results, entity)
@@ -212,7 +214,7 @@ def wikidata_query(input_str: str) -> str:
         _cache.set(cache_key, output)
         return output
 
-    except requests.exceptions.RequestException as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return f"Error querying Wikidata: {str(e)}"
     except Exception as e:
         return f"Error: {str(e)}"
@@ -253,11 +255,12 @@ EXAMPLES:
 # Create the LangChain Tool wrapper
 wikidata_tool = Tool(
     name="wikidata",
-    func=wikidata_query,
+    func=make_sync(wikidata_query),
+    coroutine=wikidata_query,
     description=(
         "Query Wikidata for precise, structured facts about any entity. "
         "\n\nFORMAT: 'entity name', 'search: term', 'sparql: SPARQL query'"
-        "\n\nRETURNS: Structured facts — dates, populations, coordinates, relationships, classifications."
+        "\n\nRETURNS: Structured facts -- dates, populations, coordinates, relationships, classifications."
         "\n\nUSE FOR: Precise factual data (dates, numbers, relationships), verifying facts from other sources."
         "\n\nTIP: Use exact entity names. Use 'search:' if unsure of the exact name."
     )

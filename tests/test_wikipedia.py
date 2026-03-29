@@ -25,28 +25,28 @@ from src.tools.wikipedia_tool import search_wikipedia
 class TestWikipediaSearch:
     """Test Wikipedia search with mocked API."""
 
-    def test_returns_summary(self):
+    async def test_returns_summary(self):
         wiki_module.summary = MagicMock(return_value="Python is a programming language.")
-        result = search_wikipedia("Python programming")
+        result = await search_wikipedia("Python programming")
         assert "Python" in result
         assert "programming language" in result
 
-    def test_page_not_found(self):
+    async def test_page_not_found(self):
         wiki_module.summary = MagicMock(
             side_effect=wiki_module.exceptions.PageError("test")
         )
-        result = search_wikipedia("xyznonexistentpage123")
+        result = await search_wikipedia("xyznonexistentpage123")
         assert len(result) > 0  # Should return an error message, not crash
 
-    def test_disambiguation_handling(self):
+    async def test_disambiguation_handling(self):
         error = wiki_module.exceptions.DisambiguationError(
             "Python", ["Python (programming)", "Python (snake)"]
         )
         wiki_module.summary = MagicMock(side_effect=error)
-        result = search_wikipedia("Python")
+        result = await search_wikipedia("Python")
         assert len(result) > 0  # Should handle gracefully
 
-    def test_json_input_with_options(self):
+    async def test_json_input_with_options(self):
         wiki_module.summary = MagicMock(return_value="Test summary.")
-        result = search_wikipedia('{"query": "Python", "sentences": 2}')
+        result = await search_wikipedia('{"query": "Python", "sentences": 2}')
         assert "Test summary" in result

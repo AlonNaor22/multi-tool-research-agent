@@ -1,91 +1,74 @@
 """Utility functions for the research agent.
 
-Contains helper functions like retry logic, timeout wrappers,
+Contains async retry logic, timeout wrappers, a shared aiohttp session,
 and a simple TTL cache for reducing redundant API calls.
 """
 
+import asyncio
 import time
 import functools
 import hashlib
-import concurrent.futures
 from typing import Callable, Any, Dict, Optional, Tuple, Type
 
+import aiohttp
 
-def retry_on_error(
+
+# ---------------------------------------------------------------------------
+# Async retry decorator
+# ---------------------------------------------------------------------------
+
+def async_retry_on_error(
     max_retries: int = 3,
     delay: float = 1.0,
     backoff: float = 2.0,
     exceptions: Tuple[Type[Exception], ...] = (Exception,)
 ) -> Callable:
     """
-    A decorator that retries a function if it raises an exception.
+    Async decorator that retries a coroutine if it raises an exception.
 
-    This is useful for network calls that might fail temporarily.
-
-    How Decorators Work:
-    --------------------
-    A decorator wraps a function to add extra behavior.
-
-    Without decorator:
-        result = fetch_data()  # If this fails, it just fails
-
-    With retry decorator:
-        @retry_on_error(max_retries=3)
-        def fetch_data(): ...
-
-        result = fetch_data()  # If this fails, it retries up to 3 times
+    Uses asyncio.sleep for non-blocking backoff with rate-limit detection
+    (HTTP 429 → 5× longer backoff).
 
     Args:
         max_retries: Maximum number of retry attempts (default: 3)
         delay: Initial delay between retries in seconds (default: 1.0)
         backoff: Multiplier for delay after each retry (default: 2.0)
-                 Example: delay=1, backoff=2 → waits 1s, 2s, 4s
         exceptions: Tuple of exception types to catch and retry on
 
-    Returns:
-        Decorated function with retry logic
-
     Example:
-        @retry_on_error(max_retries=3, delay=1.0)
-        def call_api():
-            response = requests.get("https://api.example.com")
-            return response.json()
+        @async_retry_on_error(max_retries=3, delay=1.0)
+        async def call_api():
+            async with session.get(url) as resp:
+                return await resp.json()
     """
 
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)  # Preserves function name and docstring
-        def wrapper(*args, **kwargs) -> Any:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs) -> Any:
             last_exception = None
             current_delay = delay
 
-            # Try up to max_retries + 1 times (original + retries)
             for attempt in range(max_retries + 1):
                 try:
-                    # Try to execute the function
-                    return func(*args, **kwargs)
+                    return await func(*args, **kwargs)
 
                 except exceptions as e:
                     last_exception = e
 
-                    # If we've used all retries, give up
                     if attempt == max_retries:
                         print(f"  ⚠️  All {max_retries} retries failed for {func.__name__}")
                         raise
 
-                    # Detect rate limiting (HTTP 429) and back off more aggressively
                     is_rate_limited = _is_rate_limit_error(e)
                     retry_delay = current_delay * 5 if is_rate_limited else current_delay
                     reason = "rate limited" if is_rate_limited else str(e)[:50]
 
-                    # Log the retry attempt
                     print(f"  🔄 Retry {attempt + 1}/{max_retries} for {func.__name__} "
                           f"after {reason}...")
 
-                    # Wait before retrying (exponential backoff)
-                    time.sleep(retry_delay)
-                    current_delay *= backoff  # Increase delay for next retry
+                    await asyncio.sleep(retry_delay)
+                    current_delay *= backoff
 
-            # This shouldn't be reached, but just in case
             raise last_exception
 
         return wrapper
@@ -94,49 +77,28 @@ def retry_on_error(
 
 def _is_rate_limit_error(error: Exception) -> bool:
     """Check if an exception represents an HTTP 429 rate limit error."""
-    # requests.exceptions.HTTPError carries a response object
     if hasattr(error, "response") and hasattr(error.response, "status_code"):
         return error.response.status_code == 429
-    # Fall back to string matching for other HTTP libraries
+    if hasattr(error, "status"):
+        return error.status == 429
     error_str = str(error)
     return "429" in error_str or "rate limit" in error_str.lower()
 
 
-def safe_execute(func: Callable, *args, default: Any = None, **kwargs) -> Any:
-    """
-    Execute a function and return a default value if it fails.
+# ---------------------------------------------------------------------------
+# Async timeout wrapper
+# ---------------------------------------------------------------------------
 
-    This is simpler than retry - just catches errors and returns a fallback.
+async def async_run_with_timeout(func: Callable, args: tuple = (), timeout: int = 30) -> Any:
+    """
+    Run a blocking function in a thread with a hard async timeout.
+
+    Wraps synchronous/blocking functions (e.g., third-party libraries without
+    async support) in asyncio.to_thread() and enforces a timeout via
+    asyncio.wait_for().
 
     Args:
-        func: Function to execute
-        *args: Arguments to pass to the function
-        default: Value to return if function fails (default: None)
-        **kwargs: Keyword arguments to pass to the function
-
-    Returns:
-        Function result or default value if an error occurred
-
-    Example:
-        result = safe_execute(risky_function, arg1, arg2, default="fallback")
-    """
-    try:
-        return func(*args, **kwargs)
-    except Exception as e:
-        print(f"  ⚠️  {func.__name__} failed: {str(e)[:50]}, using default")
-        return default
-
-
-def run_with_timeout(func: Callable, args: tuple = (), timeout: int = 30) -> Any:
-    """
-    Run a function with a hard timeout using a thread pool.
-
-    Some third-party libraries (arxiv, duckduckgo_search, wikipedia) don't
-    expose a timeout parameter. This wrapper ensures they can't block forever
-    by running them in a thread and raising TimeoutError if they exceed the limit.
-
-    Args:
-        func: The function to call.
+        func: The (sync) function to call.
         args: Positional arguments to pass to the function.
         timeout: Maximum seconds to wait before raising TimeoutError.
 
@@ -145,28 +107,106 @@ def run_with_timeout(func: Callable, args: tuple = (), timeout: int = 30) -> Any
 
     Raises:
         TimeoutError: If the function doesn't complete within the timeout.
-        Exception: Any exception raised by func is re-raised.
 
     Example:
-        # Instead of: results = list(ddgs.text(query))  # can hang forever
-        results = run_with_timeout(lambda: list(ddgs.text(query)), timeout=30)
+        results = await async_run_with_timeout(
+            lambda: list(ddgs.text(query)), timeout=30
+        )
     """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(func, *args)
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(
-                f"{func.__name__ if hasattr(func, '__name__') else 'Function'} "
-                f"timed out after {timeout} seconds"
-            )
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(func, *args),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        name = func.__name__ if hasattr(func, "__name__") else "Function"
+        raise TimeoutError(f"{name} timed out after {timeout} seconds")
 
+
+# ---------------------------------------------------------------------------
+# Shared aiohttp session
+# ---------------------------------------------------------------------------
+
+_session: Optional[aiohttp.ClientSession] = None
+
+
+async def get_aiohttp_session() -> aiohttp.ClientSession:
+    """Get or create the shared aiohttp session (lazy initialization)."""
+    global _session
+    if _session is None or _session.closed:
+        _session = aiohttp.ClientSession()
+    return _session
+
+
+async def close_aiohttp_session() -> None:
+    """Close the shared aiohttp session (call at shutdown)."""
+    global _session
+    if _session and not _session.closed:
+        await _session.close()
+        _session = None
+
+
+# ---------------------------------------------------------------------------
+# Sync bridge for LangChain Tool.func
+# ---------------------------------------------------------------------------
+
+def make_sync(async_fn: Callable) -> Callable:
+    """Create a sync wrapper around an async function.
+
+    Needed because LangChain's Tool() constructor requires a sync `func` parameter.
+    The agent uses `ainvoke()` which calls the `coroutine` directly — this sync
+    wrapper is a fallback that should rarely be called in practice.
+    """
+    @functools.wraps(async_fn)
+    def wrapper(*args, **kwargs) -> Any:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Already inside an event loop (e.g., Streamlit) — run in a new thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, async_fn(*args, **kwargs)).result()
+        else:
+            return asyncio.run(async_fn(*args, **kwargs))
+
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
+# Safe execute
+# ---------------------------------------------------------------------------
+
+async def safe_execute(func: Callable, *args, default: Any = None, **kwargs) -> Any:
+    """
+    Execute an async function and return a default value if it fails.
+
+    Args:
+        func: Async function to execute
+        *args: Arguments to pass to the function
+        default: Value to return if function fails (default: None)
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        Function result or default value if an error occurred
+    """
+    try:
+        return await func(*args, **kwargs)
+    except Exception as e:
+        print(f"  ⚠️  {func.__name__} failed: {str(e)[:50]}, using default")
+        return default
+
+
+# ---------------------------------------------------------------------------
+# TTL Cache
+# ---------------------------------------------------------------------------
 
 class TTLCache:
     """Simple in-memory cache with per-entry TTL (time-to-live).
 
     Avoids redundant API calls for identical queries within a short window.
-    Thread-safe for the typical single-threaded agent loop.
 
     Usage:
         cache = TTLCache(ttl=300)

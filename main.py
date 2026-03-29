@@ -5,10 +5,12 @@ Run with: python main.py
 
 import os
 import sys
+import asyncio
 from src.agent import ResearchAgent
 from src.session_manager import list_sessions, get_session_preview
 from src.tool_health import format_health_status
 from src.observability import MetricsStore
+from src.utils import close_aiohttp_session
 
 
 def print_banner():
@@ -28,8 +30,8 @@ def print_banner():
     print()
 
 
-def main():
-    """Main CLI loop."""
+async def main():
+    """Main async CLI loop."""
     print_banner()
 
     # Fail fast if the required Anthropic API key is missing
@@ -156,8 +158,8 @@ def main():
 
             print("\n" + "-" * 60)
 
-            # Run the query with streaming — shows thinking/tool use in real-time
-            answer = agent.stream_query(query)
+            # Run the query with async streaming — shows thinking/tool use in real-time
+            answer = await agent.stream_query(query)
 
             print("\n" + "-" * 60)
             print(f"\nAnswer: {answer}\n")
@@ -172,4 +174,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    finally:
+        # Ensure the shared aiohttp session is closed
+        try:
+            asyncio.run(close_aiohttp_session())
+        except RuntimeError:
+            pass
