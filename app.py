@@ -8,7 +8,8 @@ import asyncio
 import streamlit as st
 import time
 import pandas as pd
-from typing import Any, Dict
+from datetime import datetime
+from typing import Any, Dict, List
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -84,6 +85,7 @@ if "agent" not in st.session_state:
     st.session_state.chat_history = []  # List of {"role": ..., "content": ...}
     st.session_state.tool_events = []   # Events from last query for display
     st.session_state.last_metrics = None
+    st.session_state.callback_inbox = []  # Callback events for the inbox panel
 
 agent: ResearchAgent = st.session_state.agent
 
@@ -189,6 +191,7 @@ with st.sidebar:
             st.session_state.chat_history = []
             st.session_state.tool_events = []
             st.session_state.last_metrics = None
+            st.session_state.callback_inbox = []
             st.rerun()
 
     # Load session
@@ -207,101 +210,180 @@ with st.sidebar:
                         st.rerun()
 
 # ---------------------------------------------------------------------------
-# Chat display
+# Helper — render a single callback inbox event as styled HTML
 # ---------------------------------------------------------------------------
 
-for msg in st.session_state.chat_history:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+def _render_inbox_event(event: Dict) -> str:
+    """Return an HTML div for one callback inbox event."""
+    if event["is_error"]:
+        return (
+            f'<div style="background:#8B0000; color:#fff; padding:8px 12px;'
+            f' border-radius:6px; margin:4px 0; font-size:0.85em;">'
+            f'<small style="color:#ffcccc;">{event["time"]}</small> '
+            f'{event["message"]}</div>'
+        )
+    return (
+        f'<div style="background:#fff; color:#222; padding:8px 12px;'
+        f' border-radius:6px; margin:4px 0; border:1px solid #ddd;'
+        f' font-size:0.85em;">'
+        f'<small style="color:#888;">{event["time"]}</small> '
+        f'{event["message"]}</div>'
+    )
 
 # ---------------------------------------------------------------------------
-# Chat input and agent execution
+# Main layout — chat (left) + callback inbox (right)
 # ---------------------------------------------------------------------------
 
-if prompt := st.chat_input("Ask a research question..."):
-    # Display user message
-    st.session_state.chat_history.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+chat_col, inbox_col = st.columns([3, 1])
 
-    # Run agent with streaming
-    with st.chat_message("assistant"):
-        # Show tool activity in a status widget
-        status = st.status("Researching...", expanded=True)
+# ---------------------------------------------------------------------------
+# Right column — Callback Inbox (rendered first so it appears during streaming)
+# ---------------------------------------------------------------------------
 
-        # Set up callbacks
-        sl_callback = StreamlitCallbackHandler()
-        agent.timing_callback.reset()
-        agent.observability_callback.reset(question=prompt)
+with inbox_col:
+    st.markdown("#### Callback Inbox")
+    inbox_container = st.container(height=500)
+    with inbox_container:
+        if st.session_state.callback_inbox:
+            html_parts = [_render_inbox_event(ev) for ev in st.session_state.callback_inbox]
+            st.markdown("".join(html_parts), unsafe_allow_html=True)
+        else:
+            st.caption("No events yet. Ask a question to see callback activity.")
 
-        # Build messages and stream
-        messages = agent.memory.get_messages()
-        messages.append(HumanMessage(content=prompt))
+# ---------------------------------------------------------------------------
+# Left column — Chat display + input
+# ---------------------------------------------------------------------------
 
-        start_time = time.time()
-        final_result = None
+with chat_col:
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-        # Async streaming helper
-        async def _run_stream():
-            results = []
-            async for chunk in agent.agent.astream(
-                {"messages": messages},
-                {"callbacks": [agent.timing_callback, sl_callback,
-                               agent.observability_callback],
-                 "recursion_limit": 20},
-                stream_mode="values",
-            ):
-                results.append(chunk)
+    # -----------------------------------------------------------------------
+    # Chat input and agent execution
+    # -----------------------------------------------------------------------
 
-                # Render new events in the status widget
-                for event in sl_callback.events:
-                    if event["type"] == "thinking":
-                        status.write("🧠 Thinking...")
-                    elif event["type"] == "tool_start":
-                        status.write(f"🔧 Using **{event['tool']}**...")
-                    elif event["type"] == "tool_end":
-                        status.write(f"✅ Done")
-                    elif event["type"] == "tool_error":
-                        status.write(f"⚠️ Error: {event['error']}")
-                sl_callback.events.clear()
+    if prompt := st.chat_input("Ask a research question..."):
+        # Display user message
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-            return results[-1] if results else None
+        # Clear inbox for the new query
+        st.session_state.callback_inbox = []
 
-        try:
-            # Check rate limit before starting
-            agent.rate_limiter.check_budget()
+        # Run agent with streaming
+        with st.chat_message("assistant"):
+            # Show tool activity in a status widget
+            status = st.status("Researching...", expanded=True)
 
-            final_result = asyncio.run(_run_stream())
+            # Set up callbacks
+            sl_callback = StreamlitCallbackHandler()
+            agent.timing_callback.reset()
+            agent.observability_callback.reset(question=prompt)
 
-            elapsed = time.time() - start_time
+            # Build messages and stream
+            messages = agent.memory.get_messages()
+            messages.append(HumanMessage(content=prompt))
 
-            # Extract answer
-            if final_result:
-                answer = agent._extract_answer(final_result)
-            else:
-                answer = "No answer was generated."
+            start_time = time.time()
+            final_result = None
 
-            # Save to memory
-            agent.memory.add_exchange(prompt, answer)
+            # Async streaming helper
+            async def _run_stream():
+                results = []
+                async for chunk in agent.agent.astream(
+                    {"messages": messages},
+                    {"callbacks": [agent.timing_callback, sl_callback,
+                                   agent.observability_callback],
+                     "recursion_limit": 20},
+                    stream_mode="values",
+                ):
+                    results.append(chunk)
 
-            # Persist and store metrics
-            metrics = agent.observability_callback.get_metrics()
-            agent.metrics_store.save(metrics)
-            agent.rate_limiter.record_tokens(metrics.total_tokens)
-            st.session_state.last_metrics = metrics
+                    # Render new events in the status widget + collect for inbox
+                    for event in sl_callback.events:
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        if event["type"] == "thinking":
+                            status.write("🧠 Thinking...")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "thinking",
+                                "message": "🧠 Thinking...", "is_error": False,
+                            })
+                        elif event["type"] == "tool_start":
+                            status.write(f"🔧 Using **{event['tool']}**...")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "tool_start",
+                                "message": f"🔧 Using <b>{event['tool']}</b>...",
+                                "is_error": False,
+                            })
+                        elif event["type"] == "tool_end":
+                            status.write("✅ Done")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "tool_end",
+                                "message": "✅ Tool finished", "is_error": False,
+                            })
+                        elif event["type"] == "tool_error":
+                            status.write(f"⚠️ Error: {event['error']}")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "tool_error",
+                                "message": f"⚠️ Error: {event['error']}",
+                                "is_error": True,
+                            })
+                    sl_callback.events.clear()
 
-            status.update(label=f"Done in {elapsed:.1f}s", state="complete", expanded=False)
+                return results[-1] if results else None
 
-        except RateLimitExceeded as e:
-            answer = str(e)
-            status.update(label="Rate limit exceeded", state="error", expanded=False)
+            try:
+                # Check rate limit before starting
+                agent.rate_limiter.check_budget()
 
-        except Exception as e:
-            answer = f"Error: {str(e)}"
-            status.update(label="Error", state="error", expanded=False)
+                final_result = asyncio.run(_run_stream())
 
-        # Display the answer
-        st.markdown(answer)
+                elapsed = time.time() - start_time
 
-    # Save to chat history
-    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                # Extract answer
+                if final_result:
+                    answer = agent._extract_answer(final_result)
+                else:
+                    answer = "No answer was generated."
+
+                # Save to memory
+                agent.memory.add_exchange(prompt, answer)
+
+                # Persist and store metrics
+                metrics = agent.observability_callback.get_metrics()
+                agent.metrics_store.save(metrics)
+                agent.rate_limiter.record_tokens(metrics.total_tokens)
+                st.session_state.last_metrics = metrics
+
+                status.update(label=f"Done in {elapsed:.1f}s", state="complete", expanded=False)
+
+            except RateLimitExceeded as e:
+                answer = str(e)
+                status.update(label="Rate limit exceeded", state="error", expanded=False)
+                st.session_state.callback_inbox.append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "type": "rate_limit",
+                    "message": f"⚠️ Rate limit exceeded: {e}",
+                    "is_error": True,
+                })
+
+            except Exception as e:
+                answer = f"Error: {str(e)}"
+                status.update(label="Error", state="error", expanded=False)
+                st.session_state.callback_inbox.append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "type": "error",
+                    "message": f"⚠️ {str(e)[:200]}",
+                    "is_error": True,
+                })
+
+            # Display the answer
+            st.markdown(answer)
+
+        # Save to chat history
+        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+
+        # Rerun to update the inbox column with collected events
+        st.rerun()
