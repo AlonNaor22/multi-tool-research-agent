@@ -5,6 +5,9 @@ with real-time streaming feedback (thinking, tool calls, answers).
 """
 
 import asyncio
+import os
+import queue
+import threading
 import streamlit as st
 import time
 import pandas as pd
@@ -18,7 +21,7 @@ from src.session_manager import list_sessions
 from src.tool_health import format_health_status
 from src.observability import MetricsStore
 from src.rate_limiter import RateLimitExceeded
-from config import ANTHROPIC_API_KEY, MODEL_NAME
+from config import ANTHROPIC_API_KEY, MODEL_NAME, API_KEYS, update_env_key
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +71,45 @@ st.set_page_config(
 st.title("🔬 Multi-Tool Research Agent")
 
 # ---------------------------------------------------------------------------
+# Sidebar — API Keys configuration
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.header("API Keys")
+    with st.expander("Manage API Keys", expanded=not bool(ANTHROPIC_API_KEY)):
+        _key_saved = False
+        for env_var, info in API_KEYS.items():
+            current_value = os.getenv(env_var, "").strip()
+            label = info["label"]
+            tag = " (required)" if info["required"] else ""
+
+            if current_value:
+                st.markdown(f"**{label}** &nbsp; Configured")
+            else:
+                new_val = st.text_input(
+                    f"{label}{tag}",
+                    type="password",
+                    key=f"apikey_{env_var}",
+                    help=f"Get your key at {info['url']}",
+                )
+                if st.button("Save", key=f"save_{env_var}"):
+                    if new_val.strip():
+                        update_env_key(env_var, new_val.strip())
+                        _key_saved = True
+                    else:
+                        st.warning("Key cannot be empty.")
+        if _key_saved:
+            st.success("Key saved! Reloading...")
+            st.rerun()
+
+    st.divider()
+
+# ---------------------------------------------------------------------------
 # Check API key
 # ---------------------------------------------------------------------------
 
-if not ANTHROPIC_API_KEY:
-    st.error("**ANTHROPIC_API_KEY not set.** Add it to your `.env` file and restart.")
+if not os.getenv("ANTHROPIC_API_KEY", "").strip():
+    st.error("**ANTHROPIC_API_KEY not set.** Enter it in the sidebar and click Save.")
     st.stop()
 
 # ---------------------------------------------------------------------------
@@ -83,7 +120,6 @@ if "agent" not in st.session_state:
     with st.spinner("Initializing agent and checking tool health..."):
         st.session_state.agent = ResearchAgent()
     st.session_state.chat_history = []  # List of {"role": ..., "content": ...}
-    st.session_state.tool_events = []   # Events from last query for display
     st.session_state.last_metrics = None
     st.session_state.callback_inbox = []  # Callback events for the inbox panel
 
@@ -189,7 +225,6 @@ with st.sidebar:
             agent.memory.clear()
             agent.current_session_id = None
             st.session_state.chat_history = []
-            st.session_state.tool_events = []
             st.session_state.last_metrics = None
             st.session_state.callback_inbox = []
             st.rerun()
@@ -274,23 +309,42 @@ with chat_col:
 
         # Run agent with streaming
         with st.chat_message("assistant"):
-            # Show tool activity in a status widget
+            # Compact status bar — only shows the *latest* activity as one line
             status = st.status("Researching...", expanded=True)
+            answer_placeholder = st.empty()
 
             # Set up callbacks
             sl_callback = StreamlitCallbackHandler()
             agent.timing_callback.reset()
             agent.observability_callback.reset(question=prompt)
 
-            # Build messages and stream
+            # Build messages
             messages = agent.memory.get_messages()
             messages.append(HumanMessage(content=prompt))
 
             start_time = time.time()
-            final_result = None
+            answer = "No answer was generated."
 
-            # Async streaming helper
-            async def _run_stream():
+            # -- Thread-based streaming: run async agent in a background thread,
+            #    push events to a queue, and consume them on the Streamlit thread
+            #    so status updates actually render in real time.
+            token_queue: queue.Queue = queue.Queue()
+            _DONE = object()  # sentinel
+
+            def _run_in_thread():
+                """Run the async agent loop in a dedicated thread."""
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(_async_stream())
+                    token_queue.put(("result", result))
+                except Exception as exc:
+                    token_queue.put(("error", exc))
+                finally:
+                    token_queue.put(("done", _DONE))
+                    loop.close()
+
+            async def _async_stream():
                 results = []
                 async for chunk in agent.agent.astream(
                     {"messages": messages},
@@ -300,45 +354,69 @@ with chat_col:
                     stream_mode="values",
                 ):
                     results.append(chunk)
-
-                    # Render new events in the status widget + collect for inbox
+                    # Push callback events to the queue for the main thread
                     for event in sl_callback.events:
-                        ts = datetime.now().strftime("%H:%M:%S")
-                        if event["type"] == "thinking":
-                            status.write("🧠 Thinking...")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "thinking",
-                                "message": "🧠 Thinking...", "is_error": False,
-                            })
-                        elif event["type"] == "tool_start":
-                            status.write(f"🔧 Using **{event['tool']}**...")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "tool_start",
-                                "message": f"🔧 Using <b>{event['tool']}</b>...",
-                                "is_error": False,
-                            })
-                        elif event["type"] == "tool_end":
-                            status.write("✅ Done")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "tool_end",
-                                "message": "✅ Tool finished", "is_error": False,
-                            })
-                        elif event["type"] == "tool_error":
-                            status.write(f"⚠️ Error: {event['error']}")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "tool_error",
-                                "message": f"⚠️ Error: {event['error']}",
-                                "is_error": True,
-                            })
+                        token_queue.put(("event", event))
                     sl_callback.events.clear()
-
                 return results[-1] if results else None
 
             try:
                 # Check rate limit before starting
                 agent.rate_limiter.check_budget()
 
-                final_result = asyncio.run(_run_stream())
+                # Start the agent in a background thread
+                worker = threading.Thread(target=_run_in_thread, daemon=True)
+                worker.start()
+
+                # Consume events on the Streamlit thread so UI updates flush
+                final_result = None
+                error_exc = None
+
+                while True:
+                    try:
+                        kind, payload = token_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+
+                    if kind == "event":
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        if payload["type"] == "thinking":
+                            status.update(label="🧠 Thinking...")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "thinking",
+                                "message": "🧠 Thinking...", "is_error": False,
+                            })
+                        elif payload["type"] == "tool_start":
+                            status.update(label=f"🔧 Using {payload['tool']}...")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "tool_start",
+                                "message": f"🔧 Using <b>{payload['tool']}</b>...",
+                                "is_error": False,
+                            })
+                        elif payload["type"] == "tool_end":
+                            status.update(label="✅ Tool finished")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "tool_end",
+                                "message": "✅ Tool finished", "is_error": False,
+                            })
+                        elif payload["type"] == "tool_error":
+                            status.update(label=f"⚠️ Error: {payload['error'][:80]}")
+                            st.session_state.callback_inbox.append({
+                                "time": ts, "type": "tool_error",
+                                "message": f"⚠️ Error: {payload['error']}",
+                                "is_error": True,
+                            })
+                    elif kind == "result":
+                        final_result = payload
+                    elif kind == "error":
+                        error_exc = payload
+                    elif kind == "done":
+                        break
+
+                worker.join(timeout=5)
+
+                if error_exc is not None:
+                    raise error_exc
 
                 elapsed = time.time() - start_time
 
@@ -380,7 +458,7 @@ with chat_col:
                 })
 
             # Display the answer
-            st.markdown(answer)
+            answer_placeholder.markdown(answer)
 
         # Save to chat history
         st.session_state.chat_history.append({"role": "assistant", "content": answer})

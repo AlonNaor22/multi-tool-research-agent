@@ -69,3 +69,42 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 ### 11. ~~Session Schema Versioning~~ (DONE)
 - [x] Added `version: "1.0"` field to session JSON format
 - [x] Backward compatible — old sessions without version field still load
+
+---
+
+## Next Level — From Good to Exceptional
+
+These improvements would elevate the project from a strong portfolio piece to an outstanding demonstration of agent engineering depth.
+
+### 12. Plan-and-Execute Loop
+- [ ] Before researching, have the agent create a structured plan (outline of steps)
+- [ ] Show the plan to the user for approval before executing
+- [ ] Execute each step sequentially, tracking progress against the plan
+- [ ] Support plan revision if intermediate results change the approach
+- [ ] Example: "Compare 5 LLM frameworks" → outline → research each → draft comparison → revise
+
+### 13. Multi-Agent Orchestration
+- [ ] Implement a supervisor/worker pattern (e.g., orchestrator agent delegates to specialist agents)
+- [ ] Add a researcher + fact-checker dual-agent flow (one gathers, one verifies)
+- [ ] Use LangGraph's multi-agent primitives for agent-to-agent communication
+- [ ] Show agents with different tool subsets and system prompts collaborating on a task
+
+### 14. RAG Pipeline & Semantic Memory
+- [ ] Add a vector store (e.g., ChromaDB or FAISS) for embedding-based retrieval
+- [ ] Store past research results and retrieved documents as embeddings
+- [ ] Let the agent query semantic memory before making external API calls
+- [ ] Support document ingestion (upload PDFs/URLs → chunk → embed → store)
+- [ ] Demonstrate long-term knowledge accumulation across sessions
+
+### 15. Human-in-the-Loop Interaction
+- [ ] Add a mechanism for the agent to ask clarifying questions before proceeding
+- [ ] Present intermediate results for user approval at key decision points
+- [ ] Support user corrections mid-workflow (e.g., "focus more on X, skip Y")
+- [ ] Implement confidence-based escalation — agent asks for help when uncertain
+
+### 16. Deployment & Production Readiness
+- [ ] Add a FastAPI wrapper exposing the agent as a REST API
+- [ ] Dockerfile and docker-compose for containerized deployment
+- [ ] CI/CD pipeline (GitHub Actions) for tests, linting, and build validation
+- [ ] Environment-based configuration (dev/staging/prod)
+- [ ] API authentication and rate limiting at the endpoint level
