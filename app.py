@@ -10,54 +10,14 @@ import time
 import pandas as pd
 from datetime import datetime
 from typing import Any, Dict, List
-from langchain_core.callbacks.base import BaseCallbackHandler
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
 
 from src.agent import ResearchAgent
 from src.session_manager import list_sessions
 from src.tool_health import format_health_status
-from src.st_callable_util import get_streamlit_cb
 from src.observability import MetricsStore
 from src.rate_limiter import RateLimitExceeded
 from config import ANTHROPIC_API_KEY, MODEL_NAME, API_KEYS, update_env_key
-
-
-class InboxCallbackHandler(BaseCallbackHandler):
-    """Lightweight callback that logs events to the callback inbox list
-    (displayed in the right-hand column after the query completes)."""
-
-    def __init__(self, inbox: list):
-        super().__init__()
-        self.inbox = inbox
-
-    def on_llm_start(self, serialized: Dict[str, Any], prompts: Any, **kwargs) -> None:
-        self.inbox.append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "type": "thinking", "message": "🧠 Thinking...", "is_error": False,
-        })
-
-    def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
-        name = serialized.get("name", "tool")
-        self.inbox.append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "type": "tool_start",
-            "message": f"🔧 Using <b>{name}</b>...",
-            "is_error": False,
-        })
-
-    def on_tool_end(self, output: str, **kwargs) -> None:
-        self.inbox.append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "type": "tool_end", "message": "✅ Tool finished", "is_error": False,
-        })
-
-    def on_tool_error(self, error: Exception, **kwargs) -> None:
-        self.inbox.append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "type": "tool_error",
-            "message": f"⚠️ Error: {str(error)[:200]}",
-            "is_error": True,
-        })
 
 
 # ---------------------------------------------------------------------------
@@ -309,48 +269,91 @@ with chat_col:
         # Clear inbox for the new query
         st.session_state.callback_inbox = []
 
-        # Run agent with real-time streaming via context-aware callbacks.
-        # Pattern: synchronous invoke() + StreamHandler that writes directly
-        # to Streamlit containers using add_script_run_ctx().
+        # Run agent with real-time streaming.
+        # Uses graph.stream(stream_mode="messages") which yields
+        # (AIMessageChunk, metadata) tuples directly — no callback
+        # propagation needed. This bypasses the LangChain create_agent
+        # limitation where invoke() doesn't forward callbacks to the LLM.
         with st.chat_message("assistant"):
-            # Create a container for streaming output — the callback handler
-            # will write tokens and tool status directly into this container.
-            stream_container = st.container()
-            st_callback = get_streamlit_cb(stream_container)
-            inbox_callback = InboxCallbackHandler(st.session_state.callback_inbox)
+            status_placeholder = st.empty()  # compact one-line tool status
+            token_placeholder = st.empty()   # streaming answer text
 
-            # Reset internal callbacks for metrics/timing
             agent.timing_callback.reset()
             agent.observability_callback.reset(question=prompt)
 
-            # Build messages
             messages = agent.memory.get_messages()
             messages.append(HumanMessage(content=prompt))
 
             start_time = time.time()
             answer = "No answer was generated."
+            streamed_text = ""
+            inbox = st.session_state.callback_inbox
 
             try:
                 agent.rate_limiter.check_budget()
 
-                # Synchronous invoke — callbacks handle all real-time UI updates
-                result = agent.agent.invoke(
+                status_placeholder.markdown("*🧠 Thinking...*")
+                inbox.append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "type": "thinking",
+                    "message": "🧠 Thinking...", "is_error": False,
+                })
+
+                for chunk, metadata in agent.agent.stream(
                     {"messages": messages},
                     config={
                         "callbacks": [
-                            st_callback,
-                            inbox_callback,
                             agent.timing_callback,
                             agent.observability_callback,
                         ],
                         "recursion_limit": 20,
                     },
-                )
+                    stream_mode="messages",
+                ):
+                    node = metadata.get("langgraph_node", "")
+
+                    # --- Token streaming from the model node ---
+                    if node == "model" and isinstance(chunk, AIMessageChunk):
+                        # Anthropic returns content as a list of blocks:
+                        # [{"text": "...", "type": "text", "index": 0}]
+                        content = chunk.content
+                        text_part = ""
+                        if isinstance(content, str) and content:
+                            text_part = content
+                        elif isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    text_part += block.get("text", "")
+
+                        if text_part:
+                            streamed_text += text_part
+                            token_placeholder.markdown(streamed_text + "▌")
+                            # Clear status when answer starts streaming
+                            status_placeholder.empty()
+
+                    # --- Tool results from the tools node ---
+                    elif node == "tools" and isinstance(chunk, ToolMessage):
+                        tool_name = chunk.name or "tool"
+                        ts = datetime.now().strftime("%H:%M:%S")
+
+                        status_placeholder.markdown(f"*🔧 Used {tool_name}*")
+                        inbox.append({
+                            "time": ts, "type": "tool_start",
+                            "message": f"🔧 Using <b>{tool_name}</b>...",
+                            "is_error": False,
+                        })
+                        inbox.append({
+                            "time": ts, "type": "tool_end",
+                            "message": "✅ Tool finished", "is_error": False,
+                        })
+
+                # Finalize: remove cursor, show clean text
+                if streamed_text:
+                    token_placeholder.markdown(streamed_text)
+                    answer = streamed_text
+                status_placeholder.empty()
 
                 elapsed = time.time() - start_time
-
-                # Extract the final answer
-                answer = agent._extract_answer(result)
 
                 # Save to memory
                 agent.memory.add_exchange(prompt, answer)
@@ -361,8 +364,7 @@ with chat_col:
                 agent.rate_limiter.record_tokens(metrics.total_tokens)
                 st.session_state.last_metrics = metrics
 
-                # Log completion to callback inbox
-                st.session_state.callback_inbox.append({
+                inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),
                     "type": "complete",
                     "message": f"✅ Done in {elapsed:.1f}s",
@@ -371,8 +373,9 @@ with chat_col:
 
             except RateLimitExceeded as e:
                 answer = str(e)
+                status_placeholder.empty()
                 st.error(answer)
-                st.session_state.callback_inbox.append({
+                inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),
                     "type": "rate_limit",
                     "message": f"⚠️ Rate limit exceeded: {e}",
@@ -381,8 +384,9 @@ with chat_col:
 
             except Exception as e:
                 answer = f"Error: {str(e)}"
+                status_placeholder.empty()
                 st.error(answer)
-                st.session_state.callback_inbox.append({
+                inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),
                     "type": "error",
                     "message": f"⚠️ {str(e)[:200]}",
