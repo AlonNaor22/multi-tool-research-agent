@@ -4,58 +4,60 @@ A chat interface that showcases the agent's multi-tool capabilities
 with real-time streaming feedback (thinking, tool calls, answers).
 """
 
-import asyncio
 import os
-import queue
-import threading
 import streamlit as st
 import time
 import pandas as pd
 from datetime import datetime
 from typing import Any, Dict, List
-from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.callbacks.base import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, AIMessage
 
 from src.agent import ResearchAgent
 from src.session_manager import list_sessions
 from src.tool_health import format_health_status
+from src.st_callable_util import get_streamlit_cb
 from src.observability import MetricsStore
 from src.rate_limiter import RateLimitExceeded
 from config import ANTHROPIC_API_KEY, MODEL_NAME, API_KEYS, update_env_key
 
 
-# ---------------------------------------------------------------------------
-# Streamlit callback handler — captures events for rendering in the UI
-# ---------------------------------------------------------------------------
+class InboxCallbackHandler(BaseCallbackHandler):
+    """Lightweight callback that logs events to the callback inbox list
+    (displayed in the right-hand column after the query completes)."""
 
-class StreamlitCallbackHandler(BaseCallbackHandler):
-    """Captures agent events (thinking, tool calls, errors) for Streamlit rendering."""
-
-    def __init__(self):
+    def __init__(self, inbox: list):
         super().__init__()
-        self.events = []  # List of {"type": ..., "data": ...}
-        self._tool_depth = 0
+        self.inbox = inbox
 
     def on_llm_start(self, serialized: Dict[str, Any], prompts: Any, **kwargs) -> None:
-        if self._tool_depth == 0:
-            self.events.append({"type": "thinking"})
+        self.inbox.append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "type": "thinking", "message": "🧠 Thinking...", "is_error": False,
+        })
 
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
-        self._tool_depth += 1
-        tool_name = serialized.get("name", "unknown_tool")
-        self.events.append({"type": "tool_start", "tool": tool_name, "input": str(input_str)[:200]})
+        name = serialized.get("name", "tool")
+        self.inbox.append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "type": "tool_start",
+            "message": f"🔧 Using <b>{name}</b>...",
+            "is_error": False,
+        })
 
     def on_tool_end(self, output: str, **kwargs) -> None:
-        self._tool_depth = max(0, self._tool_depth - 1)
-        self.events.append({"type": "tool_end", "output": str(output)[:500]})
+        self.inbox.append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "type": "tool_end", "message": "✅ Tool finished", "is_error": False,
+        })
 
     def on_tool_error(self, error: Exception, **kwargs) -> None:
-        self._tool_depth = max(0, self._tool_depth - 1)
-        self.events.append({"type": "tool_error", "error": str(error)[:300]})
-
-    def reset(self):
-        self.events = []
-        self._tool_depth = 0
+        self.inbox.append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "type": "tool_error",
+            "message": f"⚠️ Error: {str(error)[:200]}",
+            "is_error": True,
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -307,14 +309,17 @@ with chat_col:
         # Clear inbox for the new query
         st.session_state.callback_inbox = []
 
-        # Run agent with streaming
+        # Run agent with real-time streaming via context-aware callbacks.
+        # Pattern: synchronous invoke() + StreamHandler that writes directly
+        # to Streamlit containers using add_script_run_ctx().
         with st.chat_message("assistant"):
-            # Compact status bar — only shows the *latest* activity as one line
-            status = st.status("Researching...", expanded=True)
-            answer_placeholder = st.empty()
+            # Create a container for streaming output — the callback handler
+            # will write tokens and tool status directly into this container.
+            stream_container = st.container()
+            st_callback = get_streamlit_cb(stream_container)
+            inbox_callback = InboxCallbackHandler(st.session_state.callback_inbox)
 
-            # Set up callbacks
-            sl_callback = StreamlitCallbackHandler()
+            # Reset internal callbacks for metrics/timing
             agent.timing_callback.reset()
             agent.observability_callback.reset(question=prompt)
 
@@ -325,121 +330,48 @@ with chat_col:
             start_time = time.time()
             answer = "No answer was generated."
 
-            # -- Thread-based streaming: run async agent in a background thread,
-            #    push events to a queue, and consume them on the Streamlit thread
-            #    so status updates actually render in real time.
-            token_queue: queue.Queue = queue.Queue()
-            _DONE = object()  # sentinel
-
-            def _run_in_thread():
-                """Run the async agent loop in a dedicated thread."""
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    result = loop.run_until_complete(_async_stream())
-                    token_queue.put(("result", result))
-                except Exception as exc:
-                    token_queue.put(("error", exc))
-                finally:
-                    token_queue.put(("done", _DONE))
-                    loop.close()
-
-            async def _async_stream():
-                results = []
-                async for chunk in agent.agent.astream(
-                    {"messages": messages},
-                    {"callbacks": [agent.timing_callback, sl_callback,
-                                   agent.observability_callback],
-                     "recursion_limit": 20},
-                    stream_mode="values",
-                ):
-                    results.append(chunk)
-                    # Push callback events to the queue for the main thread
-                    for event in sl_callback.events:
-                        token_queue.put(("event", event))
-                    sl_callback.events.clear()
-                return results[-1] if results else None
-
             try:
-                # Check rate limit before starting
                 agent.rate_limiter.check_budget()
 
-                # Start the agent in a background thread
-                worker = threading.Thread(target=_run_in_thread, daemon=True)
-                worker.start()
-
-                # Consume events on the Streamlit thread so UI updates flush
-                final_result = None
-                error_exc = None
-
-                while True:
-                    try:
-                        kind, payload = token_queue.get(timeout=0.1)
-                    except queue.Empty:
-                        continue
-
-                    if kind == "event":
-                        ts = datetime.now().strftime("%H:%M:%S")
-                        if payload["type"] == "thinking":
-                            status.update(label="🧠 Thinking...")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "thinking",
-                                "message": "🧠 Thinking...", "is_error": False,
-                            })
-                        elif payload["type"] == "tool_start":
-                            status.update(label=f"🔧 Using {payload['tool']}...")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "tool_start",
-                                "message": f"🔧 Using <b>{payload['tool']}</b>...",
-                                "is_error": False,
-                            })
-                        elif payload["type"] == "tool_end":
-                            status.update(label="✅ Tool finished")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "tool_end",
-                                "message": "✅ Tool finished", "is_error": False,
-                            })
-                        elif payload["type"] == "tool_error":
-                            status.update(label=f"⚠️ Error: {payload['error'][:80]}")
-                            st.session_state.callback_inbox.append({
-                                "time": ts, "type": "tool_error",
-                                "message": f"⚠️ Error: {payload['error']}",
-                                "is_error": True,
-                            })
-                    elif kind == "result":
-                        final_result = payload
-                    elif kind == "error":
-                        error_exc = payload
-                    elif kind == "done":
-                        break
-
-                worker.join(timeout=5)
-
-                if error_exc is not None:
-                    raise error_exc
+                # Synchronous invoke — callbacks handle all real-time UI updates
+                result = agent.agent.invoke(
+                    {"messages": messages},
+                    config={
+                        "callbacks": [
+                            st_callback,
+                            inbox_callback,
+                            agent.timing_callback,
+                            agent.observability_callback,
+                        ],
+                        "recursion_limit": 20,
+                    },
+                )
 
                 elapsed = time.time() - start_time
 
-                # Extract answer
-                if final_result:
-                    answer = agent._extract_answer(final_result)
-                else:
-                    answer = "No answer was generated."
+                # Extract the final answer
+                answer = agent._extract_answer(result)
 
                 # Save to memory
                 agent.memory.add_exchange(prompt, answer)
 
-                # Persist and store metrics
+                # Persist metrics
                 metrics = agent.observability_callback.get_metrics()
                 agent.metrics_store.save(metrics)
                 agent.rate_limiter.record_tokens(metrics.total_tokens)
                 st.session_state.last_metrics = metrics
 
-                status.update(label=f"Done in {elapsed:.1f}s", state="complete", expanded=False)
+                # Log completion to callback inbox
+                st.session_state.callback_inbox.append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "type": "complete",
+                    "message": f"✅ Done in {elapsed:.1f}s",
+                    "is_error": False,
+                })
 
             except RateLimitExceeded as e:
                 answer = str(e)
-                status.update(label="Rate limit exceeded", state="error", expanded=False)
+                st.error(answer)
                 st.session_state.callback_inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),
                     "type": "rate_limit",
@@ -449,16 +381,13 @@ with chat_col:
 
             except Exception as e:
                 answer = f"Error: {str(e)}"
-                status.update(label="Error", state="error", expanded=False)
+                st.error(answer)
                 st.session_state.callback_inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),
                     "type": "error",
                     "message": f"⚠️ {str(e)[:200]}",
                     "is_error": True,
                 })
-
-            # Display the answer
-            answer_placeholder.markdown(answer)
 
         # Save to chat history
         st.session_state.chat_history.append({"role": "assistant", "content": answer})

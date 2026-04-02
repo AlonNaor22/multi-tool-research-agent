@@ -12,6 +12,14 @@ import time
 from typing import Any, Dict, List, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 
+# Fix Windows console encoding — default 'charmap' codec can't handle Unicode
+# characters (emojis, special symbols) that the LLM frequently produces.
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 class TimingCallbackHandler(BaseCallbackHandler):
     """

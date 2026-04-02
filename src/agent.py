@@ -222,6 +222,7 @@ class ResearchAgent:
             temperature=TEMPERATURE,
             max_tokens=MAX_TOKENS,
             api_key=ANTHROPIC_API_KEY,
+            streaming=True,
         )
 
         # Collect all our tools
