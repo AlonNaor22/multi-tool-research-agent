@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
             "Examples:\n"
             "  python main.py              # direct mode (default)\n"
             "  python main.py --plan       # always use plan-and-execute\n"
+            "  python main.py --multi-agent # multi-agent orchestration\n"
         ),
     )
     parser.add_argument(
@@ -33,15 +34,23 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Force plan-and-execute mode for every query.",
     )
+    parser.add_argument(
+        "--multi-agent",
+        action="store_true",
+        default=False,
+        help="Use multi-agent orchestration (supervisor delegates to specialists).",
+    )
     return parser.parse_args()
 
 
-def print_banner(plan_mode: bool = False):
+def print_banner(plan_mode: bool = False, multi_agent_mode: bool = False):
     """Print the application banner."""
     print("\n" + "=" * 60)
     print("        Multi-Tool Research Agent")
     print("        Powered by Claude + LangChain (Native Tool Calling)")
-    if plan_mode:
+    if multi_agent_mode:
+        print("        Mode: Multi-Agent Orchestration")
+    elif plan_mode:
         print("        Mode: Plan-and-Execute")
     print("=" * 60)
     print("\nCommands:")
@@ -59,8 +68,9 @@ async def main():
     """Main async CLI loop."""
     args = parse_args()
     plan_mode = args.plan
+    multi_agent_mode = args.multi_agent
 
-    print_banner(plan_mode=plan_mode)
+    print_banner(plan_mode=plan_mode, multi_agent_mode=multi_agent_mode)
 
     # Fail fast if the required Anthropic API key is missing
     if not os.getenv("ANTHROPIC_API_KEY", "").strip():
@@ -186,7 +196,10 @@ async def main():
 
             print("\n" + "-" * 60)
 
-            if plan_mode:
+            if multi_agent_mode:
+                # Multi-agent mode: supervisor delegates to specialist agents
+                answer = await agent.multi_agent_query(query)
+            elif plan_mode:
                 # Plan-and-execute mode: generates a structured plan first,
                 # executes each step, then synthesizes findings.
                 answer = await agent.plan_and_execute(query)
@@ -195,8 +208,8 @@ async def main():
                 answer = await agent.stream_query(query)
 
             print("\n" + "-" * 60)
-            if not plan_mode:
-                # In plan mode the answer is already streamed to stdout
+            if not plan_mode and not multi_agent_mode:
+                # In plan/multi-agent mode the answer is already streamed to stdout
                 print(f"\nAnswer: {answer}\n")
             print("-" * 60)
             print()

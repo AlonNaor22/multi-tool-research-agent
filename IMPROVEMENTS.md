@@ -86,11 +86,14 @@ These improvements would elevate the project from a strong portfolio piece to an
 - [x] Auto mode uses `is_simple_query()` heuristic to choose between direct and plan modes
 - [x] Backward compatible — `query()` and `stream_query()` untouched
 
-### 13. Multi-Agent Orchestration
-- [ ] Implement a supervisor/worker pattern (e.g., orchestrator agent delegates to specialist agents)
-- [ ] Add a researcher + fact-checker dual-agent flow (one gathers, one verifies)
-- [ ] Use LangGraph's multi-agent primitives for agent-to-agent communication
-- [ ] Show agents with different tool subsets and system prompts collaborating on a task
+### 13. ~~Multi-Agent Orchestration~~ (DONE)
+- [x] Supervisor/worker pattern: LLM-only supervisor delegates to 5 specialist agents (research, math, analysis, fact-checker, translation) each with focused tool subsets and system prompts
+- [x] Researcher + fact-checker dual-agent flow: fact-checker independently verifies research findings using authoritative sources, reports confirmed/contradicted/unverifiable claims
+- [x] LangGraph StateGraph orchestration: `supervisor_plan → dispatch_phases → synthesize → END` with phased parallel dispatch via `asyncio.gather()`
+- [x] Parallel execution: supervisor produces `execution_phases` (list of lists) — independent specialists run concurrently, dependent ones wait for prior phases
+- [x] Streamlit UI: "Multi-Agent" radio option with live delegation panel showing specialist status icons and phase progress
+- [x] CLI: `--multi-agent` flag with verbose output showing phases, specialists, and streamed synthesis
+- [x] 23 unit tests covering DelegationPlan model, supervisor parsing/fallbacks, specialist definitions, and module exports
 
 ### 14. RAG Pipeline & Semantic Memory
 - [ ] Add a vector store (e.g., ChromaDB or FAISS) for embedding-based retrieval

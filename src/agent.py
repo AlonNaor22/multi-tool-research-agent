@@ -510,6 +510,59 @@ class ResearchAgent:
 
 
     # ------------------------------------------------------------------
+    # Multi-Agent Orchestration
+    # ------------------------------------------------------------------
+
+    def _get_orchestrator(self):
+        """Lazily build the multi-agent orchestrator on first use."""
+        if not hasattr(self, '_multi_agent_orchestrator') or self._multi_agent_orchestrator is None:
+            from src.multi_agent.orchestrator import MultiAgentOrchestrator
+            self._multi_agent_orchestrator = MultiAgentOrchestrator(
+                llm=self.llm,
+                all_tools=self.tools,
+                tool_health=self.tool_health,
+                callbacks=[self.timing_callback, self.observability_callback],
+            )
+        return self._multi_agent_orchestrator
+
+    async def multi_agent_query(self, query: str, verbose: bool = True) -> str:
+        """Run a query using multi-agent orchestration (for CLI).
+
+        The supervisor delegates sub-tasks to specialist agents, which
+        run in parallel when independent.  Results are synthesized into
+        a final answer.
+
+        Args:
+            query:   The research question.
+            verbose: Whether to print progress to stdout.
+
+        Returns:
+            The final synthesized answer.
+        """
+        orchestrator = self._get_orchestrator()
+        if verbose:
+            answer = await orchestrator.run_verbose(query)
+        else:
+            answer = await orchestrator.run(query)
+        self.memory.add_exchange(query, answer)
+        return answer
+
+    def multi_agent_stream(self, query: str):
+        """Sync generator for Streamlit — yields typed multi-agent events.
+
+        Event types: plan_created, phase_started, specialist_started,
+        specialist_done, phase_done, synthesis_token, done.
+        """
+        orchestrator = self._get_orchestrator()
+        final_answer = ""
+        for event in orchestrator.stream(query):
+            yield event
+            if event.get("type") == "done":
+                final_answer = event.get("answer", "")
+        if final_answer:
+            self.memory.add_exchange(query, final_answer)
+
+    # ------------------------------------------------------------------
     # Plan-and-Execute: LangGraph StateGraph
     # ------------------------------------------------------------------
 

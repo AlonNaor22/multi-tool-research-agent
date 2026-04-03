@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, Too
 
 from src.agent import ResearchAgent
 from src.planner import is_simple_query, ResearchPlan
+from src.multi_agent.supervisor import DelegationPlan
 from src.session_manager import list_sessions
 from src.tool_health import format_health_status
 from src.observability import MetricsStore
@@ -175,16 +176,18 @@ with st.sidebar:
 
     # --- Research Mode ---
     st.header("Research Mode")
+    mode_options = ["Auto", "Direct", "Plan-and-Execute", "Multi-Agent"]
     research_mode = st.radio(
         "Mode",
-        options=["Auto", "Direct", "Plan-and-Execute"],
-        index=["Auto", "Direct", "Plan-and-Execute"].index(
+        options=mode_options,
+        index=mode_options.index(
             st.session_state.get("research_mode", "Auto")
         ),
         help=(
             "**Auto**: uses the complexity detector to choose.\n"
             "**Direct**: always runs the agent without a plan.\n"
-            "**Plan-and-Execute**: always generates a multi-step research plan first."
+            "**Plan-and-Execute**: always generates a multi-step research plan first.\n"
+            "**Multi-Agent**: supervisor delegates to specialist agents that run in parallel."
         ),
     )
     st.session_state.research_mode = research_mode
@@ -193,6 +196,8 @@ with st.sidebar:
         st.caption("Simple questions → Direct. Complex ones → Plan-and-Execute.")
     elif research_mode == "Plan-and-Execute":
         st.caption("Every query gets a structured research plan.")
+    elif research_mode == "Multi-Agent":
+        st.caption("Supervisor delegates to specialist agents (parallel execution).")
 
     st.divider()
 
@@ -268,6 +273,29 @@ def _render_inbox_event(event: Dict) -> str:
         f'{event["message"]}</div>'
     )
 
+def _render_delegation_plan(plan: DelegationPlan, specialist_status: Dict[str, str] = None) -> str:
+    """Render a DelegationPlan as compact markdown for Streamlit."""
+    STATUS_ICON = {"pending": "\u23f3", "running": "\U0001f504", "done": "\u2705"}
+    status = specialist_status or {}
+
+    lines = ["**Multi-Agent Delegation Plan**", ""]
+    if plan.rationale:
+        lines.append(f"*{plan.rationale}*")
+        lines.append("")
+
+    for i, phase in enumerate(plan.execution_phases):
+        parallel_note = " (parallel)" if len(phase) > 1 else ""
+        lines.append(f"**Phase {i + 1}**{parallel_note}")
+        for name in phase:
+            icon = STATUS_ICON.get(status.get(name, "pending"), "\u23f3")
+            task = plan.specialist_tasks.get(name, "")
+            task_preview = f": {task[:80]}..." if task and len(task) > 80 else f": {task}" if task else ""
+            lines.append(f"  {icon} **{name}**{task_preview}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Main layout — chat (left) + callback inbox (right)
 # ---------------------------------------------------------------------------
@@ -312,6 +340,7 @@ with chat_col:
 
         # Determine which mode to use
         mode = st.session_state.get("research_mode", "Auto")
+        use_multi_agent = (mode == "Multi-Agent")
         if mode == "Auto":
             use_plan = not is_simple_query(prompt)
         elif mode == "Plan-and-Execute":
@@ -328,9 +357,131 @@ with chat_col:
                 agent.rate_limiter.check_budget()
 
                 # =======================================================
+                # MULTI-AGENT MODE
+                # =======================================================
+                if use_multi_agent:
+                    plan_placeholder = st.empty()
+                    status_placeholder = st.empty()
+                    token_placeholder = st.empty()
+
+                    status_placeholder.markdown("*\U0001f9e0 Supervisor is analyzing the query...*")
+                    inbox.append({
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "type": "supervisor",
+                        "message": "\U0001f9e0 Supervisor analyzing query...",
+                        "is_error": False,
+                    })
+
+                    streamed_text = ""
+                    specialist_status: Dict[str, str] = {}
+
+                    for event in agent.multi_agent_stream(prompt):
+                        etype = event.get("type")
+
+                        if etype == "plan_created":
+                            ma_plan = event["plan"]
+                            # Initialize all specialist statuses to pending
+                            for phase in ma_plan.execution_phases:
+                                for name in phase:
+                                    specialist_status[name] = "pending"
+                            plan_placeholder.markdown(
+                                _render_delegation_plan(ma_plan, specialist_status)
+                            )
+                            parallel_count = sum(
+                                1 for p in ma_plan.execution_phases if len(p) > 1
+                            )
+                            status_placeholder.markdown(
+                                f"*\U0001f5fa\ufe0f Delegation plan: "
+                                f"{len(ma_plan.execution_phases)} phases, "
+                                f"{len(specialist_status)} specialists*"
+                            )
+                            inbox.append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "type": "plan",
+                                "message": (
+                                    f"\U0001f5fa\ufe0f Plan: {len(ma_plan.execution_phases)} phases, "
+                                    f"{len(specialist_status)} specialists"
+                                ),
+                                "is_error": False,
+                            })
+
+                        elif etype == "phase_started":
+                            phase_specialists = event.get("specialists", [])
+                            parallel = len(phase_specialists) > 1
+                            note = " (parallel)" if parallel else ""
+                            status_placeholder.markdown(
+                                f"*\U0001f504 Phase {event['phase_idx'] + 1}{note}: "
+                                f"{', '.join(phase_specialists)}*"
+                            )
+                            inbox.append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "type": "phase",
+                                "message": (
+                                    f"\U0001f504 Phase {event['phase_idx'] + 1}{note}: "
+                                    f"{', '.join(phase_specialists)}"
+                                ),
+                                "is_error": False,
+                            })
+
+                        elif etype == "specialist_started":
+                            name = event.get("specialist", "")
+                            specialist_status[name] = "running"
+                            plan_placeholder.markdown(
+                                _render_delegation_plan(ma_plan, specialist_status)
+                            )
+                            inbox.append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "type": "specialist",
+                                "message": f"\U0001f504 <b>{name}</b> started",
+                                "is_error": False,
+                            })
+
+                        elif etype == "specialist_done":
+                            name = event.get("specialist", "")
+                            specialist_status[name] = "done"
+                            plan_placeholder.markdown(
+                                _render_delegation_plan(ma_plan, specialist_status)
+                            )
+                            preview = event.get("result_preview", "")[:100]
+                            inbox.append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "type": "specialist",
+                                "message": f"\u2705 <b>{name}</b> done",
+                                "is_error": False,
+                            })
+
+                        elif etype == "phase_done":
+                            inbox.append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "type": "phase",
+                                "message": f"\u2705 Phase {event['phase_idx'] + 1} complete",
+                                "is_error": False,
+                            })
+
+                        elif etype == "synthesis_token":
+                            token = event["token"]
+                            words = token.split(" ")
+                            for wi, word in enumerate(words):
+                                if wi > 0:
+                                    streamed_text += " "
+                                streamed_text += word
+                                token_placeholder.markdown(streamed_text + "\u258c")
+                                if wi < len(words) - 1:
+                                    time.sleep(0.01)
+                            plan_placeholder.empty()
+                            status_placeholder.empty()
+
+                        elif etype == "done":
+                            answer = event.get("answer", streamed_text)
+
+                    if streamed_text:
+                        token_placeholder.markdown(streamed_text)
+                    status_placeholder.empty()
+
+                # =======================================================
                 # PLAN-AND-EXECUTE MODE
                 # =======================================================
-                if use_plan:
+                elif use_plan:
                     plan_placeholder = st.empty()    # live plan panel
                     status_placeholder = st.empty()  # one-line status
                     token_placeholder = st.empty()   # streamed synthesis
