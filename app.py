@@ -326,8 +326,18 @@ with chat_col:
                                     text_part += block.get("text", "")
 
                         if text_part:
-                            streamed_text += text_part
-                            token_placeholder.markdown(streamed_text + "▌")
+                            # Reveal word-by-word with a tiny delay so Streamlit
+                            # renders each update visually instead of batching them.
+                            # This creates a natural typing effect regardless of
+                            # whether the API sends individual tokens or larger chunks.
+                            words = text_part.split(" ")
+                            for i, word in enumerate(words):
+                                if i > 0:
+                                    streamed_text += " "
+                                streamed_text += word
+                                token_placeholder.markdown(streamed_text + "▌")
+                                if i < len(words) - 1:
+                                    time.sleep(0.01)  # 10 ms between words
                             # Clear status when answer starts streaming
                             status_placeholder.empty()
 
