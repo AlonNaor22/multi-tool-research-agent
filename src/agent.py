@@ -5,11 +5,28 @@ and in what order. All I/O is async — the agent uses ainvoke()/astream() for
 non-blocking execution, the same pattern used in production agents.
 
 Includes conversation memory for follow-up questions.
+
+Plan-and-Execute mode (Item 12)
+--------------------------------
+A LangGraph StateGraph with four nodes drives complex research:
+  create_plan  → generate a multi-step ResearchPlan
+  execute_step → run one step using the existing tool-calling agent
+  replan       → advance to the next step (optionally revise the plan)
+  synthesize   → combine all step findings into a final answer
+
+Simple queries are detected by a complexity heuristic and bypass planning
+entirely, falling back to direct-mode streaming (same as before).
 """
+
+import sys
+from typing import Annotated, Generator, List, Optional
+import operator
 
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
+from langgraph.graph import StateGraph, END, START
+from typing_extensions import TypedDict
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
@@ -490,6 +507,379 @@ class ResearchAgent:
         self.current_session_id = session_id
 
         return True
+
+
+    # ------------------------------------------------------------------
+    # Plan-and-Execute: LangGraph StateGraph
+    # ------------------------------------------------------------------
+
+    def _build_plan_execute_graph(self):
+        """Build the plan-and-execute LangGraph StateGraph.
+
+        The graph has four nodes:
+          create_plan  — call the planner to generate a ResearchPlan
+          execute_step — run one pending step via the inner agent
+          replan       — advance the step pointer (optionally revise)
+          synthesize   — combine all findings into a final answer
+
+        Conditional edge after *replan*:
+          more steps remaining → execute_step
+          all steps done       → synthesize
+        """
+        from src.planner import generate_plan, ResearchPlan
+
+        # ---- State schema -----------------------------------------------
+        class PlanExecuteState(TypedDict):
+            query: str
+            plan_data: dict                              # ResearchPlan.model_dump()
+            current_step: int
+            all_findings: Annotated[List[str], operator.add]
+            final_answer: str
+
+        # ---- Node: create_plan ------------------------------------------
+        async def create_plan_node(state: PlanExecuteState) -> dict:
+            plan = generate_plan(state["query"], self.llm)
+            return {
+                "plan_data": plan.model_dump(),
+                "current_step": 0,
+                "all_findings": [],
+                "final_answer": "",
+            }
+
+        # ---- Node: execute_step -----------------------------------------
+        async def execute_step_node(state: PlanExecuteState) -> dict:
+            plan = ResearchPlan(**state["plan_data"])
+            idx = state["current_step"]
+
+            if idx >= len(plan.steps):
+                return {"plan_data": plan.model_dump()}
+
+            step = plan.steps[idx]
+            plan.steps[idx] = step.model_copy(update={"status": "in_progress"})
+
+            step_messages = [
+                HumanMessage(
+                    content=(
+                        f"Research task: {step.description}\n\n"
+                        f"Focus specifically on this task. Be thorough but concise."
+                    )
+                )
+            ]
+            result = await self.agent.ainvoke(
+                {"messages": step_messages},
+                {"recursion_limit": 20},
+            )
+            findings = self._extract_answer(result)
+            plan.steps[idx] = step.model_copy(
+                update={"status": "done", "findings": findings}
+            )
+            return {
+                "plan_data": plan.model_dump(),
+                "all_findings": [
+                    f"Step {step.step_number} — {step.description}:\n{findings}"
+                ],
+            }
+
+        # ---- Node: replan -----------------------------------------------
+        def replan_node(state: PlanExecuteState) -> dict:
+            """Advance the step counter.  A richer version could revise
+            remaining steps based on findings gathered so far."""
+            return {"current_step": state["current_step"] + 1}
+
+        # ---- Node: synthesize -------------------------------------------
+        async def synthesize_node(state: PlanExecuteState) -> dict:
+            plan = ResearchPlan(**state["plan_data"])
+            findings = state.get("all_findings", [])
+
+            if not findings:
+                # Simple / direct mode — answer from scratch
+                prompt = state["query"]
+            else:
+                steps_text = "\n\n".join(findings)
+                prompt = (
+                    f"Synthesize these research findings into a comprehensive answer.\n\n"
+                    f"Original question: {state['query']}\n\n"
+                    f"Research findings:\n{steps_text}"
+                )
+
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            content = response.content
+            if isinstance(content, list):
+                content = " ".join(
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            return {"final_answer": content}
+
+        # ---- Conditional edge after replan ------------------------------
+        def should_continue(state: PlanExecuteState) -> str:
+            plan = ResearchPlan(**state["plan_data"])
+            if state["current_step"] >= len(plan.steps):
+                return "synthesize"
+            return "execute_step"
+
+        # ---- Conditional edge after create_plan -------------------------
+        def after_create_plan(state: PlanExecuteState) -> str:
+            plan = ResearchPlan(**state["plan_data"])
+            if plan.is_simple or not plan.steps:
+                return "synthesize"
+            return "execute_step"
+
+        # ---- Wire the graph ---------------------------------------------
+        workflow = StateGraph(PlanExecuteState)
+        workflow.add_node("create_plan", create_plan_node)
+        workflow.add_node("execute_step", execute_step_node)
+        workflow.add_node("replan", replan_node)
+        workflow.add_node("synthesize", synthesize_node)
+
+        workflow.add_edge(START, "create_plan")
+        workflow.add_conditional_edges("create_plan", after_create_plan)
+        workflow.add_edge("execute_step", "replan")
+        workflow.add_conditional_edges("replan", should_continue)
+        workflow.add_edge("synthesize", END)
+
+        return workflow.compile()
+
+    # ------------------------------------------------------------------
+    # Plan-and-Execute: async method (for CLI / tests)
+    # ------------------------------------------------------------------
+
+    async def plan_and_execute(self, query: str, verbose: bool = True) -> str:
+        """Run a query using the plan-and-execute strategy.
+
+        1. Generates a structured research plan.
+        2. Executes each step sequentially with the inner tool-calling agent.
+        3. Synthesizes all findings into a final answer (streamed to stdout
+           if *verbose* is True).
+
+        Simple queries (detected by the complexity heuristic) fall back to
+        ``stream_query()`` automatically.
+
+        Args:
+            query:   The research question.
+            verbose: Whether to print plan and synthesis progress.
+
+        Returns:
+            The final synthesized answer as a string.
+        """
+        from src.planner import generate_plan
+
+        if verbose:
+            print("\n\U0001f5fa\ufe0f  Generating research plan...")
+
+        plan = generate_plan(query, self.llm)
+
+        if plan.is_simple:
+            if verbose:
+                print("(Simple query \u2014 using direct mode)\n")
+            return await self.stream_query(query)
+
+        if verbose:
+            print(f"\nResearch Plan ({len(plan.steps)} steps):")
+            for step in plan.steps:
+                print(f"  {step.step_number}. {step.description}")
+                if step.expected_tools:
+                    print(f"     Tools: {', '.join(step.expected_tools)}")
+            print()
+
+        all_findings: List[str] = []
+
+        for i, step in enumerate(plan.steps):
+            if verbose:
+                print(f"\n{'=' * 60}")
+                print(f"Step {step.step_number}: {step.description}")
+                print(f"{'=' * 60}")
+
+            step_messages = [
+                HumanMessage(
+                    content=(
+                        f"Research task: {step.description}\n\n"
+                        f"Focus specifically on this task. Be thorough but concise."
+                    )
+                )
+            ]
+            result = await self.agent.ainvoke(
+                {"messages": step_messages},
+                {"recursion_limit": 20},
+            )
+            findings = self._extract_answer(result)
+            plan.steps[i] = step.model_copy(
+                update={"status": "done", "findings": findings}
+            )
+            all_findings.append(
+                f"Step {step.step_number} \u2014 {step.description}:\n{findings}"
+            )
+            if verbose:
+                print(f"\u2705 Step {step.step_number} complete")
+
+        # ------ Synthesis (streamed) ------------------------------------
+        steps_text = "\n\n".join(all_findings)
+        synthesis_prompt = (
+            f"Synthesize these research findings into a comprehensive answer.\n\n"
+            f"Original question: {query}\n\n"
+            f"Research findings:\n{steps_text}"
+        )
+
+        if verbose:
+            print(f"\n{'=' * 60}")
+            print("Synthesizing all findings...")
+            print(f"{'=' * 60}\n")
+
+        final_answer = ""
+        async for chunk in self.llm.astream([HumanMessage(content=synthesis_prompt)]):
+            text = self._extract_chunk_text(chunk)
+            if text:
+                final_answer += text
+                if verbose:
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+
+        if verbose:
+            print()  # newline after streaming
+
+        self.memory.add_exchange(query, final_answer)
+        return final_answer
+
+    # ------------------------------------------------------------------
+    # Plan-and-Execute: sync streaming generator (for Streamlit)
+    # ------------------------------------------------------------------
+
+    def plan_and_execute_stream(self, query: str) -> Generator[dict, None, None]:
+        """Sync generator that drives plan-and-execute and yields typed events.
+
+        Designed for the Streamlit UI.  Each yielded dict has a ``"type"`` key:
+
+        * ``plan_created``   — plan is ready; contains ``"plan"``
+        * ``step_started``   — step N began; contains ``"step_idx"``, ``"plan"``
+        * ``step_tool``      — a tool was called; contains ``"step_idx"``, ``"tool_name"``
+        * ``step_done``      — step N finished; contains ``"step_idx"``, ``"plan"``
+        * ``synthesis_token``— one text chunk of the synthesis; contains ``"token"``
+        * ``done``           — final; contains ``"answer"``, ``"plan"``
+        """
+        from src.planner import generate_plan
+
+        plan = generate_plan(query, self.llm)
+        yield {"type": "plan_created", "plan": plan}
+
+        # ---- Simple / direct mode -----------------------------------
+        if plan.is_simple:
+            messages_in = [HumanMessage(content=query)]
+            final_answer = ""
+            for chunk, metadata in self.agent.stream(
+                {"messages": messages_in},
+                config={"recursion_limit": 20},
+                stream_mode="messages",
+            ):
+                node = metadata.get("langgraph_node", "")
+                if node == "model" and isinstance(chunk, AIMessageChunk):
+                    text = self._extract_chunk_text(chunk)
+                    if text:
+                        final_answer += text
+                        yield {"type": "synthesis_token", "token": text}
+                elif node == "tools" and isinstance(chunk, ToolMessage):
+                    yield {"type": "step_tool", "step_idx": -1, "tool_name": chunk.name or "tool"}
+
+            yield {"type": "done", "answer": final_answer, "plan": plan}
+            return
+
+        # ---- Multi-step execution ------------------------------------
+        for i, step in enumerate(plan.steps):
+            plan.steps[i] = step.model_copy(update={"status": "in_progress"})
+            yield {"type": "step_started", "step_idx": i, "plan": plan}
+
+            step_messages = [
+                HumanMessage(
+                    content=(
+                        f"Research task: {step.description}\n\n"
+                        f"Focus specifically on this task. Be thorough but concise."
+                    )
+                )
+            ]
+
+            # Stream the inner agent to capture tool calls as they happen
+            inner_result = None
+            for update in self.agent.stream(
+                {"messages": step_messages},
+                config={"recursion_limit": 20},
+                stream_mode="updates",
+            ):
+                inner_result = update
+                # Yield tool call events from the tools node
+                for node_name, node_output in update.items():
+                    if node_name == "tools":
+                        msgs = node_output.get("messages", [])
+                        for msg in msgs:
+                            if isinstance(msg, ToolMessage):
+                                yield {
+                                    "type": "step_tool",
+                                    "step_idx": i,
+                                    "tool_name": msg.name or "tool",
+                                }
+
+            # Extract findings from the final state
+            findings = ""
+            if inner_result:
+                # stream_mode="updates" yields {node_name: state_update}
+                for node_name, node_output in inner_result.items():
+                    msgs = node_output.get("messages", [])
+                    for msg in reversed(msgs):
+                        if isinstance(msg, AIMessage) and msg.content:
+                            if isinstance(msg.content, str):
+                                findings = msg.content
+                            elif isinstance(msg.content, list):
+                                findings = "\n".join(
+                                    block.get("text", "")
+                                    for block in msg.content
+                                    if isinstance(block, dict) and block.get("type") == "text"
+                                )
+                            if findings:
+                                break
+                    if findings:
+                        break
+
+            plan.steps[i] = plan.steps[i].model_copy(
+                update={"status": "done", "findings": findings}
+            )
+            yield {"type": "step_done", "step_idx": i, "plan": plan}
+
+        # ---- Synthesis (streamed token-by-token) ---------------------
+        steps_text = "\n\n".join(
+            f"Step {s.step_number} \u2014 {s.description}:\n{s.findings}"
+            for s in plan.steps
+        )
+        synthesis_prompt = (
+            f"Synthesize these research findings into a comprehensive answer.\n\n"
+            f"Original question: {query}\n\n"
+            f"Research findings:\n{steps_text}"
+        )
+
+        final_answer = ""
+        for chunk in self.llm.stream([HumanMessage(content=synthesis_prompt)]):
+            text = self._extract_chunk_text(chunk)
+            if text:
+                final_answer += text
+                yield {"type": "synthesis_token", "token": text}
+
+        self.memory.add_exchange(query, final_answer)
+        yield {"type": "done", "answer": final_answer, "plan": plan}
+
+    # ------------------------------------------------------------------
+    # Helper: extract text from an LLM chunk (AIMessageChunk or AIMessage)
+    # ------------------------------------------------------------------
+
+    def _extract_chunk_text(self, chunk) -> str:
+        """Return the text content from an LLM message or chunk."""
+        content = getattr(chunk, "content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        return ""
 
 
 def create_research_agent():
