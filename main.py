@@ -1,8 +1,11 @@
 """CLI entry point for the Multi-Tool Research Agent.
 
-Run with: python main.py
+Run with:
+  python main.py              # direct mode (default)
+  python main.py --plan       # plan-and-execute mode
 """
 
+import argparse
 import os
 import sys
 import asyncio
@@ -13,11 +16,33 @@ from src.observability import MetricsStore
 from src.utils import close_aiohttp_session
 
 
-def print_banner():
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Multi-Tool Research Agent CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python main.py              # direct mode (default)\n"
+            "  python main.py --plan       # always use plan-and-execute\n"
+        ),
+    )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        default=False,
+        help="Force plan-and-execute mode for every query.",
+    )
+    return parser.parse_args()
+
+
+def print_banner(plan_mode: bool = False):
     """Print the application banner."""
     print("\n" + "=" * 60)
     print("        Multi-Tool Research Agent")
     print("        Powered by Claude + LangChain (Native Tool Calling)")
+    if plan_mode:
+        print("        Mode: Plan-and-Execute")
     print("=" * 60)
     print("\nCommands:")
     print("  Type your question to research")
@@ -32,7 +57,10 @@ def print_banner():
 
 async def main():
     """Main async CLI loop."""
-    print_banner()
+    args = parse_args()
+    plan_mode = args.plan
+
+    print_banner(plan_mode=plan_mode)
 
     # Fail fast if the required Anthropic API key is missing
     if not os.getenv("ANTHROPIC_API_KEY", "").strip():
@@ -158,11 +186,18 @@ async def main():
 
             print("\n" + "-" * 60)
 
-            # Run the query with async streaming — shows thinking/tool use in real-time
-            answer = await agent.stream_query(query)
+            if plan_mode:
+                # Plan-and-execute mode: generates a structured plan first,
+                # executes each step, then synthesizes findings.
+                answer = await agent.plan_and_execute(query)
+            else:
+                # Direct mode: async streaming — shows thinking/tool use in real-time
+                answer = await agent.stream_query(query)
 
             print("\n" + "-" * 60)
-            print(f"\nAnswer: {answer}\n")
+            if not plan_mode:
+                # In plan mode the answer is already streamed to stdout
+                print(f"\nAnswer: {answer}\n")
             print("-" * 60)
             print()
 

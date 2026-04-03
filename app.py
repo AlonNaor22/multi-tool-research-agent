@@ -13,6 +13,7 @@ from typing import Any, Dict, List
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
 
 from src.agent import ResearchAgent
+from src.planner import is_simple_query, ResearchPlan
 from src.session_manager import list_sessions
 from src.tool_health import format_health_status
 from src.observability import MetricsStore
@@ -84,6 +85,7 @@ if "agent" not in st.session_state:
     st.session_state.chat_history = []  # List of {"role": ..., "content": ...}
     st.session_state.last_metrics = None
     st.session_state.callback_inbox = []  # Callback events for the inbox panel
+    st.session_state.research_mode = "Auto"  # Auto / Direct / Plan-and-Execute
 
 agent: ResearchAgent = st.session_state.agent
 
@@ -171,6 +173,29 @@ with st.sidebar:
 
     st.divider()
 
+    # --- Research Mode ---
+    st.header("Research Mode")
+    research_mode = st.radio(
+        "Mode",
+        options=["Auto", "Direct", "Plan-and-Execute"],
+        index=["Auto", "Direct", "Plan-and-Execute"].index(
+            st.session_state.get("research_mode", "Auto")
+        ),
+        help=(
+            "**Auto**: uses the complexity detector to choose.\n"
+            "**Direct**: always runs the agent without a plan.\n"
+            "**Plan-and-Execute**: always generates a multi-step research plan first."
+        ),
+    )
+    st.session_state.research_mode = research_mode
+
+    if research_mode == "Auto":
+        st.caption("Simple questions → Direct. Complex ones → Plan-and-Execute.")
+    elif research_mode == "Plan-and-Execute":
+        st.caption("Every query gets a structured research plan.")
+
+    st.divider()
+
     # Session management
     st.header("Sessions")
 
@@ -209,6 +234,22 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Helper — render a single callback inbox event as styled HTML
 # ---------------------------------------------------------------------------
+
+def _render_plan(plan: ResearchPlan) -> str:
+    """Render a ResearchPlan as a compact markdown string for Streamlit."""
+    STATUS_ICON = {"pending": "⏳", "in_progress": "🔄", "done": "✅"}
+    lines = ["**Research Plan**", ""]
+    for step in plan.steps:
+        icon = STATUS_ICON.get(step.status, "⏳")
+        tools_hint = f" *(tools: {', '.join(step.expected_tools)})*" if step.expected_tools else ""
+        lines.append(f"{icon} **Step {step.step_number}**: {step.description}{tools_hint}")
+        if step.status == "done" and step.findings:
+            short = step.findings[:200].replace("\n", " ")
+            if len(step.findings) > 200:
+                short += "…"
+            lines.append(f"   > {short}")
+    return "\n".join(lines)
+
 
 def _render_inbox_event(event: Dict) -> str:
     """Return an HTML div for one callback inbox event."""
@@ -269,111 +310,206 @@ with chat_col:
         # Clear inbox for the new query
         st.session_state.callback_inbox = []
 
-        # Run agent with real-time streaming.
-        # Uses graph.stream(stream_mode="messages") which yields
-        # (AIMessageChunk, metadata) tuples directly — no callback
-        # propagation needed. This bypasses the LangChain create_agent
-        # limitation where invoke() doesn't forward callbacks to the LLM.
+        # Determine which mode to use
+        mode = st.session_state.get("research_mode", "Auto")
+        if mode == "Auto":
+            use_plan = not is_simple_query(prompt)
+        elif mode == "Plan-and-Execute":
+            use_plan = True
+        else:
+            use_plan = False
+
         with st.chat_message("assistant"):
-            status_placeholder = st.empty()  # compact one-line tool status
-            token_placeholder = st.empty()   # streaming answer text
-
-            agent.timing_callback.reset()
-            agent.observability_callback.reset(question=prompt)
-
-            messages = agent.memory.get_messages()
-            messages.append(HumanMessage(content=prompt))
-
+            inbox = st.session_state.callback_inbox
             start_time = time.time()
             answer = "No answer was generated."
-            streamed_text = ""
-            inbox = st.session_state.callback_inbox
 
             try:
                 agent.rate_limiter.check_budget()
 
-                status_placeholder.markdown("*🧠 Thinking...*")
-                inbox.append({
-                    "time": datetime.now().strftime("%H:%M:%S"),
-                    "type": "thinking",
-                    "message": "🧠 Thinking...", "is_error": False,
-                })
+                # =======================================================
+                # PLAN-AND-EXECUTE MODE
+                # =======================================================
+                if use_plan:
+                    plan_placeholder = st.empty()    # live plan panel
+                    status_placeholder = st.empty()  # one-line status
+                    token_placeholder = st.empty()   # streamed synthesis
 
-                for chunk, metadata in agent.agent.stream(
-                    {"messages": messages},
-                    config={
-                        "callbacks": [
-                            agent.timing_callback,
-                            agent.observability_callback,
-                        ],
-                        "recursion_limit": 20,
-                    },
-                    stream_mode="messages",
-                ):
-                    node = metadata.get("langgraph_node", "")
+                    status_placeholder.markdown("*🗺️ Generating research plan...*")
+                    inbox.append({
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "type": "planning",
+                        "message": "🗺️ Generating research plan...",
+                        "is_error": False,
+                    })
 
-                    # --- Token streaming from the model node ---
-                    if node == "model" and isinstance(chunk, AIMessageChunk):
-                        # Anthropic returns content as a list of blocks:
-                        # [{"text": "...", "type": "text", "index": 0}]
-                        content = chunk.content
-                        text_part = ""
-                        if isinstance(content, str) and content:
-                            text_part = content
-                        elif isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    text_part += block.get("text", "")
+                    streamed_text = ""
 
-                        if text_part:
-                            # Reveal word-by-word with a tiny delay so Streamlit
-                            # renders each update visually instead of batching them.
-                            # This creates a natural typing effect regardless of
-                            # whether the API sends individual tokens or larger chunks.
-                            words = text_part.split(" ")
-                            for i, word in enumerate(words):
-                                if i > 0:
+                    for event in agent.plan_and_execute_stream(prompt):
+                        etype = event.get("type")
+
+                        if etype == "plan_created":
+                            plan = event["plan"]
+                            if plan.is_simple:
+                                status_placeholder.markdown("*🧠 Thinking (direct mode)...*")
+                                inbox.append({
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "type": "thinking",
+                                    "message": "🧠 Simple query — direct mode",
+                                    "is_error": False,
+                                })
+                            else:
+                                plan_placeholder.markdown(_render_plan(plan))
+                                status_placeholder.markdown("*🔄 Starting research...*")
+                                inbox.append({
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "type": "plan",
+                                    "message": f"🗺️ Plan: {len(plan.steps)} steps",
+                                    "is_error": False,
+                                })
+
+                        elif etype == "step_started":
+                            plan = event["plan"]
+                            step = plan.steps[event["step_idx"]]
+                            plan_placeholder.markdown(_render_plan(plan))
+                            status_placeholder.markdown(
+                                f"*🔄 Step {step.step_number}: {step.description[:60]}...*"
+                            )
+                            inbox.append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "type": "step_start",
+                                "message": f"🔄 Step {step.step_number}: {step.description[:60]}",
+                                "is_error": False,
+                            })
+
+                        elif etype == "step_tool":
+                            tool_name = event.get("tool_name", "tool")
+                            ts = datetime.now().strftime("%H:%M:%S")
+                            inbox.append({
+                                "time": ts, "type": "tool_call",
+                                "message": f"🔧 Tool: <b>{tool_name}</b>",
+                                "is_error": False,
+                            })
+
+                        elif etype == "step_done":
+                            plan = event["plan"]
+                            step = plan.steps[event["step_idx"]]
+                            plan_placeholder.markdown(_render_plan(plan))
+                            inbox.append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "type": "step_done",
+                                "message": f"✅ Step {step.step_number} done",
+                                "is_error": False,
+                            })
+
+                        elif etype == "synthesis_token":
+                            token = event["token"]
+                            # Word-by-word reveal for natural typing effect
+                            words = token.split(" ")
+                            for wi, word in enumerate(words):
+                                if wi > 0:
                                     streamed_text += " "
                                 streamed_text += word
                                 token_placeholder.markdown(streamed_text + "▌")
-                                if i < len(words) - 1:
-                                    time.sleep(0.01)  # 10 ms between words
-                            # Clear status when answer starts streaming
+                                if wi < len(words) - 1:
+                                    time.sleep(0.01)
+                            plan_placeholder.empty()
                             status_placeholder.empty()
 
-                    # --- Tool results from the tools node ---
-                    elif node == "tools" and isinstance(chunk, ToolMessage):
-                        tool_name = chunk.name or "tool"
-                        ts = datetime.now().strftime("%H:%M:%S")
+                        elif etype == "done":
+                            answer = event.get("answer", streamed_text)
 
-                        status_placeholder.markdown(f"*🔧 Used {tool_name}*")
-                        inbox.append({
-                            "time": ts, "type": "tool_start",
-                            "message": f"🔧 Using <b>{tool_name}</b>...",
-                            "is_error": False,
-                        })
-                        inbox.append({
-                            "time": ts, "type": "tool_end",
-                            "message": "✅ Tool finished", "is_error": False,
-                        })
+                    # Finalize
+                    if streamed_text:
+                        token_placeholder.markdown(streamed_text)
+                    status_placeholder.empty()
 
-                # Finalize: remove cursor, show clean text
-                if streamed_text:
-                    token_placeholder.markdown(streamed_text)
-                    answer = streamed_text
-                status_placeholder.empty()
+                # =======================================================
+                # DIRECT MODE (existing streaming approach — unchanged)
+                # =======================================================
+                else:
+                    status_placeholder = st.empty()
+                    token_placeholder = st.empty()
 
+                    agent.timing_callback.reset()
+                    agent.observability_callback.reset(question=prompt)
+
+                    messages = agent.memory.get_messages()
+                    messages.append(HumanMessage(content=prompt))
+
+                    streamed_text = ""
+
+                    status_placeholder.markdown("*🧠 Thinking...*")
+                    inbox.append({
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "type": "thinking",
+                        "message": "🧠 Thinking...", "is_error": False,
+                    })
+
+                    for chunk, metadata in agent.agent.stream(
+                        {"messages": messages},
+                        config={
+                            "callbacks": [
+                                agent.timing_callback,
+                                agent.observability_callback,
+                            ],
+                            "recursion_limit": 20,
+                        },
+                        stream_mode="messages",
+                    ):
+                        node = metadata.get("langgraph_node", "")
+
+                        # --- Token streaming from the model node ---
+                        if node == "model" and isinstance(chunk, AIMessageChunk):
+                            content = chunk.content
+                            text_part = ""
+                            if isinstance(content, str) and content:
+                                text_part = content
+                            elif isinstance(content, list):
+                                for block in content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        text_part += block.get("text", "")
+
+                            if text_part:
+                                words = text_part.split(" ")
+                                for i, word in enumerate(words):
+                                    if i > 0:
+                                        streamed_text += " "
+                                    streamed_text += word
+                                    token_placeholder.markdown(streamed_text + "▌")
+                                    if i < len(words) - 1:
+                                        time.sleep(0.01)
+                                status_placeholder.empty()
+
+                        # --- Tool results from the tools node ---
+                        elif node == "tools" and isinstance(chunk, ToolMessage):
+                            tool_name = chunk.name or "tool"
+                            ts = datetime.now().strftime("%H:%M:%S")
+                            status_placeholder.markdown(f"*🔧 Used {tool_name}*")
+                            inbox.append({
+                                "time": ts, "type": "tool_start",
+                                "message": f"🔧 Using <b>{tool_name}</b>...",
+                                "is_error": False,
+                            })
+                            inbox.append({
+                                "time": ts, "type": "tool_end",
+                                "message": "✅ Tool finished", "is_error": False,
+                            })
+
+                    if streamed_text:
+                        token_placeholder.markdown(streamed_text)
+                        answer = streamed_text
+                    status_placeholder.empty()
+
+                    # Save memory + metrics (direct mode)
+                    agent.memory.add_exchange(prompt, answer)
+                    metrics = agent.observability_callback.get_metrics()
+                    agent.metrics_store.save(metrics)
+                    agent.rate_limiter.record_tokens(metrics.total_tokens)
+                    st.session_state.last_metrics = metrics
+
+                # ---------------------------------------------------
                 elapsed = time.time() - start_time
-
-                # Save to memory
-                agent.memory.add_exchange(prompt, answer)
-
-                # Persist metrics
-                metrics = agent.observability_callback.get_metrics()
-                agent.metrics_store.save(metrics)
-                agent.rate_limiter.record_tokens(metrics.total_tokens)
-                st.session_state.last_metrics = metrics
-
                 inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),
                     "type": "complete",
@@ -383,7 +519,6 @@ with chat_col:
 
             except RateLimitExceeded as e:
                 answer = str(e)
-                status_placeholder.empty()
                 st.error(answer)
                 inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),
@@ -394,7 +529,6 @@ with chat_col:
 
             except Exception as e:
                 answer = f"Error: {str(e)}"
-                status_placeholder.empty()
                 st.error(answer)
                 inbox.append({
                     "time": datetime.now().strftime("%H:%M:%S"),

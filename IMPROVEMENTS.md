@@ -76,12 +76,15 @@ Prioritized list of improvements to make this project stand out as a portfolio p
 
 These improvements would elevate the project from a strong portfolio piece to an outstanding demonstration of agent engineering depth.
 
-### 12. Plan-and-Execute Loop
-- [ ] Before researching, have the agent create a structured plan (outline of steps)
-- [ ] Show the plan to the user for approval before executing
-- [ ] Execute each step sequentially, tracking progress against the plan
-- [ ] Support plan revision if intermediate results change the approach
-- [ ] Example: "Compare 5 LLM frameworks" → outline → research each → draft comparison → revise
+### 12. ~~Plan-and-Execute Loop~~ (DONE)
+- [x] `src/planner.py`: `ResearchStep` / `ResearchPlan` Pydantic models + `generate_plan()` + complexity detector (`is_simple_query()`)
+- [x] `ResearchAgent._build_plan_execute_graph()`: LangGraph StateGraph with `create_plan → execute_step → replan → synthesize` nodes; conditional edge loops until all steps are done
+- [x] `ResearchAgent.plan_and_execute()`: async method for CLI — prints each step, streams synthesis token-by-token
+- [x] `ResearchAgent.plan_and_execute_stream()`: sync generator for Streamlit — yields typed events (`plan_created`, `step_started`, `step_tool`, `step_done`, `synthesis_token`, `done`)
+- [x] Web UI: **Research Mode** sidebar toggle (Auto / Direct / Plan-and-Execute); live plan panel shows ⏳/🔄/✅ per step; synthesis streams word-by-word
+- [x] CLI: `--plan` flag forces plan-and-execute; plan steps printed before execution
+- [x] Auto mode uses `is_simple_query()` heuristic to choose between direct and plan modes
+- [x] Backward compatible — `query()` and `stream_query()` untouched
 
 ### 13. Multi-Agent Orchestration
 - [ ] Implement a supervisor/worker pattern (e.g., orchestrator agent delegates to specialist agents)
