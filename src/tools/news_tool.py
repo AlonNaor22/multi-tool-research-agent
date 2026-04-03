@@ -137,16 +137,20 @@ news_tool = Tool(
     func=make_sync(search_news),
     coroutine=search_news,
     description=(
-        "Search for recent news articles on a topic. Use this for current events, "
-        "breaking news, or recent developments. "
-        "\n\nSIMPLE USAGE: Just provide a topic: 'artificial intelligence', 'stock market'"
-        "\n\nADVANCED USAGE: Provide JSON with options:"
-        '\n{"query": "climate change", "timelimit": "d", "max_results": 10, "region": "uk-en"}'
-        "\n\nOPTIONS:"
-        "\n- query: Search terms"
-        "\n- timelimit: 'd' (past day), 'w' (past week, default), 'm' (past month)"
-        "\n- max_results: 1-10 (default 5)"
-        "\n- region: 'us-en', 'uk-en', 'de-de', etc."
-        "\n\nRETURNS: Article titles, sources, dates, and summaries."
+        "Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, "
+        "magazines, and news sites — with publication dates and source names."
+        "\n\nUSE FOR:"
+        "\n- Breaking news: 'earthquake today', 'election results'"
+        "\n- Journalism coverage: 'AI regulation debate', 'climate policy changes'"
+        "\n- Time-filtered stories: what happened in the past day/week/month"
+        "\n\nDO NOT USE FOR:"
+        "\n- General web info (use web_search — broader, not limited to news sources)"
+        "\n- Established facts or history (use wikipedia)"
+        "\n- Opinions/discussions (use reddit_search)"
+        "\n\nSIMPLE: 'artificial intelligence' | ADVANCED: "
+        '{\"query\": \"climate\", \"timelimit\": \"d\", \"max_results\": 5}'
+        "\n\nTIMELIMIT: 'd' (past day), 'w' (past week, default), 'm' (past month)"
+        "\n\nRULE: Need NEWS ARTICLES with sources/dates? -> news_search. "
+        "Need general web results? -> web_search."
     )
 )

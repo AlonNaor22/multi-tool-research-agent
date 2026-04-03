@@ -257,11 +257,18 @@ google_scholar_tool = Tool(
     func=make_sync(scholar_search),
     coroutine=scholar_search,
     description=(
-        "Search for published academic research across ALL fields using Semantic Scholar. "
-        "\n\nBEST FOR: History, humanities, medicine, social sciences, archaeology, climate history, ancient studies."
-        "\n\nNOT FOR: Cutting-edge AI/ML or CS research (use arxiv_search instead)."
+        "Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. "
+        "Covers journals, conferences, and theses — with citation counts."
+        "\n\nUSE FOR:"
+        "\n- Any academic field: medicine, history, social science, law, STEM, humanities"
+        "\n- Papers with citation counts (to judge impact)"
+        "\n- Year-filtered searches: 'from 2020: topic' or '2010-2020: topic'"
+        "\n- Published, vetted research (not pre-prints)"
+        "\n\nDO NOT USE FOR:"
+        "\n- Latest unpublished pre-prints (use arxiv_search — it has newest STEM papers)"
+        "\n- General web info (use web_search)"
         "\n\nFORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'"
-        "\n\nFEATURES: Year filters, citation counts, covers peer-reviewed journals and theses."
-        "\n\nRETURNS: Titles, authors, year, citation count, URLs, abstracts."
+        "\n\nRULE: Need PUBLISHED papers with citations? -> google_scholar. "
+        "Need the NEWEST pre-prints in STEM? -> arxiv."
     )
 )

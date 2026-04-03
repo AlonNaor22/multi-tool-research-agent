@@ -258,10 +258,19 @@ wikidata_tool = Tool(
     func=make_sync(wikidata_query),
     coroutine=wikidata_query,
     description=(
-        "Query Wikidata for precise, structured facts about any entity. "
+        "Look up STRUCTURED ENTITY FACTS from Wikidata — the database behind Wikipedia. "
+        "Use when you need a specific property of a known entity (country, person, city, etc.)."
+        "\n\nUSE FOR:"
+        "\n- Entity properties: population, GDP, area, coordinates, founding date"
+        "\n- Relationships: 'who is the president of France', 'capital of Japan'"
+        "\n- Classifications: 'what type of animal is a platypus'"
+        "\n- Cross-referencing: verify a fact from another source"
+        "\n\nDO NOT USE FOR:"
+        "\n- Explanations or history (use wikipedia)"
+        "\n- Scientific constants or physical properties (use wolfram_alpha)"
+        "\n- Current events or recent changes (use web_search)"
         "\n\nFORMAT: 'entity name', 'search: term', 'sparql: SPARQL query'"
-        "\n\nRETURNS: Structured facts -- dates, populations, coordinates, relationships, classifications."
-        "\n\nUSE FOR: Precise factual data (dates, numbers, relationships), verifying facts from other sources."
-        "\n\nTIP: Use exact entity names. Use 'search:' if unsure of the exact name."
+        "\n\nRULE: Need a FACT about an ENTITY? -> Wikidata. Need an EXPLANATION? -> Wikipedia. "
+        "Need a SCIENTIFIC VALUE? -> Wolfram."
     )
 )

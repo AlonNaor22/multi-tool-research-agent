@@ -116,19 +116,21 @@ wolfram_tool = Tool(
     func=make_sync(query_wolfram_alpha),
     coroutine=query_wolfram_alpha,
     description=(
-        "Get PRECISE NUMERICAL DATA and exact measurements. Use when you need "
-        "a specific number, not an explanation. "
-        "\n\nUSE FOR (exact values):"
-        "\n- Nutritional data: 'calories in an apple', 'protein in 100g beef'"
+        "Look up REFERENCE DATA from Wolfram Alpha's knowledge base: physical constants, "
+        "scientific properties, nutritional data, and measurements that require an external database. "
+        "\n\nUSE FOR (data lookups — things you can't compute yourself):"
         "\n- Scientific constants: 'speed of light in m/s', 'atomic weight of gold'"
-        "\n- Measurements: 'height of Mount Everest in meters', 'depth of Pacific Ocean'"
-        "\n- Astronomical: 'distance Earth to Mars in km', 'diameter of Jupiter'"
-        "\n- Chemical: 'boiling point of ethanol', 'density of iron'"
-        "\n- Statistics: 'population of Tokyo', 'GDP of France in USD'"
+        "\n- Physical properties: 'boiling point of ethanol', 'density of iron'"
+        "\n- Nutritional data: 'calories in an apple', 'protein in 100g beef'"
+        "\n- Astronomical data: 'distance Earth to Mars', 'diameter of Jupiter'"
+        "\n- Geographic measurements: 'height of Mount Everest', 'depth of Pacific Ocean'"
         "\n\nDO NOT USE FOR:"
-        "\n- Explanations/history/context (use wikipedia)"
+        "\n- Math calculations (use calculator — it handles arithmetic, algebra, trig)"
+        "\n- Equations or symbolic math (use equation_solver)"
+        "\n- Population, GDP, or entity facts (use wikidata — it has structured entity data)"
+        "\n- Explanations or history (use wikipedia)"
         "\n- Current events (use web_search)"
-        "\n- Math (use calculator) or equations (use equation_solver)"
-        "\n\nRULE: Need a NUMBER? -> Wolfram. Need an EXPLANATION? -> Wikipedia."
+        "\n\nRULE: Need a SCIENTIFIC CONSTANT or PHYSICAL PROPERTY? -> Wolfram. "
+        "Need ENTITY FACTS (population, dates)? -> Wikidata. Need an EXPLANATION? -> Wikipedia."
     )
 )

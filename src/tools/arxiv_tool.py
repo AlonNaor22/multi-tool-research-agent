@@ -169,12 +169,18 @@ arxiv_tool = Tool(
     func=make_sync(search_arxiv),
     coroutine=search_arxiv,
     description=(
-        "Search ArXiv for STEM pre-prints: Physics, Math, Computer Science, AI/ML, Statistics. "
-        "\n\nBEST FOR: Cutting-edge AI/ML research, neural networks, algorithms, physics, mathematics."
-        "\n\nNOT FOR: History, humanities, medicine, social sciences, ancient topics (use google_scholar instead)."
-        "\n\nSIMPLE: 'transformer neural networks', 'quantum computing'"
-        "\n\nADVANCED: {\"query\": \"attention\", \"max_results\": 10, \"sort\": \"date\", \"category\": \"cs.AI\"}"
-        "\n\nCATEGORIES: cs.AI, cs.LG (ML), cs.CL (NLP), cs.CV (vision), physics, math, stat.ML"
-        "\n\nRETURNS: Titles, authors, dates, free PDF links, abstracts."
+        "Search ArXiv for PRE-PRINTS — the latest unpublished research in STEM fields. "
+        "ArXiv papers are first-to-publish but NOT peer-reviewed."
+        "\n\nUSE FOR:"
+        "\n- Cutting-edge research: newest papers in AI, ML, physics, math, CS, statistics"
+        "\n- Free full-text PDFs of recent papers"
+        "\n- Filtering by arXiv category (cs.AI, cs.LG, physics, math, stat.ML, etc.)"
+        "\n\nDO NOT USE FOR:"
+        "\n- Peer-reviewed/published papers (use google_scholar — it covers journals)"
+        "\n- Non-STEM fields: medicine, history, humanities, social science (use google_scholar)"
+        "\n\nSIMPLE: 'transformer neural networks' | "
+        "ADVANCED: {\"query\": \"attention\", \"max_results\": 10, \"sort\": \"date\", \"category\": \"cs.AI\"}"
+        "\n\nRULE: Need the LATEST pre-prints in STEM? -> arxiv. "
+        "Need PUBLISHED, peer-reviewed papers? -> google_scholar."
     )
 )

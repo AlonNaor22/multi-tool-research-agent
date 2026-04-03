@@ -123,17 +123,19 @@ search_tool = Tool(
     func=make_sync(web_search),
     coroutine=web_search,
     description=(
-        "Search the web for CURRENT and RECENT information. Use for things that "
-        "change over time or need multiple perspectives from websites. "
+        "Search the GENERAL WEB for information from all types of websites. Returns "
+        "a mix of blogs, forums, company sites, docs, and articles — not limited to news."
         "\n\nUSE FOR:"
-        "\n- Current events: 'Tesla stock price today', 'latest iPhone release'"
-        "\n- Recent developments: 'AI news 2024', 'new Python features'"
-        "\n- Opinions/reviews: 'best laptop 2024', 'React vs Vue comparison'"
-        "\n- Anything not in Wikipedia or needing fresh data"
+        "\n- General lookups: 'Tesla stock price today', 'Python 3.12 features'"
+        "\n- Comparisons/reviews: 'best laptop 2024', 'React vs Vue'"
+        "\n- How-to/tutorials: 'how to deploy Flask on AWS'"
+        "\n- Anything not in Wikipedia or needing fresh data from diverse sources"
         "\n\nDO NOT USE FOR:"
+        "\n- News articles with sources/dates (use news_search — it returns journalism)"
         "\n- Established facts/history (use wikipedia)"
-        "\n- Precise measurements (use wolfram_alpha)"
+        "\n- Entity facts like population or GDP (use wikidata)"
+        "\n- Scientific constants (use wolfram_alpha)"
         "\n\nSIMPLE: 'search query' | ADVANCED: {\"query\": \"...\", \"max_results\": 5}"
-        "\n\nRULE: Need CURRENT info? -> Web Search. Need ESTABLISHED knowledge? -> Wikipedia."
+        "\n\nRULE: Need GENERAL WEB results? -> web_search. Need NEWS ARTICLES? -> news_search."
     )
 )

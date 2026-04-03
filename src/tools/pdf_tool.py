@@ -289,10 +289,16 @@ pdf_tool = Tool(
     func=make_sync(read_pdf),
     coroutine=read_pdf,
     description=(
-        "Read and extract text content from PDF files at URLs. "
-        "\n\nFORMAT: 'https://example.com/paper.pdf', '5 pages: URL', 'summary: URL'"
-        "\n\nRETURNS: PDF metadata (title, author) and full text content."
-        "\n\nUSE FOR: Reading research papers, reports, documentation from arxiv, journals, etc."
-        "\n\nTIP: Use 'summary:' prefix for quick overview of long documents."
+        "Specialized PDF reader using pdfplumber — handles complex layouts, multi-column "
+        "papers, and tables better than fetch_url. Use for academic papers and detailed reports."
+        "\n\nUSE FOR:"
+        "\n- Research papers with complex formatting (multi-column, equations)"
+        "\n- Long PDFs where you need page control: '5 pages: URL'"
+        "\n- Quick overviews: 'summary: URL'"
+        "\n\nDO NOT USE FOR:"
+        "\n- Simple PDFs or quick reads (use fetch_url — it also handles PDFs)"
+        "\n- HTML web pages (use fetch_url or web_scraper)"
+        "\n\nFORMAT: 'URL', '5 pages: URL', 'summary: URL'"
+        "\n\nRULE: Complex/long PDF? -> pdf_reader. Simple PDF or web page? -> fetch_url."
     )
 )

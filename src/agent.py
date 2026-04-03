@@ -60,22 +60,26 @@ from src.tools.google_scholar_tool import google_scholar_tool
 from src.tools.translation_tool import translation_tool
 from src.tools.reddit_tool import reddit_tool
 from src.tools.wikidata_tool import wikidata_tool
+from src.tools.github_tool import github_tool
+from src.tools.scraper_tool import scraper_tool
+from src.tools.csv_tool import csv_tool
+from src.tools.datetime_tool import datetime_tool
 
 
 # Tool categories for hierarchical selection — included in the system prompt
 # so the LLM can navigate 20 tools effectively.
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
-        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha"],
-        "guidance": "Use calculator for arithmetic/algebra, unit_converter for unit changes, equation_solver for symbolic math, currency_converter for money exchange rates, wolfram_alpha for complex computations and verified facts."
+        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator"],
+        "guidance": "Use calculator for arithmetic/algebra/trig, unit_converter for unit changes, equation_solver for symbolic math (derivatives, integrals), currency_converter for exchange rates, datetime_calculator for date arithmetic and timezone conversions. wolfram_alpha is for REFERENCE DATA lookups (scientific constants, physical properties) — NOT for math calculations."
     },
     "INFORMATION RETRIEVAL": {
-        "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar"],
-        "guidance": "web_search for current events/general queries, wikipedia for established facts/explanations, news_search for recent news, arxiv_search for CS/physics/math/AI pre-prints on arxiv.org, youtube_search for videos/tutorials, google_scholar for peer-reviewed papers across ALL academic fields (history, medicine, social sciences, STEM)."
+        "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar", "github_search"],
+        "guidance": "web_search for general web results from diverse sources. news_search for journalism/news articles with dates and sources. wikipedia for explanations, history, and context. arxiv_search for latest STEM pre-prints (unpublished). google_scholar for published peer-reviewed papers with citations. youtube_search for videos/tutorials. github_search for code repositories and open-source projects."
     },
     "WEB CONTENT": {
-        "tools": ["fetch_url", "pdf_reader"],
-        "guidance": "Use fetch_url for HTML web pages, pdf_reader for PDF documents (research papers, reports)."
+        "tools": ["fetch_url", "pdf_reader", "web_scraper"],
+        "guidance": "fetch_url reads a page/PDF as plain text. pdf_reader handles complex multi-column PDFs better (use for academic papers). web_scraper extracts structured data — tables, lists, links — from HTML pages. Choose based on what you need: text -> fetch_url, structure -> web_scraper, complex PDF -> pdf_reader."
     },
     "SOCIAL & DISCUSSION": {
         "tools": ["reddit_search"],
@@ -83,7 +87,7 @@ TOOL_CATEGORIES = {
     },
     "KNOWLEDGE BASE": {
         "tools": ["wikidata"],
-        "guidance": "Use wikidata for precise structured facts — exact dates, populations, coordinates, relationships between entities. More precise than Wikipedia for specific data points."
+        "guidance": "Use wikidata for structured entity facts — population, GDP, coordinates, founding dates, relationships. Different from wikipedia (which gives explanations) and wolfram_alpha (which gives scientific/physical constants)."
     },
     "TRANSLATION": {
         "tools": ["translate"],
@@ -96,6 +100,10 @@ TOOL_CATEGORIES = {
     "VISUALIZATION": {
         "tools": ["create_chart"],
         "guidance": "Use to visualize data as bar, line, or pie charts."
+    },
+    "DATA FILES": {
+        "tools": ["csv_reader"],
+        "guidance": "Use csv_reader to read and analyze CSV/Excel/TSV files — get column info, statistics, sample data, filtering, and aggregation."
     },
     "MULTI-SOURCE": {
         "tools": ["parallel_search"],
@@ -274,6 +282,14 @@ class ResearchAgent:
             parallel_tool,
             # Weather
             weather_tool,
+            # GitHub
+            github_tool,
+            # Web Scraping
+            scraper_tool,
+            # Data Files
+            csv_tool,
+            # Date/Time
+            datetime_tool,
         ]
 
         # Run health check and filter out tools with missing dependencies.

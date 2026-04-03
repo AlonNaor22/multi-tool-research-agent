@@ -230,15 +230,17 @@ url_tool = Tool(
     func=make_sync(fetch_url_content),
     coroutine=fetch_url_content,
     description=(
-        "Fetch and read content from a web page or PDF URL. Use this when you "
-        "have a specific URL to read, or when web_search returns a relevant link "
-        "you want to explore in detail. "
-        "\n\nSUPPORTS: HTML pages and PDF documents"
-        "\n\nRETURNS: Page title, author, date (when available), and main content"
-        "\n\nEXAMPLES:"
-        "\n- 'https://example.com/article'"
-        "\n- 'https://arxiv.org/pdf/1234.5678.pdf'"
-        "\n\nNOTE: Some sites block automated access or require JavaScript. "
-        "In those cases, the content may be incomplete."
+        "Read the TEXT CONTENT of a web page or PDF at a specific URL. Returns the "
+        "main article text, title, and metadata as plain text."
+        "\n\nUSE FOR:"
+        "\n- Reading a full article/blog post from a URL"
+        "\n- Following up on a link from web_search results"
+        "\n- Reading simple PDFs (papers, reports)"
+        "\n\nDO NOT USE FOR:"
+        "\n- Extracting TABLES, LISTS, or LINKS (use web_scraper — it returns structured data)"
+        "\n- Complex multi-column PDFs (use pdf_reader — it handles complex layouts better)"
+        "\n- Searching for pages (use web_search first, then fetch_url on results)"
+        "\n\nEXAMPLES: 'https://example.com/article', 'https://arxiv.org/pdf/1234.pdf'"
+        "\n\nRULE: Need to READ a page as text? -> fetch_url. Need STRUCTURED DATA from it? -> web_scraper."
     )
 )

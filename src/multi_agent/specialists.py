@@ -27,7 +27,8 @@ SPECIALIST_DEFINITIONS = {
         "tools": [
             "web_search", "wikipedia", "news_search", "arxiv_search",
             "google_scholar", "reddit_search", "youtube_search",
-            "fetch_url", "pdf_reader", "wikidata",
+            "fetch_url", "pdf_reader", "wikidata", "github_search",
+            "web_scraper", "parallel_search",
         ],
         "prompt": RESEARCH_AGENT_PROMPT,
     },
@@ -35,12 +36,14 @@ SPECIALIST_DEFINITIONS = {
         "tools": [
             "calculator", "unit_converter", "equation_solver",
             "currency_converter", "wolfram_alpha", "python_repl",
+            "datetime_calculator",
         ],
         "prompt": MATH_AGENT_PROMPT,
     },
     "analysis": {
         "tools": [
             "python_repl", "create_chart", "parallel_search",
+            "csv_reader", "web_scraper",
         ],
         "prompt": ANALYSIS_AGENT_PROMPT,
     },
