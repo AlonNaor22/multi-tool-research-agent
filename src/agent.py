@@ -856,7 +856,7 @@ class ResearchAgent:
                         final_answer += text
                         yield {"type": "synthesis_token", "token": text}
                 elif node == "tools" and isinstance(chunk, ToolMessage):
-                    yield {"type": "step_tool", "step_idx": -1, "tool_name": chunk.name or "tool"}
+                    yield {"type": "step_tool", "step_idx": -1, "tool_name": chunk.name or "tool", "tool_output": chunk.content or ""}
 
             yield {"type": "done", "answer": final_answer, "plan": plan}
             return
@@ -893,6 +893,7 @@ class ResearchAgent:
                                     "type": "step_tool",
                                     "step_idx": i,
                                     "tool_name": msg.name or "tool",
+                                    "tool_output": msg.content or "",
                                 }
 
             # Extract findings from the final state

@@ -75,8 +75,26 @@ def _render_agent_content(text: str, container=None):
     if 'MATH_STRUCTURED:' in text:
         text = _auto_format_math_structured(text)
 
-    # --- Detect chart file paths and embed images ---
-    # Match both explicit CHART_FILE: markers and natural chart paths from tool output
+    # --- Convert markdown image syntax to st.image for local files ---
+    # The agent may use ![alt](output/chart.png) which st.markdown can't render locally
+    img_pattern = r'!\[[^\]]*\]\((output[/\\][^\)]+\.png)\)'
+    if _re.search(img_pattern, text):
+        parts = _re.split(f'({img_pattern})', text)
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if _re.match(r'output[/\\].*\.png$', part):
+                filepath = part.replace('\\', '/')
+                if os.path.exists(filepath):
+                    container.image(filepath, use_container_width=True)
+            elif _re.match(img_pattern, part):
+                pass  # Skip the full ![...]() match (already handled the path)
+            else:
+                container.markdown(part)
+        return
+
+    # --- Detect chart file paths (CHART_FILE: markers or bare paths) ---
     chart_pattern = r'(?:CHART_FILE:)?(output[/\\]chart[^\s\)\"\']+\.png)'
     if _re.search(chart_pattern, text):
         parts = _re.split(f'({chart_pattern})', text)
@@ -84,20 +102,17 @@ def _render_agent_content(text: str, container=None):
             part = part.strip()
             if not part:
                 continue
-            # Check if this part is a chart file path
             if _re.match(r'output[/\\]chart.*\.png$', part):
                 filepath = part.replace('\\', '/')
                 if os.path.exists(filepath):
                     container.image(filepath, use_container_width=True)
-                else:
-                    container.caption(f"Chart: {filepath}")
             else:
-                # Clean up any leftover CHART_FILE: prefix
                 cleaned = part.replace('CHART_FILE:', '').strip()
                 if cleaned:
                     container.markdown(cleaned)
-    else:
-        container.markdown(text)
+        return
+
+    container.markdown(text)
 
 
 def _auto_format_math_structured(text: str) -> str:
@@ -218,10 +233,11 @@ if not os.getenv("ANTHROPIC_API_KEY", "").strip():
 if "agent" not in st.session_state:
     with st.spinner("Initializing agent and checking tool health..."):
         st.session_state.agent = ResearchAgent()
-    st.session_state.chat_history = []  # List of {"role": ..., "content": ...}
+    st.session_state.chat_history = []  # List of {"role": ..., "content": ..., "charts": [...]}
     st.session_state.last_metrics = None
     st.session_state.callback_inbox = []  # Callback events for the inbox panel
     st.session_state.research_mode = "Auto"  # Auto / Direct / Plan-and-Execute
+    st.session_state.pending_charts = []  # Chart paths from current query
 
 agent: ResearchAgent = st.session_state.agent
 
@@ -459,6 +475,10 @@ with chat_col:
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             _render_agent_content(msg["content"])
+            # Render any chart images stored with this message
+            for chart_path in msg.get("charts", []):
+                if os.path.exists(chart_path):
+                    st.image(chart_path, use_container_width=True)
 
     # -----------------------------------------------------------------------
     # Chat input and agent execution
@@ -631,6 +651,7 @@ with chat_col:
                     })
 
                     streamed_text = ""
+                    math_tool_outputs = []  # Capture math/chart tool outputs
 
                     for event in agent.plan_and_execute_stream(prompt):
                         etype = event.get("type")
@@ -671,12 +692,23 @@ with chat_col:
 
                         elif etype == "step_tool":
                             tool_name = event.get("tool_name", "tool")
+                            tool_output = event.get("tool_output", "")
                             ts = datetime.now().strftime("%H:%M:%S")
                             inbox.append({
                                 "time": ts, "type": "tool_call",
                                 "message": f"🔧 Tool: <b>{tool_name}</b>",
                                 "is_error": False,
                             })
+
+                            # Capture math_formatter output for direct rendering
+                            if tool_name == "math_formatter" and tool_output:
+                                math_tool_outputs.append(("math", tool_output))
+
+                            # Capture chart file paths for image embedding
+                            if tool_name == "create_chart" and tool_output and ("output/" in tool_output or "output\\" in tool_output):
+                                chart_match = _re.search(r'(output[/\\]\S+\.png)', tool_output)
+                                if chart_match:
+                                    math_tool_outputs.append(("chart", chart_match.group(1)))
 
                         elif etype == "step_done":
                             plan = event["plan"]
@@ -706,10 +738,33 @@ with chat_col:
                         elif etype == "done":
                             answer = event.get("answer", streamed_text)
 
-                    # Finalize
+                    # Finalize: render answer + any charts/math from tool outputs
+                    token_placeholder.empty()
+
+                    # Collect chart paths for rendering
+                    chart_paths = [
+                        os.path.abspath(c.replace('\\', '/'))
+                        for t, c in math_tool_outputs if t == "chart"
+                    ]
+
+                    # Fallback: scan for recent chart files if none were captured
+                    if not chart_paths:
+                        import glob
+                        chart_files = sorted(glob.glob("output/chart_*.png"), key=os.path.getmtime, reverse=True)
+                        if chart_files and time.time() - os.path.getmtime(chart_files[0]) < 60:
+                            chart_paths = [os.path.abspath(chart_files[0])]
+
+                    # Store charts in session state for persistence across reruns
+                    st.session_state.pending_charts = [p for p in chart_paths if os.path.exists(p)]
+
+                    # Render everything in order: text, then charts
                     if streamed_text:
-                        token_placeholder.empty()
-                        _render_agent_content(streamed_text, token_placeholder)
+                        _render_agent_content(streamed_text, st)
+
+                    for chart_path in chart_paths:
+                        if os.path.exists(chart_path):
+                            st.image(chart_path, use_container_width=True)
+
                     status_placeholder.empty()
 
                 # =======================================================
@@ -726,6 +781,7 @@ with chat_col:
                     messages.append(HumanMessage(content=prompt))
 
                     streamed_text = ""
+                    math_tool_outputs = []  # Capture math_formatter and chart outputs
 
                     status_placeholder.markdown("*🧠 Thinking...*")
                     inbox.append({
@@ -772,6 +828,7 @@ with chat_col:
                         # --- Tool results from the tools node ---
                         elif node == "tools" and isinstance(chunk, ToolMessage):
                             tool_name = chunk.name or "tool"
+                            tool_content = chunk.content or ""
                             ts = datetime.now().strftime("%H:%M:%S")
                             status_placeholder.markdown(f"*🔧 Used {tool_name}*")
                             inbox.append({
@@ -784,10 +841,41 @@ with chat_col:
                                 "message": "✅ Tool finished", "is_error": False,
                             })
 
+                            # Capture math_formatter output for direct rendering
+                            if tool_name == "math_formatter" and tool_content:
+                                math_tool_outputs.append(("math", tool_content))
+
+                            # Capture chart file paths for image embedding
+                            if tool_name == "create_chart" and ("output/" in tool_content or "output\\" in tool_content):
+                                chart_match = _re.search(r'(output[/\\]\S+\.png)', tool_content)
+                                if chart_match:
+                                    math_tool_outputs.append(("chart", chart_match.group(1)))
+
+                    # --- Final render ---
                     if streamed_text:
                         token_placeholder.empty()
+                        # Render the agent's prose text
                         _render_agent_content(streamed_text, token_placeholder)
                         answer = streamed_text
+
+                    # Collect chart paths and store in session state for persistence
+                    chart_paths = [
+                        os.path.abspath(c.replace('\\', '/'))
+                        for t, c in math_tool_outputs if t == "chart"
+                    ]
+                    st.session_state.pending_charts = [p for p in chart_paths if os.path.exists(p)]
+
+                    # Render captured tool outputs that the agent didn't include
+                    for output_type, output_content in math_tool_outputs:
+                        if output_type == "math" and "$" in output_content:
+                            if output_content[:50] not in (streamed_text or ""):
+                                st.markdown("---")
+                                st.markdown(output_content)
+                        elif output_type == "chart":
+                            filepath = os.path.abspath(output_content.replace('\\', '/'))
+                            if os.path.exists(filepath):
+                                st.image(filepath, use_container_width=True)
+
                     status_placeholder.empty()
 
                     # Save memory + metrics (direct mode)
@@ -826,8 +914,12 @@ with chat_col:
                     "is_error": True,
                 })
 
-        # Save to chat history
-        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+        # Save to chat history (include chart paths if any were generated)
+        history_entry = {"role": "assistant", "content": answer}
+        if "pending_charts" in st.session_state and st.session_state.pending_charts:
+            history_entry["charts"] = st.session_state.pending_charts
+            st.session_state.pending_charts = []
+        st.session_state.chat_history.append(history_entry)
 
         # Rerun to update the inbox column with collected events
         st.rerun()
