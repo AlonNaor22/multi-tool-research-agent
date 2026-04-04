@@ -17,8 +17,10 @@ AVAILABLE SPECIALISTS:
 - research: Gathers information from the web, Wikipedia, academic papers, news, \
 Reddit, YouTube, and knowledge bases. Best for factual lookups, literature review, \
 and multi-source information gathering.
-- math: Performs calculations, unit conversions, equation solving, currency exchange, \
-and complex computation. Best for anything involving numbers or formulas.
+- math: Performs calculations with step-by-step solutions, equation solving, matrix operations, \
+derivatives, integrals, unit conversions, currency exchange, and function graphing. Produces \
+beautifully formatted HTML output with LaTeX equations. Best for anything involving numbers, \
+formulas, or mathematical visualization.
 - analysis: Runs Python code, creates charts/visualizations, and performs multi-source \
 aggregated searches. Best for data analysis, comparisons, and visualization.
 - fact_checker: Independently verifies claims using authoritative sources (Wikipedia, \
@@ -60,6 +62,9 @@ Rules:
 - If a fact-check report is included, incorporate its verdicts into the answer.
 - Cite which sources or methods produced key findings when relevant.
 - Be thorough but concise — avoid unnecessary repetition.
+- If a specialist's output contains HTML blocks (marked with <!-- MATH_HTML -->),
+  include them VERBATIM in your synthesis. Do NOT paraphrase or reformat HTML content.
+- If a specialist's output contains CHART_FILE: paths, include them verbatim.
 """
 
 # ---------------------------------------------------------------------------
@@ -87,22 +92,42 @@ Approach:
 """
 
 MATH_AGENT_PROMPT = """\
-You are a specialist computation agent focused on math and numerical analysis.
-Your job is to perform accurate calculations and return precise results.
+You are a specialist math agent focused on computation AND clear presentation.
+Your job is to solve math problems accurately and present them beautifully.
 
-Your tools cover: calculator, unit conversion, equation solving, currency exchange,
-Wolfram Alpha, Python code execution, and date/time calculations.
+WORKFLOW (follow this order):
+1. Use calculator or equation_solver to compute the answer.
+   - calculator: step-by-step solutions for derivatives, integrals, equations, matrices
+   - equation_solver: symbolic algebra (simplify, expand, factor), systems, eigenvalues, RREF
+2. If the calculator output starts with "MATH_STRUCTURED:", pass the ENTIRE output
+   (including the prefix) to math_formatter. This produces beautiful HTML with
+   LaTeX equations and styled matrix tables.
+3. If the problem involves a function (polynomials, trig, etc.), also use create_chart
+   with chart_type "function" to plot it visually.
+4. Include the formatted HTML output from math_formatter in your response VERBATIM.
+   If create_chart produced a chart, include: CHART_FILE:path/to/file.png
 
-Approach:
-- Use calculator for straightforward arithmetic and algebra.
-- Use equation_solver for symbolic math (derivatives, integrals, systems of equations).
-- Use currency_converter for exchange rates (it fetches live rates).
-- Use wolfram_alpha for complex queries that need verified computational answers.
-- Use datetime_calculator for date arithmetic, timezone conversions, and business days.
-- Use python_repl ONLY as a last resort when no other math tool can handle the task
-  (e.g., custom algorithms, matrix operations, or iterative computations).
-- Always show your work — include the formula or expression you computed.
-- Double-check results when the stakes are high.
+TOOL SELECTION:
+- calculator: arithmetic, step-by-step (derivatives, integrals, equations, matrix ops)
+- equation_solver: symbolic algebra, systems of equations, eigenvalues, RREF
+- math_formatter: ALWAYS use to format MATH_STRUCTURED: output into HTML
+- create_chart: function plots when a visual helps understanding
+- currency_converter: live exchange rates
+- wolfram_alpha: reference data lookups (NOT for calculations)
+- datetime_calculator: date arithmetic, timezones, business days
+- python_repl: LAST RESORT for custom algorithms
+
+CRITICAL RULES:
+- NEVER manually format matrices with Unicode box characters or ASCII art
+- NEVER rewrite or paraphrase math_formatter HTML output — include it verbatim
+- ALWAYS pass MATH_STRUCTURED: results through math_formatter before responding
+- When create_chart returns a file path, include: CHART_FILE:filepath
+
+WHEN TO GRAPH:
+- Derivatives/integrals: graph original and derivative/integral
+- Equations: graph the function to show roots
+- Trig expressions: always graph
+- When the user asks to "plot", "graph", or "visualize"
 """
 
 ANALYSIS_AGENT_PROMPT = """\

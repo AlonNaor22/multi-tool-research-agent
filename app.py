@@ -5,6 +5,7 @@ with real-time streaming feedback (thinking, tool calls, answers).
 """
 
 import os
+import re as _re
 import streamlit as st
 import time
 import pandas as pd
@@ -20,6 +21,57 @@ from src.tool_health import format_health_status
 from src.observability import MetricsStore
 from src.rate_limiter import RateLimitExceeded
 from config import ANTHROPIC_API_KEY, MODEL_NAME, API_KEYS, update_env_key
+
+
+# ---------------------------------------------------------------------------
+# Smart content renderer — handles HTML math blocks and chart images
+# ---------------------------------------------------------------------------
+
+def _render_agent_content(text: str, container=None):
+    """Render agent output, detecting HTML math blocks and chart file paths.
+
+    - Splits on <!-- MATH_HTML --> sentinels and renders HTML blocks via st.html()
+    - Detects CHART_FILE:path markers and renders images via st.image()
+    - Passes regular text through st.markdown()
+    """
+    if container is None:
+        container = st
+
+    # Split on MATH_HTML sentinel blocks
+    parts = _re.split(
+        r'(<!-- MATH_HTML -->.*?<!-- /MATH_HTML -->)',
+        text,
+        flags=_re.DOTALL,
+    )
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        if part.startswith('<!-- MATH_HTML -->'):
+            # Extract the HTML content between sentinels
+            html_content = part.replace('<!-- MATH_HTML -->', '').replace('<!-- /MATH_HTML -->', '').strip()
+            container.html(html_content)
+
+        elif 'CHART_FILE:' in part:
+            # Split on chart file references
+            chart_parts = _re.split(r'CHART_FILE:([\S]+)', part)
+            for i, cp in enumerate(chart_parts):
+                cp = cp.strip()
+                if not cp:
+                    continue
+                if i % 2 == 0:
+                    container.markdown(cp)
+                else:
+                    # This is a file path
+                    if os.path.exists(cp):
+                        container.image(cp, use_container_width=True)
+                    else:
+                        container.markdown(f"*Chart: {cp}*")
+        else:
+            container.markdown(part)
+
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +375,7 @@ with inbox_col:
 with chat_col:
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            _render_agent_content(msg["content"])
 
     # -----------------------------------------------------------------------
     # Chat input and agent execution
@@ -475,7 +527,8 @@ with chat_col:
                             answer = event.get("answer", streamed_text)
 
                     if streamed_text:
-                        token_placeholder.markdown(streamed_text)
+                        token_placeholder.empty()
+                        _render_agent_content(streamed_text, token_placeholder)
                     status_placeholder.empty()
 
                 # =======================================================
@@ -572,7 +625,8 @@ with chat_col:
 
                     # Finalize
                     if streamed_text:
-                        token_placeholder.markdown(streamed_text)
+                        token_placeholder.empty()
+                        _render_agent_content(streamed_text, token_placeholder)
                     status_placeholder.empty()
 
                 # =======================================================
@@ -648,7 +702,8 @@ with chat_col:
                             })
 
                     if streamed_text:
-                        token_placeholder.markdown(streamed_text)
+                        token_placeholder.empty()
+                        _render_agent_content(streamed_text, token_placeholder)
                         answer = streamed_text
                     status_placeholder.empty()
 

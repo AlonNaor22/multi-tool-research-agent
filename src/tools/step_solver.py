@@ -24,6 +24,7 @@ try:
         integrate as sym_integrate, Rational,
         Add, Mul, Pow, sin, cos, tan, exp, log, sqrt,
         oo, pi as sym_pi, E as sym_E,
+        latex as sym_latex,
     )
     from sympy.parsing.sympy_parser import (
         parse_expr, standard_transformations, implicit_multiplication_application,
@@ -916,3 +917,545 @@ class StepByStepSolver:
                 return str(int(value))
             return f"{value:.10g}"
         return str(value)
+
+    # ==================================================================
+    # STRUCTURED OUTPUT (for math_formatter HTML rendering)
+    # ==================================================================
+
+    def solve_structured(self, operation: str, expr: str) -> dict:
+        """Return a structured dict with LaTeX for rich rendering.
+
+        Returns:
+            {
+                "operation": str,
+                "title": str,
+                "input_latex": str,
+                "steps": [{"num": int, "desc": str, "expr_latex": str}],
+                "result": str,
+                "result_latex": str,
+                "matrix_data": list|None,
+                "result_matrix_data": list|None,
+                "has_function": bool,
+                "expression_str": str|None,
+                "error": str|None,
+            }
+        """
+        if not SYMPY_AVAILABLE and operation not in ("complex_arithmetic",):
+            return {"error": f"SymPy is not installed (needed for {operation})."}
+
+        try:
+            if operation == "complex_arithmetic":
+                return self._arithmetic_structured(expr)
+            elif operation == "derivative":
+                return self._derivative_structured(expr)
+            elif operation == "integral":
+                return self._integral_structured(expr)
+            elif operation == "solve":
+                return self._solve_equation_structured(expr)
+            elif operation == "matrix_det":
+                return self._matrix_det_structured(expr)
+            elif operation == "matrix_mul":
+                return self._matrix_mul_structured(expr)
+            elif operation == "matrix_inv":
+                return self._matrix_inv_structured(expr)
+            elif operation == "matrix_trans":
+                return self._matrix_trans_structured(expr)
+            elif operation == "matrix_add":
+                return self._matrix_add_structured(expr)
+            else:
+                return {"error": f"Unknown operation '{operation}'"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _arithmetic_structured(self, expr: str) -> dict:
+        """Structured output for complex arithmetic."""
+        try:
+            tree = ast.parse(expr, mode='eval')
+        except SyntaxError:
+            return {"error": "Invalid syntax in expression"}
+
+        steps_list = []
+        result = self._eval_ast_steps(tree.body, steps_list)
+        final = self._format_result(result)
+
+        structured_steps = []
+        for i, (desc, intermediate) in enumerate(steps_list, 1):
+            structured_steps.append({
+                "num": i, "desc": desc, "expr_latex": str(intermediate)
+            })
+
+        return {
+            "operation": "complex_arithmetic",
+            "title": f"Calculate: {expr}",
+            "input_latex": expr,
+            "steps": structured_steps,
+            "result": final,
+            "result_latex": final,
+            "matrix_data": None,
+            "result_matrix_data": None,
+            "has_function": False,
+            "expression_str": None,
+            "error": None,
+        }
+
+    def _derivative_structured(self, expr_str: str) -> dict:
+        """Structured output for differentiation."""
+        preprocessed = _preprocess_equation(expr_str)
+        all_vars = _extract_variables(preprocessed)
+        if not all_vars:
+            return {"error": "No variable found for differentiation"}
+
+        sym_vars = {var: symbols(var) for var in all_vars}
+        var = sym_vars.get('x', sym_vars[all_vars[0]])
+        var_name = str(var)
+
+        expr = _parse_sympy_expr(preprocessed, sym_vars)
+        terms = Add.make_args(expr)
+        steps = []
+        step_num = 1
+
+        if len(terms) > 1:
+            terms_latex = " + ".join(sym_latex(t) for t in terms)
+            steps.append({
+                "num": step_num,
+                "desc": "Break into terms (sum rule)",
+                "expr_latex": f"\\frac{{d}}{{d{var_name}}}\\left({terms_latex}\\right)"
+            })
+            step_num += 1
+
+        for term in terms:
+            deriv = sym_diff(term, var)
+            rule = self._identify_rule(term, var)
+            steps.append({
+                "num": step_num,
+                "desc": f"Differentiate {sym_latex(term)} [{rule}]",
+                "expr_latex": sym_latex(deriv),
+            })
+            step_num += 1
+
+        final = sym_diff(expr, var)
+        simplified = sym_simplify(final)
+
+        if len(terms) > 1:
+            steps.append({
+                "num": step_num,
+                "desc": "Combine all terms",
+                "expr_latex": sym_latex(final),
+            })
+            step_num += 1
+
+        if simplified != final:
+            steps.append({
+                "num": step_num,
+                "desc": "Simplify",
+                "expr_latex": sym_latex(simplified),
+            })
+
+        return {
+            "operation": "derivative",
+            "title": f"d/d{var_name}({sym_latex(expr)})",
+            "input_latex": sym_latex(expr),
+            "steps": steps,
+            "result": str(simplified),
+            "result_latex": f"\\frac{{d}}{{d{var_name}}}\\left({sym_latex(expr)}\\right) = {sym_latex(simplified)}",
+            "matrix_data": None,
+            "result_matrix_data": None,
+            "has_function": True,
+            "expression_str": str(expr),
+            "error": None,
+        }
+
+    def _integral_structured(self, expr_str: str) -> dict:
+        """Structured output for integration."""
+        bounds = None
+        bounds_match = re.search(r'\bfrom\s+([\d.\-]+)\s+to\s+([\d.\-]+)', expr_str)
+        if bounds_match:
+            bounds = (float(bounds_match.group(1)), float(bounds_match.group(2)))
+            expr_str = expr_str[:bounds_match.start()].strip()
+
+        expr_str = re.sub(r'\s*d[a-z]\s*$', '', expr_str).strip()
+        preprocessed = _preprocess_equation(expr_str)
+        all_vars = _extract_variables(preprocessed)
+        if not all_vars:
+            return {"error": "No variable found for integration"}
+
+        sym_vars = {var: symbols(var) for var in all_vars}
+        var = sym_vars.get('x', sym_vars[all_vars[0]])
+        var_name = str(var)
+
+        expr = _parse_sympy_expr(preprocessed, sym_vars)
+        terms = Add.make_args(expr)
+        steps = []
+        step_num = 1
+
+        if len(terms) > 1:
+            steps.append({
+                "num": step_num,
+                "desc": "Break into terms (sum rule)",
+                "expr_latex": " + ".join(
+                    f"\\int {sym_latex(t)} \\, d{var_name}" for t in terms
+                ),
+            })
+            step_num += 1
+
+        for term in terms:
+            antideriv = sym_integrate(term, var)
+            rule = self._identify_integral_rule(term, var)
+            steps.append({
+                "num": step_num,
+                "desc": f"Integrate {sym_latex(term)} [{rule}]",
+                "expr_latex": sym_latex(antideriv),
+            })
+            step_num += 1
+
+        antiderivative = sym_integrate(expr, var)
+
+        if len(terms) > 1:
+            steps.append({
+                "num": step_num,
+                "desc": "Combine all terms",
+                "expr_latex": f"F({var_name}) = {sym_latex(antiderivative)}",
+            })
+            step_num += 1
+
+        if bounds:
+            a, b = bounds
+            sym_a, sym_b = sympify(a), sympify(b)
+            f_b = antiderivative.subs(var, sym_b)
+            f_a = antiderivative.subs(var, sym_a)
+            result_val = sym_simplify(f_b - f_a)
+
+            steps.append({
+                "num": step_num,
+                "desc": f"Evaluate F({self._format_result(b)}) - F({self._format_result(a)})",
+                "expr_latex": f"{sym_latex(f_b)} - {sym_latex(f_a)} = {sym_latex(result_val)}",
+            })
+
+            return {
+                "operation": "integral",
+                "title": f"\\int_{{{self._format_result(a)}}}^{{{self._format_result(b)}}} {sym_latex(expr)} \\, d{var_name}",
+                "input_latex": sym_latex(expr),
+                "steps": steps,
+                "result": str(result_val),
+                "result_latex": sym_latex(result_val),
+                "matrix_data": None,
+                "result_matrix_data": None,
+                "has_function": True,
+                "expression_str": str(expr),
+                "error": None,
+            }
+        else:
+            return {
+                "operation": "integral",
+                "title": f"\\int {sym_latex(expr)} \\, d{var_name}",
+                "input_latex": sym_latex(expr),
+                "steps": steps,
+                "result": f"{antiderivative} + C",
+                "result_latex": f"{sym_latex(antiderivative)} + C",
+                "matrix_data": None,
+                "result_matrix_data": None,
+                "has_function": True,
+                "expression_str": str(expr),
+                "error": None,
+            }
+
+    def _solve_equation_structured(self, expr_str: str) -> dict:
+        """Structured output for equation solving."""
+        if "=" not in expr_str:
+            expr_str = expr_str + " = 0"
+
+        parts = expr_str.split("=")
+        if len(parts) != 2:
+            return {"error": "Equation must have exactly one '=' sign"}
+
+        left_pre = _preprocess_equation(parts[0].strip())
+        right_pre = _preprocess_equation(parts[1].strip())
+        all_vars = _extract_variables(left_pre + " " + right_pre)
+        if not all_vars:
+            return {"error": "No variables found in equation"}
+
+        sym_vars = {v: symbols(v) for v in all_vars}
+        var = sym_vars.get('x', sym_vars[all_vars[0]])
+        var_name = str(var)
+
+        left_expr = _parse_sympy_expr(left_pre, sym_vars)
+        right_expr = _parse_sympy_expr(right_pre, sym_vars)
+        full_expr = sym_expand(left_expr - right_expr)
+
+        steps = []
+        step_num = 1
+
+        steps.append({
+            "num": step_num,
+            "desc": "Rearrange to standard form (= 0)",
+            "expr_latex": f"{sym_latex(full_expr)} = 0",
+        })
+        step_num += 1
+
+        degree = full_expr.as_poly(var).degree() if full_expr.is_polynomial(var) else None
+
+        if degree == 2:
+            coeffs = full_expr.as_poly(var).all_coeffs()
+            a, b, c = (coeffs + [0, 0, 0])[:3]
+            discriminant = b**2 - 4*a*c
+
+            steps.append({
+                "num": step_num,
+                "desc": f"Identify coefficients (a{var_name}² + b{var_name} + c = 0)",
+                "expr_latex": f"a = {sym_latex(sympify(a))}, \\quad b = {sym_latex(sympify(b))}, \\quad c = {sym_latex(sympify(c))}",
+            })
+            step_num += 1
+
+            steps.append({
+                "num": step_num,
+                "desc": "Calculate discriminant (b² - 4ac)",
+                "expr_latex": f"D = {sym_latex(sympify(b))}^2 - 4 \\cdot {sym_latex(sympify(a))} \\cdot {sym_latex(sympify(c))} = {sym_latex(sympify(discriminant))}",
+            })
+            step_num += 1
+
+            if discriminant > 0:
+                steps.append({"num": step_num, "desc": "D > 0 → two real solutions",
+                              "expr_latex": f"{var_name} = \\frac{{-b \\pm \\sqrt{{D}}}}{{2a}}"})
+            elif discriminant == 0:
+                steps.append({"num": step_num, "desc": "D = 0 → one repeated solution",
+                              "expr_latex": f"{var_name} = \\frac{{-b}}{{2a}}"})
+            else:
+                steps.append({"num": step_num, "desc": "D < 0 → two complex solutions", "expr_latex": ""})
+            step_num += 1
+
+            factored = sym_factor(full_expr)
+            if factored != full_expr:
+                steps.append({"num": step_num, "desc": "Factor the expression",
+                              "expr_latex": f"{sym_latex(factored)} = 0"})
+                step_num += 1
+
+        elif degree == 1:
+            coeffs = full_expr.as_poly(var).all_coeffs()
+            a_coeff, b_coeff = coeffs[0], coeffs[1] if len(coeffs) > 1 else 0
+            steps.append({"num": step_num, "desc": "Isolate the variable",
+                          "expr_latex": f"{sym_latex(sympify(a_coeff))} \\cdot {var_name} = {sym_latex(sympify(-b_coeff))}"})
+            step_num += 1
+            if a_coeff != 1:
+                steps.append({"num": step_num, "desc": f"Divide both sides by {a_coeff}",
+                              "expr_latex": f"{var_name} = \\frac{{{sym_latex(sympify(-b_coeff))}}}{{{sym_latex(sympify(a_coeff))}}}"})
+                step_num += 1
+
+        solutions = solve(Eq(left_expr, right_expr), var)
+        formatted = [_format_number(s) for s in solutions]
+        sol_latex = ", \\quad ".join(f"{var_name} = {sym_latex(s)}" for s in solutions)
+
+        return {
+            "operation": "solve",
+            "title": f"Solve: {sym_latex(left_expr)} = {sym_latex(right_expr)}",
+            "input_latex": f"{sym_latex(left_expr)} = {sym_latex(right_expr)}",
+            "steps": steps,
+            "result": f"{var_name} = {', '.join(formatted)}",
+            "result_latex": sol_latex,
+            "matrix_data": None,
+            "result_matrix_data": None,
+            "has_function": degree is not None and degree >= 2,
+            "expression_str": str(full_expr) if degree and degree >= 2 else None,
+            "error": None,
+        }
+
+    def _matrix_det_structured(self, matrix_str: str) -> dict:
+        """Structured output for determinant."""
+        m = _parse_matrix(matrix_str)
+        rows, cols = m.shape
+        if rows != cols:
+            return {"error": f"Determinant requires a square matrix. Got {rows}x{cols}."}
+
+        data = m.tolist()
+        steps = []
+        step_num = 1
+
+        if rows == 2:
+            a, b, c, d = data[0][0], data[0][1], data[1][0], data[1][1]
+            steps.append({"num": step_num, "desc": "Apply 2×2 determinant formula: ad - bc",
+                          "expr_latex": f"\\det = ({a})({d}) - ({b})({c}) = {a*d} - {b*c} = {a*d - b*c}"})
+            det = a*d - b*c
+        elif rows == 3:
+            steps.append({"num": step_num, "desc": "Cofactor expansion along first row", "expr_latex": ""})
+            step_num += 1
+            det = 0
+            for j in range(3):
+                sign = (-1)**j
+                element = data[0][j]
+                minor = [[data[i][k] for k in range(3) if k != j] for i in range(1, 3)]
+                minor_det = minor[0][0]*minor[1][1] - minor[0][1]*minor[1][0]
+                cofactor = sign * element * minor_det
+                det += cofactor
+                sign_str = "+" if sign > 0 else "-"
+                steps.append({
+                    "num": step_num,
+                    "desc": f"Cofactor C(1,{j+1})",
+                    "expr_latex": f"{sign_str} ({element}) \\cdot \\det\\begin{{pmatrix}} {minor[0][0]} & {minor[0][1]} \\\\ {minor[1][0]} & {minor[1][1]} \\end{{pmatrix}} = {sign_str} ({element})({minor_det}) = {cofactor}",
+                })
+                step_num += 1
+            steps.append({"num": step_num, "desc": "Sum all cofactors", "expr_latex": f"\\det = {det}"})
+        else:
+            det = int(m.det())
+            steps.append({"num": step_num, "desc": f"Cofactor expansion ({rows}×{rows} matrix)",
+                          "expr_latex": f"\\det = {det}"})
+
+        return {
+            "operation": "matrix_det",
+            "title": "Determinant",
+            "input_latex": sym_latex(m),
+            "steps": steps,
+            "result": str(det),
+            "result_latex": f"\\det = {det}",
+            "matrix_data": [[float(x) for x in row] for row in data],
+            "result_matrix_data": None,
+            "has_function": False,
+            "expression_str": None,
+            "error": None,
+        }
+
+    def _matrix_mul_structured(self, expr_str: str) -> dict:
+        """Structured output for matrix multiplication."""
+        parts = re.split(r'\]\]\s*\*\s*\[\[', expr_str)
+        if len(parts) != 2:
+            return {"error": "Use format [[1,2],[3,4]] * [[5,6],[7,8]]"}
+        m1 = _parse_matrix(parts[0] + "]]")
+        m2 = _parse_matrix("[[" + parts[1])
+        r1, c1 = m1.shape
+        r2, c2 = m2.shape
+        if c1 != r2:
+            return {"error": f"Cannot multiply {r1}x{c1} by {r2}x{c2}. Inner dimensions must match."}
+
+        a, b = m1.tolist(), m2.tolist()
+        steps = [{"num": 1, "desc": f"Verify dimensions: ({r1}×{c1}) × ({r2}×{c2}) = ({r1}×{c2})", "expr_latex": ""}]
+        step_num = 2
+
+        if r1 * c2 <= 16:
+            for i in range(r1):
+                for j in range(c2):
+                    products = [a[i][k] * b[k][j] for k in range(c1)]
+                    total = sum(products)
+                    dot = " + ".join(f"({a[i][k]})({b[k][j]})" for k in range(c1))
+                    steps.append({
+                        "num": step_num,
+                        "desc": f"Element [{i+1},{j+1}] = Row {i+1} · Column {j+1}",
+                        "expr_latex": f"{dot} = {total}",
+                    })
+                    step_num += 1
+
+        result_matrix = m1 * m2
+        result_data = [[float(x) for x in row] for row in result_matrix.tolist()]
+
+        return {
+            "operation": "matrix_mul",
+            "title": "Matrix Multiplication",
+            "input_latex": f"{sym_latex(m1)} \\times {sym_latex(m2)}",
+            "steps": steps,
+            "result": str(result_data),
+            "result_latex": sym_latex(result_matrix),
+            "matrix_data": [[float(x) for x in row] for row in a],
+            "result_matrix_data": result_data,
+            "has_function": False,
+            "expression_str": None,
+            "error": None,
+        }
+
+    def _matrix_inv_structured(self, matrix_str: str) -> dict:
+        """Structured output for matrix inverse."""
+        m = _parse_matrix(matrix_str)
+        rows, cols = m.shape
+        if rows != cols:
+            return {"error": f"Inverse requires a square matrix. Got {rows}x{cols}."}
+
+        det = m.det()
+        data = m.tolist()
+        steps = []
+        step_num = 1
+
+        if rows == 2:
+            a, b, c, d = data[0][0], data[0][1], data[1][0], data[1][1]
+            steps.append({"num": step_num, "desc": "Calculate determinant",
+                          "expr_latex": f"\\det = ({a})({d}) - ({b})({c}) = {det}"})
+            step_num += 1
+        else:
+            steps.append({"num": step_num, "desc": "Calculate determinant",
+                          "expr_latex": f"\\det = {_format_number(det)}"})
+            step_num += 1
+
+        if det == 0:
+            return {
+                "operation": "matrix_inv", "title": "Matrix Inverse",
+                "input_latex": sym_latex(m), "steps": steps,
+                "result": "No inverse (singular matrix)",
+                "result_latex": "\\text{No inverse — singular matrix}",
+                "matrix_data": [[float(x) for x in row] for row in data],
+                "result_matrix_data": None,
+                "has_function": False, "expression_str": None,
+                "error": "Matrix is singular (determinant = 0), cannot invert.",
+            }
+
+        if rows == 2:
+            steps.append({"num": step_num,
+                          "desc": "Apply 2×2 inverse formula: (1/det) × [[d, -b], [-c, a]]",
+                          "expr_latex": f"\\frac{{1}}{{{det}}} \\begin{{pmatrix}} {data[1][1]} & {-data[0][1]} \\\\ {-data[1][0]} & {data[0][0]} \\end{{pmatrix}}"})
+        else:
+            steps.append({"num": step_num,
+                          "desc": "Compute adjugate and multiply by 1/det",
+                          "expr_latex": f"A^{{-1}} = \\frac{{1}}{{{_format_number(det)}}} \\cdot \\text{{adj}}(A)"})
+
+        inv = m.inv()
+        result_data = [[float(x) for x in row] for row in inv.tolist()]
+
+        return {
+            "operation": "matrix_inv", "title": "Matrix Inverse",
+            "input_latex": sym_latex(m), "steps": steps,
+            "result": str(result_data),
+            "result_latex": sym_latex(inv),
+            "matrix_data": [[float(x) for x in row] for row in data],
+            "result_matrix_data": result_data,
+            "has_function": False, "expression_str": None, "error": None,
+        }
+
+    def _matrix_trans_structured(self, matrix_str: str) -> dict:
+        """Structured output for transpose."""
+        m = _parse_matrix(matrix_str)
+        rows, cols = m.shape
+        steps = [{"num": 1, "desc": f"Swap rows and columns ({rows}×{cols} → {cols}×{rows})",
+                  "expr_latex": "\\text{Row } i \\rightarrow \\text{Column } i"}]
+
+        result = m.T
+        result_data = [[float(x) for x in row] for row in result.tolist()]
+
+        return {
+            "operation": "matrix_trans", "title": "Transpose",
+            "input_latex": sym_latex(m), "steps": steps,
+            "result": str(result_data),
+            "result_latex": sym_latex(result),
+            "matrix_data": [[float(x) for x in row] for row in m.tolist()],
+            "result_matrix_data": result_data,
+            "has_function": False, "expression_str": None, "error": None,
+        }
+
+    def _matrix_add_structured(self, expr_str: str) -> dict:
+        """Structured output for matrix addition."""
+        parts = re.split(r'\]\]\s*\+\s*\[\[', expr_str)
+        if len(parts) != 2:
+            return {"error": "Use format [[1,2],[3,4]] + [[5,6],[7,8]]"}
+        m1 = _parse_matrix(parts[0] + "]]")
+        m2 = _parse_matrix("[[" + parts[1])
+        if m1.shape != m2.shape:
+            return {"error": f"Matrices must have same dimensions. Got {m1.shape[0]}x{m1.shape[1]} and {m2.shape[0]}x{m2.shape[1]}."}
+
+        steps = [{"num": 1, "desc": f"Add corresponding elements ({m1.shape[0]}×{m1.shape[1]})",
+                  "expr_latex": f"{sym_latex(m1)} + {sym_latex(m2)}"}]
+
+        result = m1 + m2
+        result_data = [[float(x) for x in row] for row in result.tolist()]
+
+        return {
+            "operation": "matrix_add", "title": "Matrix Addition",
+            "input_latex": f"{sym_latex(m1)} + {sym_latex(m2)}", "steps": steps,
+            "result": str(result_data),
+            "result_latex": sym_latex(result),
+            "matrix_data": None,
+            "result_matrix_data": result_data,
+            "has_function": False, "expression_str": None, "error": None,
+        }

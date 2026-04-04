@@ -36,7 +36,7 @@ SPECIALIST_DEFINITIONS = {
         "tools": [
             "calculator", "unit_converter", "equation_solver",
             "currency_converter", "wolfram_alpha", "python_repl",
-            "datetime_calculator",
+            "datetime_calculator", "math_formatter", "create_chart",
         ],
         "prompt": MATH_AGENT_PROMPT,
     },

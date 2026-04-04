@@ -64,14 +64,15 @@ from src.tools.github_tool import github_tool
 from src.tools.scraper_tool import scraper_tool
 from src.tools.csv_tool import csv_tool
 from src.tools.datetime_tool import datetime_tool
+from src.tools.math_formatter import math_formatter_tool
 
 
 # Tool categories for hierarchical selection — included in the system prompt
 # so the LLM can navigate 20 tools effectively.
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
-        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator"],
-        "guidance": "Use calculator for arithmetic, step-by-step solutions (derivatives, integrals, equations, matrix ops) — ideal for students who need to see solution steps. Use equation_solver for symbolic algebra (simplify/expand/factor), systems of equations, eigenvalues, RREF. unit_converter for unit changes, currency_converter for exchange rates, datetime_calculator for date arithmetic and timezone conversions. wolfram_alpha is for REFERENCE DATA lookups (scientific constants, physical properties) — NOT for math calculations."
+        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator", "math_formatter"],
+        "guidance": "Use calculator for arithmetic, step-by-step solutions (derivatives, integrals, equations, matrix ops). When calculator returns MATH_STRUCTURED: output, ALWAYS pass it to math_formatter to get beautiful HTML. Use equation_solver for symbolic algebra (simplify/expand/factor), systems of equations, eigenvalues, RREF. unit_converter for unit changes, currency_converter for exchange rates, datetime_calculator for date arithmetic. wolfram_alpha is for REFERENCE DATA lookups — NOT for math calculations."
     },
     "INFORMATION RETRIEVAL": {
         "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar", "github_search"],
@@ -258,6 +259,7 @@ class ResearchAgent:
             equation_solver_tool,
             currency_tool,
             wolfram_tool,
+            math_formatter_tool,
             # Information Retrieval
             wikipedia_tool,
             search_tool,

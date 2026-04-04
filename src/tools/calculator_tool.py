@@ -7,6 +7,7 @@ A focused calculator with support for:
 Uses a safe evaluation approach to prevent code injection attacks.
 """
 
+import json
 import math
 import re
 from typing import Dict, Optional
@@ -212,7 +213,14 @@ class AdvancedCalculator:
         # Check for step-by-step operations (calculus, matrix, complex arithmetic)
         operation, cleaned = detect_operation(input_str)
         if operation not in ("simple", "passthrough"):
-            return _step_solver.solve(operation, cleaned)
+            # Return structured JSON for the math_formatter tool to render
+            structured = _step_solver.solve_structured(operation, cleaned)
+            if structured.get("error") and not structured.get("steps"):
+                return f"Error: {structured['error']}"
+            # Also include the plain-text version as fallback
+            plain_text = _step_solver.solve(operation, cleaned)
+            structured["plain_text"] = plain_text
+            return "MATH_STRUCTURED:" + json.dumps(structured, default=str)
 
         # Otherwise, evaluate as expression
         try:

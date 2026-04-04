@@ -29,4 +29,5 @@ __all__ = [
     "translation_tool",
     "reddit_tool",
     "wikidata_tool",
+    "math_formatter",
 ]
