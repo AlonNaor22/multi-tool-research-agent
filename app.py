@@ -28,52 +28,74 @@ from config import ANTHROPIC_API_KEY, MODEL_NAME, API_KEYS, update_env_key
 # ---------------------------------------------------------------------------
 
 def _stream_display(text: str, placeholder) -> None:
-    """Display streaming text, hiding raw math JSON during token generation.
+    """Display streaming text, hiding raw math content during token generation.
 
     While the LLM is generating tokens, MATH_STRUCTURED: JSON and LaTeX
-    look ugly. This function replaces math blocks with a clean placeholder
-    so the user sees readable text during streaming.
+    ($...$) look ugly as raw text. This function shows a clean placeholder
+    whenever math content is detected mid-stream.
     """
+    # Detect raw structured JSON
     if 'MATH_STRUCTURED:' in text:
-        # Find the text before the math block and show a placeholder
         idx = text.index('MATH_STRUCTURED:')
         before = text[:idx].strip()
         if before:
             placeholder.markdown(before + "\n\n*Formatting math solution...*")
         else:
             placeholder.markdown("*Formatting math solution...*")
-    else:
-        placeholder.markdown(text + "▌")
+        return
+
+    # Detect LaTeX with unclosed delimiters (partial streaming of $...$)
+    # Count $ signs — odd count means we're mid-LaTeX expression
+    dollar_count = text.count('$') - text.count('\\$')  # exclude escaped
+    if dollar_count > 0 and dollar_count % 2 != 0:
+        # We're mid-LaTeX — show text up to the last complete expression
+        # Find the last unmatched $
+        last_dollar = text.rfind('$')
+        safe_text = text[:last_dollar].strip()
+        if safe_text:
+            placeholder.markdown(safe_text + " ...")
+        else:
+            placeholder.markdown("*Rendering math...*")
+        return
+
+    placeholder.markdown(text + "▌")
 
 def _render_agent_content(text: str, container=None):
     """Render agent output with math formatting and chart embedding.
 
     - Auto-formats any raw MATH_STRUCTURED: JSON the agent passed through
-    - Detects CHART_FILE:path markers and renders images via st.image()
+    - Detects chart file paths (output/*.png) and renders images inline
+    - Detects CHART_FILE:path markers and renders images inline
     - Passes text through st.markdown() (supports KaTeX $...$ natively)
     """
     if container is None:
         container = st
 
     # --- Fallback: auto-format any MATH_STRUCTURED: the agent didn't format ---
-    # This catches direct mode where the LLM skips calling math_formatter.
     if 'MATH_STRUCTURED:' in text:
         text = _auto_format_math_structured(text)
 
-    if 'CHART_FILE:' in text:
-        # Split on chart file references and render images inline
-        chart_parts = _re.split(r'CHART_FILE:([\S]+)', text)
-        for i, cp in enumerate(chart_parts):
-            cp = cp.strip()
-            if not cp:
+    # --- Detect chart file paths and embed images ---
+    # Match both explicit CHART_FILE: markers and natural chart paths from tool output
+    chart_pattern = r'(?:CHART_FILE:)?(output[/\\]chart[^\s\)\"\']+\.png)'
+    if _re.search(chart_pattern, text):
+        parts = _re.split(f'({chart_pattern})', text)
+        for part in parts:
+            part = part.strip()
+            if not part:
                 continue
-            if i % 2 == 0:
-                container.markdown(cp)
-            else:
-                if os.path.exists(cp):
-                    container.image(cp, use_container_width=True)
+            # Check if this part is a chart file path
+            if _re.match(r'output[/\\]chart.*\.png$', part):
+                filepath = part.replace('\\', '/')
+                if os.path.exists(filepath):
+                    container.image(filepath, use_container_width=True)
                 else:
-                    container.markdown(f"*Chart: {cp}*")
+                    container.caption(f"Chart: {filepath}")
+            else:
+                # Clean up any leftover CHART_FILE: prefix
+                cleaned = part.replace('CHART_FILE:', '').strip()
+                if cleaned:
+                    container.markdown(cleaned)
     else:
         container.markdown(text)
 
