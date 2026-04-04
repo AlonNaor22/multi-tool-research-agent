@@ -71,7 +71,7 @@ from src.tools.datetime_tool import datetime_tool
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
         "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator"],
-        "guidance": "Use calculator for arithmetic/algebra/trig, unit_converter for unit changes, equation_solver for symbolic math (derivatives, integrals), currency_converter for exchange rates, datetime_calculator for date arithmetic and timezone conversions. wolfram_alpha is for REFERENCE DATA lookups (scientific constants, physical properties) — NOT for math calculations."
+        "guidance": "Use calculator for arithmetic, step-by-step solutions (derivatives, integrals, equations, matrix ops) — ideal for students who need to see solution steps. Use equation_solver for symbolic algebra (simplify/expand/factor), systems of equations, eigenvalues, RREF. unit_converter for unit changes, currency_converter for exchange rates, datetime_calculator for date arithmetic and timezone conversions. wolfram_alpha is for REFERENCE DATA lookups (scientific constants, physical properties) — NOT for math calculations."
     },
     "INFORMATION RETRIEVAL": {
         "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar", "github_search"],

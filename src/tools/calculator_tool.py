@@ -12,6 +12,11 @@ import re
 from typing import Dict, Optional
 from langchain_core.tools import Tool
 
+from src.tools.step_solver import detect_operation, StepByStepSolver
+
+# Global step solver instance
+_step_solver = StepByStepSolver()
+
 
 # ============================================================================
 # SAFE MATH EVALUATION
@@ -204,6 +209,11 @@ class AdvancedCalculator:
             except Exception as e:
                 return f"Error evaluating expression: {str(e)}"
 
+        # Check for step-by-step operations (calculus, matrix, complex arithmetic)
+        operation, cleaned = detect_operation(input_str)
+        if operation not in ("simple", "passthrough"):
+            return _step_solver.solve(operation, cleaned)
+
         # Otherwise, evaluate as expression
         try:
             result = self.safe_eval(input_str)
@@ -228,18 +238,28 @@ class AdvancedCalculator:
 
     def _get_help(self) -> str:
         """Return help text."""
-        return """Calculator Help:
+        return """Calculator Help (with step-by-step solutions):
 
 BASIC MATH:
   2 + 2, 10 * 5, 100 / 4, 2 ** 10, 17 % 5
 
+STEP-BY-STEP (automatically for complex expressions):
+  (2+3)*4 - 10/2    -> shows order of operations
+  derivative of x^3 + 2x   -> shows power rule steps
+  integrate x^2 from 0 to 5 -> shows antiderivative + bounds
+  solve x^2 - 4 = 0  -> shows discriminant + quadratic formula
+
+MATRIX OPERATIONS (with steps):
+  determinant [[1,2],[3,4]]
+  inverse [[1,2],[3,4]]
+  [[1,2],[3,4]] * [[5,6],[7,8]]
+  transpose [[1,2,3],[4,5,6]]
+  [[1,2],[3,4]] + [[5,6],[7,8]]
+
 MATH FUNCTIONS:
   sqrt(16), cbrt(27), abs(-5), round(3.7)
-  sin(x), cos(x), tan(x), asin(x), acos(x), atan(x)
-  log(x), log10(x), log2(x), exp(x)
+  sin(x), cos(x), tan(x), log(x), exp(x)
   factorial(5), gcd(12, 8), ceil(3.2), floor(3.8)
-  degrees(pi), radians(180)
-  min(1,2,3), max(1,2,3), sum([1,2,3])
 
 CONSTANTS:
   pi = 3.14159..., e = 2.71828..., tau = 6.28318...
@@ -251,7 +271,7 @@ VARIABLES:
   clear         (clear all variables)
 
 For unit conversions, use the 'unit_converter' tool.
-For solving equations, use the 'equation_solver' tool."""
+For symbolic algebra (simplify/expand/factor), systems, eigenvalues, use 'equation_solver'."""
 
 
 # Create a global calculator instance (persists across calls)
@@ -278,13 +298,18 @@ calculator_tool = Tool(
     func=calculate,
     coroutine=async_calculate,
     description=(
-        "Perform mathematical calculations with variables. "
+        "Perform mathematical calculations with step-by-step solutions for students. "
         "\n\nBASIC MATH: '2 + 2', '100 * 0.15', '2 ** 10' (power), '17 % 5' (modulo)"
-        "\n\nMATH FUNCTIONS: sqrt(16), sin(x), cos(x), tan(x), log(x), log10(x), "
-        "exp(x), factorial(5), abs(-5), round(3.7), ceil(x), floor(x), "
-        "min(1,2,3), max(1,2,3), gcd(12,8), degrees(pi), radians(180)"
+        "\n\nSTEP-BY-STEP: Complex expressions automatically show solution steps."
+        "\n\nCALCULUS: 'derivative of x^3 + 2x', 'integrate x^2 from 0 to 5'"
+        "\n\nMATRIX OPS: 'determinant [[1,2],[3,4]]', 'inverse [[1,2],[3,4]]', "
+        "'[[1,2],[3,4]] * [[5,6],[7,8]]', 'transpose [[1,2,3],[4,5,6]]', "
+        "'[[1,2],[3,4]] + [[5,6],[7,8]]'"
+        "\n\nEQUATIONS: 'solve x^2 - 4 = 0' (with solution steps)"
+        "\n\nMATH FUNCTIONS: sqrt(16), sin(x), cos(x), factorial(5), abs(-5), ceil(x), floor(x)"
         "\n\nCONSTANTS: pi, e, tau"
         "\n\nVARIABLES: 'x = 10' to store, then 'x * 2' to use, 'variables' to list, 'clear' to reset"
-        "\n\nNOTE: For unit conversions use 'unit_converter'. For solving equations use 'equation_solver'."
+        "\n\nNOTE: For unit conversions use 'unit_converter'. For symbolic algebra "
+        "(simplify/expand/factor), systems of equations, eigenvalues, or RREF use 'equation_solver'."
     )
 )
