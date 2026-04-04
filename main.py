@@ -6,7 +6,9 @@ Run with:
 """
 
 import argparse
+import json
 import os
+import re
 import sys
 import asyncio
 from src.agent import ResearchAgent
@@ -14,6 +16,67 @@ from src.session_manager import list_sessions, get_session_preview
 from src.tool_health import format_health_status
 from src.observability import MetricsStore
 from src.utils import close_aiohttp_session
+
+
+def _clean_math_output(text: str) -> str:
+    """Clean math output for CLI display.
+
+    - Replaces raw MATH_STRUCTURED: JSON with plain-text fallback
+    - Strips HTML sentinel blocks (can't render in terminal)
+
+    This is the safety net for direct mode when the agent passes structured
+    output through without calling math_formatter, or returns HTML that
+    can't render in a terminal.
+    """
+    # Strip HTML math blocks — extract plain text from them if possible
+    if '<!-- MATH_HTML -->' in text:
+        text = re.sub(
+            r'<!-- MATH_HTML -->.*?<!-- /MATH_HTML -->',
+            '[Math output rendered in Web UI]',
+            text,
+            flags=re.DOTALL,
+        )
+
+    if 'MATH_STRUCTURED:' not in text:
+        return text
+
+    result_parts = []
+    remaining = text
+
+    while 'MATH_STRUCTURED:' in remaining:
+        prefix = 'MATH_STRUCTURED:'
+        idx = remaining.index(prefix)
+        result_parts.append(remaining[:idx])
+
+        json_start = idx + len(prefix)
+        if json_start >= len(remaining) or remaining[json_start] != '{':
+            result_parts.append(remaining[idx:])
+            remaining = ""
+            break
+
+        # Find matching closing brace
+        depth = 0
+        json_end = json_start
+        for i in range(json_start, len(remaining)):
+            if remaining[i] == '{':
+                depth += 1
+            elif remaining[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    json_end = i + 1
+                    break
+
+        try:
+            data = json.loads(remaining[json_start:json_end])
+            plain = data.get("plain_text", remaining[idx:json_end])
+            result_parts.append(plain)
+        except (json.JSONDecodeError, Exception):
+            result_parts.append(remaining[idx:json_end])
+
+        remaining = remaining[json_end:]
+
+    result_parts.append(remaining)
+    return "".join(result_parts)
 
 
 def parse_args() -> argparse.Namespace:
@@ -210,7 +273,8 @@ async def main():
             print("\n" + "-" * 60)
             if not plan_mode and not multi_agent_mode:
                 # In plan/multi-agent mode the answer is already streamed to stdout
-                print(f"\nAnswer: {answer}\n")
+                # Clean any raw MATH_STRUCTURED: JSON for terminal display
+                print(f"\nAnswer: {_clean_math_output(answer)}\n")
             print("-" * 60)
             print()
 

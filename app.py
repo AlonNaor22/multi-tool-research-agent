@@ -30,12 +30,18 @@ from config import ANTHROPIC_API_KEY, MODEL_NAME, API_KEYS, update_env_key
 def _render_agent_content(text: str, container=None):
     """Render agent output, detecting HTML math blocks and chart file paths.
 
+    - Auto-formats any raw MATH_STRUCTURED: JSON the agent passed through
     - Splits on <!-- MATH_HTML --> sentinels and renders HTML blocks via st.html()
     - Detects CHART_FILE:path markers and renders images via st.image()
     - Passes regular text through st.markdown()
     """
     if container is None:
         container = st
+
+    # --- Fallback: auto-format any MATH_STRUCTURED: the agent didn't format ---
+    # This catches direct mode where the LLM skips calling math_formatter.
+    if 'MATH_STRUCTURED:' in text and '<!-- MATH_HTML -->' not in text:
+        text = _auto_format_math_structured(text)
 
     # Split on MATH_HTML sentinel blocks
     parts = _re.split(
@@ -71,6 +77,62 @@ def _render_agent_content(text: str, container=None):
                         container.markdown(f"*Chart: {cp}*")
         else:
             container.markdown(part)
+
+
+def _auto_format_math_structured(text: str) -> str:
+    """Find raw MATH_STRUCTURED: JSON in text and replace with formatted HTML.
+
+    This is the safety net for direct mode: if the LLM includes raw
+    MATH_STRUCTURED:{...} in its response instead of calling math_formatter,
+    we format it automatically so the user never sees raw JSON.
+    """
+    import json as _json
+    from src.tools.math_formatter import format_math
+
+    result_parts = []
+    remaining = text
+
+    while 'MATH_STRUCTURED:' in remaining:
+        prefix_marker = 'MATH_STRUCTURED:'
+        idx = remaining.index(prefix_marker)
+
+        # Add the text before the marker
+        result_parts.append(remaining[:idx])
+
+        # Find the JSON object by counting braces
+        json_start = idx + len(prefix_marker)
+        if json_start >= len(remaining) or remaining[json_start] != '{':
+            result_parts.append(remaining[idx:])
+            remaining = ""
+            break
+
+        depth = 0
+        json_end = json_start
+        for i in range(json_start, len(remaining)):
+            if remaining[i] == '{':
+                depth += 1
+            elif remaining[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    json_end = i + 1
+                    break
+
+        raw_block = remaining[idx:json_end]
+        try:
+            html = format_math(raw_block)
+            result_parts.append(html)
+        except Exception:
+            # Fallback: try to extract plain_text from the JSON
+            try:
+                data = _json.loads(remaining[json_start:json_end])
+                result_parts.append(data.get("plain_text", raw_block))
+            except Exception:
+                result_parts.append(raw_block)
+
+        remaining = remaining[json_end:]
+
+    result_parts.append(remaining)
+    return "".join(result_parts)
 
 
 
