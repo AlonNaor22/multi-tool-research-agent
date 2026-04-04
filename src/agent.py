@@ -71,8 +71,8 @@ from src.tools.math_formatter import math_formatter_tool
 # so the LLM can navigate 20 tools effectively.
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
-        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator", "math_formatter"],
-        "guidance": "Use calculator for arithmetic, step-by-step solutions (derivatives, integrals, equations, matrix ops). When calculator returns MATH_STRUCTURED: output, ALWAYS pass it to math_formatter to get beautiful HTML. Use equation_solver for symbolic algebra (simplify/expand/factor), systems of equations, eigenvalues, RREF. unit_converter for unit changes, currency_converter for exchange rates, datetime_calculator for date arithmetic. wolfram_alpha is for REFERENCE DATA lookups — NOT for math calculations."
+        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator", "math_formatter", "create_chart"],
+        "guidance": "Use calculator for arithmetic, step-by-step solutions (derivatives, integrals, equations, matrix ops). When calculator returns MATH_STRUCTURED: output, ALWAYS pass it to math_formatter. When the user asks to graph/plot a function or when a visual would help, use create_chart with chart_type 'function'. Use equation_solver for symbolic algebra, systems, eigenvalues, RREF. unit_converter for unit changes, currency_converter for exchange rates, datetime_calculator for date arithmetic. wolfram_alpha is for REFERENCE DATA lookups only."
     },
     "INFORMATION RETRIEVAL": {
         "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar", "github_search"],
@@ -156,6 +156,13 @@ def _build_system_prompt(disabled_tools: list = None) -> str:
         "- For facts: prefer wikipedia (established) over web_search (current/recent)",
         "- If the user asks a follow-up question, use the conversation history for context",
         "- Synthesize information from multiple sources into a coherent answer",
+        "",
+        "MATH WORKFLOW:",
+        "- When calculator returns output starting with MATH_STRUCTURED:, pass the ENTIRE output to math_formatter",
+        "- When the user asks to graph, plot, or visualize a function, ALWAYS use create_chart with chart_type 'function'",
+        "- When solving equations or doing calculus, also graph the function if it helps understanding",
+        "- Example: for 'graph x^2 - 4', use create_chart with: {\"chart_type\":\"function\",\"data\":{\"expression\":\"x**2 - 4\",\"x_range\":[-5,5]},\"title\":\"f(x) = x^2 - 4\"}",
+        "- Include CHART_FILE:path in your response so the UI can embed the image",
         "",
         "ERROR RECOVERY:",
         "- If a tool returns an error, do NOT repeat the same call. Try an alternative tool from the same category.",
