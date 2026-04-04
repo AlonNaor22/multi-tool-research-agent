@@ -1,31 +1,31 @@
-"""Tests for src/tools/math_formatter.py — HTML rendering of math output."""
+"""Tests for src/tools/math_formatter.py — markdown rendering of math output."""
 
 import json
 import pytest
-from src.tools.math_formatter import format_math, _matrix_to_html, _latex
+from src.tools.math_formatter import format_math, _matrix_to_markdown, _latex_inline
 
 
 class TestHelpers:
     """Test helper functions."""
 
     def test_latex_inline(self):
-        assert _latex("x^2") == "\\(x^2\\)"
+        assert _latex_inline("x^2") == "$x^2$"
 
     def test_latex_empty(self):
-        assert _latex("") == ""
+        assert _latex_inline("") == ""
 
-    def test_matrix_to_html(self):
-        html = _matrix_to_html([[1, 2], [3, 4]])
-        assert "<table" in html
-        assert "<td>1</td>" in html
-        assert "<td>4</td>" in html
+    def test_matrix_to_markdown(self):
+        md = _matrix_to_markdown([[1, 2], [3, 4]])
+        assert "|" in md
+        assert "1" in md
+        assert "4" in md
 
-    def test_matrix_to_html_with_caption(self):
-        html = _matrix_to_html([[1, 2]], "Test")
-        assert "Test" in html
+    def test_matrix_to_markdown_with_caption(self):
+        md = _matrix_to_markdown([[1, 2]], "Test")
+        assert "Test" in md
 
-    def test_matrix_to_html_empty(self):
-        assert _matrix_to_html([]) == ""
+    def test_matrix_to_markdown_empty(self):
+        assert _matrix_to_markdown([]) == ""
 
 
 class TestFormatMath:
@@ -48,12 +48,10 @@ class TestFormatMath:
             "error": None,
         }
         result = format_math("MATH_STRUCTURED:" + json.dumps(data))
-        assert "<!-- MATH_HTML -->" in result
-        assert "<!-- /MATH_HTML -->" in result
         assert "Step 1" in result
         assert "power rule" in result
-        assert "MathJax" in result or "mathjax" in result
         assert "Result" in result
+        assert "$" in result  # KaTeX delimiters
 
     def test_matrix_determinant_output(self):
         data = {
@@ -72,8 +70,7 @@ class TestFormatMath:
             "error": None,
         }
         result = format_math("MATH_STRUCTURED:" + json.dumps(data))
-        assert "<!-- MATH_HTML -->" in result
-        assert "<table" in result  # matrix rendered as HTML table
+        assert "|" in result  # matrix rendered as markdown table
         assert "Step 1" in result
         assert "Result" in result
 
@@ -92,17 +89,14 @@ class TestFormatMath:
             "error": None,
         }
         result = format_math("MATH_STRUCTURED:" + json.dumps(data))
-        assert "<!-- MATH_HTML -->" in result
-        # Result matrix should be an HTML table
         assert "19" in result
-        assert "<table" in result
+        assert "|" in result  # markdown table
 
     def test_error_only(self):
         data = {"error": "Division by zero", "steps": None}
         result = format_math(json.dumps(data))
-        assert "<!-- MATH_HTML -->" in result
         assert "Division by zero" in result
-        assert "math-error" in result
+        assert "Error" in result
 
     def test_invalid_json(self):
         result = format_math("not valid json")
@@ -115,21 +109,7 @@ class TestFormatMath:
                 "has_function": False, "expression_str": None, "error": None,
                 "input_latex": ""}
         result = format_math("MATH_STRUCTURED:" + json.dumps(data))
-        assert "<!-- MATH_HTML -->" in result
         assert "x = 2" in result
-
-    def test_function_hint(self):
-        data = {
-            "operation": "derivative", "title": "Test",
-            "input_latex": "", "steps": [],
-            "result": "2x", "result_latex": "2x",
-            "matrix_data": None, "result_matrix_data": None,
-            "has_function": True, "expression_str": "x**2",
-            "error": None,
-        }
-        result = format_math(json.dumps(data))
-        assert "create_chart" in result  # graph hint
-        assert "x**2" in result
 
     def test_singular_matrix_error_with_steps(self):
         data = {
@@ -144,14 +124,14 @@ class TestFormatMath:
         assert "singular" in result.lower()
         assert "Step 1" in result
 
-    def test_css_is_inline(self):
+    def test_katex_delimiters_used(self):
         data = {"operation": "solve", "title": "Test", "steps": [],
                 "result": "5", "result_latex": "5",
                 "matrix_data": None, "result_matrix_data": None,
                 "has_function": False, "expression_str": None,
                 "error": None, "input_latex": ""}
         result = format_math(json.dumps(data))
-        assert "<style>" in result  # CSS is included inline
+        assert "$" in result  # KaTeX inline delimiters
 
 
 class TestStructuredSolverIntegration:
@@ -165,9 +145,9 @@ class TestStructuredSolverIntegration:
         assert structured["result_latex"]
         assert len(structured["steps"]) > 0
 
-        html = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
-        assert "<!-- MATH_HTML -->" in html
-        assert "Step 1" in html
+        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        assert "Step 1" in md
+        assert "$" in md
 
     def test_matrix_det_roundtrip(self):
         from src.tools.step_solver import StepByStepSolver
@@ -175,9 +155,9 @@ class TestStructuredSolverIntegration:
         structured = solver.solve_structured("matrix_det", "[[3,7],[1,-4]]")
         assert structured.get("result") == str(-19)
 
-        html = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
-        assert "<table" in html
-        assert "-19" in html
+        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        assert "|" in md  # markdown table
+        assert "-19" in md
 
     def test_integral_roundtrip(self):
         from src.tools.step_solver import StepByStepSolver
@@ -185,9 +165,9 @@ class TestStructuredSolverIntegration:
         structured = solver.solve_structured("integral", "x^2 from 0 to 3")
         assert structured.get("error") is None
 
-        html = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
-        assert "<!-- MATH_HTML -->" in html
-        assert "9" in html
+        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        assert "Step" in md
+        assert "9" in md
 
     def test_equation_roundtrip(self):
         from src.tools.step_solver import StepByStepSolver
@@ -195,5 +175,5 @@ class TestStructuredSolverIntegration:
         structured = solver.solve_structured("solve", "x^2 - 4 = 0")
         assert structured.get("error") is None
 
-        html = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
-        assert "<!-- MATH_HTML -->" in html
+        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        assert "Step" in md

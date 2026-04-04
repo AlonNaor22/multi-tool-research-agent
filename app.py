@@ -24,63 +24,62 @@ from config import ANTHROPIC_API_KEY, MODEL_NAME, API_KEYS, update_env_key
 
 
 # ---------------------------------------------------------------------------
-# Smart content renderer — handles HTML math blocks and chart images
+# Smart content renderer — handles math formatting and chart images
 # ---------------------------------------------------------------------------
 
+def _stream_display(text: str, placeholder) -> None:
+    """Display streaming text, hiding raw math JSON during token generation.
+
+    While the LLM is generating tokens, MATH_STRUCTURED: JSON and LaTeX
+    look ugly. This function replaces math blocks with a clean placeholder
+    so the user sees readable text during streaming.
+    """
+    if 'MATH_STRUCTURED:' in text:
+        # Find the text before the math block and show a placeholder
+        idx = text.index('MATH_STRUCTURED:')
+        before = text[:idx].strip()
+        if before:
+            placeholder.markdown(before + "\n\n*Formatting math solution...*")
+        else:
+            placeholder.markdown("*Formatting math solution...*")
+    else:
+        placeholder.markdown(text + "▌")
+
 def _render_agent_content(text: str, container=None):
-    """Render agent output, detecting HTML math blocks and chart file paths.
+    """Render agent output with math formatting and chart embedding.
 
     - Auto-formats any raw MATH_STRUCTURED: JSON the agent passed through
-    - Splits on <!-- MATH_HTML --> sentinels and renders HTML blocks via st.html()
     - Detects CHART_FILE:path markers and renders images via st.image()
-    - Passes regular text through st.markdown()
+    - Passes text through st.markdown() (supports KaTeX $...$ natively)
     """
     if container is None:
         container = st
 
     # --- Fallback: auto-format any MATH_STRUCTURED: the agent didn't format ---
     # This catches direct mode where the LLM skips calling math_formatter.
-    if 'MATH_STRUCTURED:' in text and '<!-- MATH_HTML -->' not in text:
+    if 'MATH_STRUCTURED:' in text:
         text = _auto_format_math_structured(text)
 
-    # Split on MATH_HTML sentinel blocks
-    parts = _re.split(
-        r'(<!-- MATH_HTML -->.*?<!-- /MATH_HTML -->)',
-        text,
-        flags=_re.DOTALL,
-    )
-
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-
-        if part.startswith('<!-- MATH_HTML -->'):
-            # Extract the HTML content between sentinels
-            html_content = part.replace('<!-- MATH_HTML -->', '').replace('<!-- /MATH_HTML -->', '').strip()
-            container.html(html_content)
-
-        elif 'CHART_FILE:' in part:
-            # Split on chart file references
-            chart_parts = _re.split(r'CHART_FILE:([\S]+)', part)
-            for i, cp in enumerate(chart_parts):
-                cp = cp.strip()
-                if not cp:
-                    continue
-                if i % 2 == 0:
-                    container.markdown(cp)
+    if 'CHART_FILE:' in text:
+        # Split on chart file references and render images inline
+        chart_parts = _re.split(r'CHART_FILE:([\S]+)', text)
+        for i, cp in enumerate(chart_parts):
+            cp = cp.strip()
+            if not cp:
+                continue
+            if i % 2 == 0:
+                container.markdown(cp)
+            else:
+                if os.path.exists(cp):
+                    container.image(cp, use_container_width=True)
                 else:
-                    # This is a file path
-                    if os.path.exists(cp):
-                        container.image(cp, use_container_width=True)
-                    else:
-                        container.markdown(f"*Chart: {cp}*")
-        else:
-            container.markdown(part)
+                    container.markdown(f"*Chart: {cp}*")
+    else:
+        container.markdown(text)
 
 
 def _auto_format_math_structured(text: str) -> str:
-    """Find raw MATH_STRUCTURED: JSON in text and replace with formatted HTML.
+    """Find raw MATH_STRUCTURED: JSON in text and replace with formatted markdown.
 
     This is the safety net for direct mode: if the LLM includes raw
     MATH_STRUCTURED:{...} in its response instead of calling math_formatter,
@@ -676,7 +675,7 @@ with chat_col:
                                 if wi > 0:
                                     streamed_text += " "
                                 streamed_text += word
-                                token_placeholder.markdown(streamed_text + "▌")
+                                _stream_display(streamed_text, token_placeholder)
                                 if wi < len(words) - 1:
                                     time.sleep(0.01)
                             plan_placeholder.empty()
@@ -743,7 +742,7 @@ with chat_col:
                                     if i > 0:
                                         streamed_text += " "
                                     streamed_text += word
-                                    token_placeholder.markdown(streamed_text + "▌")
+                                    _stream_display(streamed_text, token_placeholder)
                                     if i < len(words) - 1:
                                         time.sleep(0.01)
                                 status_placeholder.empty()
