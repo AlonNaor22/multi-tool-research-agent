@@ -8,10 +8,10 @@ Includes conversation memory for follow-up questions.
 
 Plan-and-Execute mode (Item 12)
 --------------------------------
-A LangGraph StateGraph with four nodes drives complex research:
+A LangGraph StateGraph with three nodes drives complex research:
   create_plan  → generate a multi-step ResearchPlan
   execute_step → run one step using the existing tool-calling agent
-  replan       → advance to the next step (optionally revise the plan)
+                 and advance the step pointer in the same node
   synthesize   → combine all step findings into a final answer
 
 Simple queries are detected by a complexity heuristic and bypass planning
@@ -594,15 +594,20 @@ class ResearchAgent:
     def _build_plan_execute_graph(self):
         """Build the plan-and-execute LangGraph StateGraph.
 
-        The graph has four nodes:
+        The graph has three nodes:
           create_plan  — call the planner to generate a ResearchPlan
-          execute_step — run one pending step via the inner agent
-          replan       — advance the step pointer (optionally revise)
+          execute_step — run one pending step via the inner agent AND
+                         advance the step pointer in the same return dict
           synthesize   — combine all findings into a final answer
 
-        Conditional edge after *replan*:
-          more steps remaining → execute_step
+        Conditional edge after *execute_step*:
+          more steps remaining → execute_step (self-loop)
           all steps done       → synthesize
+
+        Previously a separate ``replan`` node existed that only incremented
+        the step counter. It was a pure no-op hop and has been folded into
+        ``execute_step``. Real replanning (revising remaining steps based on
+        findings) would live here if/when implemented.
         """
         from src.planner import generate_plan, ResearchPlan
 
@@ -626,10 +631,19 @@ class ResearchAgent:
 
         # ---- Node: execute_step -----------------------------------------
         async def execute_step_node(state: PlanExecuteState) -> dict:
+            """Run the current step and advance the step pointer.
+
+            Returns a delta containing the updated plan, an appended finding,
+            and ``current_step + 1``. The self-loop condition in
+            ``should_continue`` inspects the already-incremented pointer to
+            decide whether to re-enter this node or route to synthesize.
+            """
             plan = ResearchPlan(**state["plan_data"])
             idx = state["current_step"]
 
             if idx >= len(plan.steps):
+                # Defensive: should never happen because should_continue
+                # routes to synthesize once idx == len(steps).
                 return {"plan_data": plan.model_dump()}
 
             step = plan.steps[idx]
@@ -656,13 +670,8 @@ class ResearchAgent:
                 "all_findings": [
                     f"Step {step.step_number} — {step.description}:\n{findings}"
                 ],
+                "current_step": idx + 1,
             }
-
-        # ---- Node: replan -----------------------------------------------
-        def replan_node(state: PlanExecuteState) -> dict:
-            """Advance the step counter.  A richer version could revise
-            remaining steps based on findings gathered so far."""
-            return {"current_step": state["current_step"] + 1}
 
         # ---- Node: synthesize -------------------------------------------
         async def synthesize_node(state: PlanExecuteState) -> dict:
@@ -690,8 +699,13 @@ class ResearchAgent:
                 )
             return {"final_answer": content}
 
-        # ---- Conditional edge after replan ------------------------------
+        # ---- Conditional edge after execute_step ------------------------
         def should_continue(state: PlanExecuteState) -> str:
+            """Decide whether to loop back for another step or synthesize.
+
+            Inspects the already-incremented ``current_step`` that
+            ``execute_step_node`` just returned.
+            """
             plan = ResearchPlan(**state["plan_data"])
             if state["current_step"] >= len(plan.steps):
                 return "synthesize"
@@ -708,13 +722,11 @@ class ResearchAgent:
         workflow = StateGraph(PlanExecuteState)
         workflow.add_node("create_plan", create_plan_node)
         workflow.add_node("execute_step", execute_step_node)
-        workflow.add_node("replan", replan_node)
         workflow.add_node("synthesize", synthesize_node)
 
         workflow.add_edge(START, "create_plan")
         workflow.add_conditional_edges("create_plan", after_create_plan)
-        workflow.add_edge("execute_step", "replan")
-        workflow.add_conditional_edges("replan", should_continue)
+        workflow.add_conditional_edges("execute_step", should_continue)
         workflow.add_edge("synthesize", END)
 
         return workflow.compile()
