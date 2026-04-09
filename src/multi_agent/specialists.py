@@ -5,6 +5,7 @@ tool subset and system prompt. The supervisor delegates tasks to these
 specialists, which run independently (and potentially in parallel).
 """
 
+import asyncio
 from typing import Dict, List, Optional
 
 from langchain_anthropic import ChatAnthropic
@@ -21,7 +22,19 @@ from src.multi_agent.prompts import (
 )
 
 
-# Maps each specialist name to its tool names and system prompt.
+DEFAULT_RECURSION_LIMIT = 20
+DEFAULT_TIMEOUT_SECONDS = 120.0
+
+
+# Per-specialist configuration.
+#
+# ``recursion_limit`` caps how many tool-call loops the inner LangGraph
+# agent may take before raising. Research-heavy roles get more headroom;
+# narrow roles (translation, fact_checker) get less so they fail fast.
+#
+# ``timeout_seconds`` bounds wall-clock time per specialist invocation.
+# On timeout, the specialist returns a degraded string and the phase
+# continues — one stuck role no longer blocks the whole phase.
 SPECIALIST_DEFINITIONS = {
     "research": {
         "tools": [
@@ -31,6 +44,8 @@ SPECIALIST_DEFINITIONS = {
             "web_scraper", "parallel_search",
         ],
         "prompt": RESEARCH_AGENT_PROMPT,
+        "recursion_limit": 25,
+        "timeout_seconds": 180.0,
     },
     "math": {
         "tools": [
@@ -39,6 +54,8 @@ SPECIALIST_DEFINITIONS = {
             "datetime_calculator", "math_formatter", "create_chart",
         ],
         "prompt": MATH_AGENT_PROMPT,
+        "recursion_limit": 15,
+        "timeout_seconds": 90.0,
     },
     "analysis": {
         "tools": [
@@ -46,6 +63,8 @@ SPECIALIST_DEFINITIONS = {
             "csv_reader", "web_scraper",
         ],
         "prompt": ANALYSIS_AGENT_PROMPT,
+        "recursion_limit": 20,
+        "timeout_seconds": 150.0,
     },
     "fact_checker": {
         "tools": [
@@ -53,12 +72,16 @@ SPECIALIST_DEFINITIONS = {
             "google_scholar", "fetch_url",
         ],
         "prompt": FACT_CHECKER_PROMPT,
+        "recursion_limit": 15,
+        "timeout_seconds": 120.0,
     },
     "translation": {
         "tools": [
             "translate", "fetch_url", "pdf_reader",
         ],
         "prompt": TRANSLATION_AGENT_PROMPT,
+        "recursion_limit": 10,
+        "timeout_seconds": 60.0,
     },
 }
 
@@ -78,10 +101,13 @@ class SpecialistAgent:
         system_prompt: str,
         llm: ChatAnthropic,
         tool_health: dict,
+        recursion_limit: int = DEFAULT_RECURSION_LIMIT,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     ):
         self.name = name
+        self.recursion_limit = recursion_limit
+        self.timeout_seconds = timeout_seconds
 
-        # Filter out unhealthy tools — reuses existing infrastructure
         self.tools, self.disabled_tools = get_available_tools(tools, tool_health)
 
         if not self.tools:
@@ -98,29 +124,39 @@ class SpecialistAgent:
     async def run(self, task: str, callbacks: Optional[list] = None) -> str:
         """Run a task and return the result as a string.
 
+        Bounds the inner agent call by ``self.timeout_seconds`` via
+        ``asyncio.wait_for``. On timeout, returns a degraded string
+        so the orchestrator's ``asyncio.gather`` keeps the phase alive
+        instead of propagating the cancellation.
+
         Args:
             task: The specific task description for this specialist.
             callbacks: Optional LangChain callback handlers.
 
         Returns:
-            The specialist's answer text.
+            The specialist's answer text, or a degraded message on
+            timeout / error.
         """
-        messages = [HumanMessage(content=task)]
-
         if self.agent is None:
-            # No tools available — fall back to raw LLM
             return f"[{self.name}] No tools available for this task."
 
-        try:
-            config = {"recursion_limit": 20}
-            if callbacks:
-                config["callbacks"] = callbacks
+        messages = [HumanMessage(content=task)]
+        config = {"recursion_limit": self.recursion_limit}
+        if callbacks:
+            config["callbacks"] = callbacks
 
-            result = await self.agent.ainvoke(
-                {"messages": messages},
-                config,
+        try:
+            result = await asyncio.wait_for(
+                self.agent.ainvoke({"messages": messages}, config),
+                timeout=self.timeout_seconds,
             )
             return self._extract_answer(result)
+        except asyncio.TimeoutError:
+            return (
+                f"[{self.name}] Timed out after {self.timeout_seconds:.0f}s — "
+                f"partial or no answer available. The orchestrator will "
+                f"continue with other specialists."
+            )
         except Exception as e:
             return f"[{self.name}] Error: {str(e)}"
 
@@ -159,12 +195,10 @@ def build_specialists(
     Returns:
         Dict mapping specialist names to SpecialistAgent instances.
     """
-    # Build a name → tool lookup from the master list
     tool_by_name = {t.name: t for t in all_tools}
 
     specialists = {}
     for name, defn in SPECIALIST_DEFINITIONS.items():
-        # Collect only the tools this specialist needs
         specialist_tools = [
             tool_by_name[t] for t in defn["tools"]
             if t in tool_by_name
@@ -175,6 +209,8 @@ def build_specialists(
             system_prompt=defn["prompt"],
             llm=llm,
             tool_health=tool_health,
+            recursion_limit=defn["recursion_limit"],
+            timeout_seconds=defn["timeout_seconds"],
         )
 
     return specialists

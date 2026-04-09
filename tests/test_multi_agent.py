@@ -333,6 +333,86 @@ class TestSpecialistAgent:
         )
         assert agent.agent is None
 
+    def test_definitions_include_limits(self):
+        """Every specialist definition should declare its resource limits."""
+        from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
+
+        for name, defn in SPECIALIST_DEFINITIONS.items():
+            assert "recursion_limit" in defn, f"{name} missing recursion_limit"
+            assert "timeout_seconds" in defn, f"{name} missing timeout_seconds"
+            assert defn["recursion_limit"] >= 5, (
+                f"{name} recursion_limit too small"
+            )
+            assert defn["timeout_seconds"] >= 30, (
+                f"{name} timeout_seconds too small"
+            )
+
+    async def test_run_times_out_gracefully(self):
+        """A hung inner agent should trip the wait_for and return a
+        degraded string instead of raising — so asyncio.gather keeps
+        the phase alive."""
+        import asyncio
+        from src.multi_agent.specialists import SpecialistAgent
+
+        fake_tool = MagicMock()
+        fake_tool.name = "fake"
+
+        async def slow_ainvoke(*args, **kwargs):
+            await asyncio.sleep(5)
+            return {"messages": []}
+
+        with patch(
+            "src.multi_agent.specialists.create_agent"
+        ) as mock_create:
+            inner_agent = MagicMock()
+            inner_agent.ainvoke = slow_ainvoke
+            mock_create.return_value = inner_agent
+
+            agent = SpecialistAgent(
+                name="slowpoke",
+                tools=[fake_tool],
+                system_prompt="sys",
+                llm=MagicMock(),
+                tool_health={"fake": {"available": True, "reason": None}},
+                recursion_limit=5,
+                timeout_seconds=0.2,
+            )
+
+            result = await agent.run("task")
+            assert "Timed out" in result
+            assert "slowpoke" in result
+
+    async def test_run_error_returns_degraded_string(self):
+        """Non-timeout exceptions should also be caught and returned,
+        not propagated to the orchestrator's asyncio.gather."""
+        from src.multi_agent.specialists import SpecialistAgent
+
+        fake_tool = MagicMock()
+        fake_tool.name = "fake"
+
+        async def boom(*args, **kwargs):
+            raise RuntimeError("tool blew up")
+
+        with patch(
+            "src.multi_agent.specialists.create_agent"
+        ) as mock_create:
+            inner_agent = MagicMock()
+            inner_agent.ainvoke = boom
+            mock_create.return_value = inner_agent
+
+            agent = SpecialistAgent(
+                name="crash",
+                tools=[fake_tool],
+                system_prompt="sys",
+                llm=MagicMock(),
+                tool_health={"fake": {"available": True, "reason": None}},
+                timeout_seconds=5.0,
+            )
+
+            result = await agent.run("task")
+            assert "Error" in result
+            assert "tool blew up" in result
+
     def test_build_specialists_creates_all(self):
         """build_specialists should create all 5 specialist agents."""
         from src.multi_agent.specialists import build_specialists, SPECIALIST_DEFINITIONS

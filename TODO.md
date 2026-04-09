@@ -49,11 +49,14 @@ plan-execute graphs faster, more parallel, and less duplicative.
    `_fallback_plan` static helpers. `Supervisor.synthesize` also updated
    to use `_extract_text` (killed one inline copy). All 460 tests pass.
 
-5. [ ] **No per-specialist recursion_limit or timeouts** (audit #9) —
-   `src/multi_agent/specialists.py:115`
-   Move `recursion_limit` into `SPECIALIST_DEFINITIONS`. Wrap
-   `specialist.run()` in `asyncio.wait_for` with a degraded-result fallback
-   so one stuck specialist doesn't block the whole phase.
+5. [x] **No per-specialist recursion_limit or timeouts** (audit #9) —
+   `src/multi_agent/specialists.py`
+   `SPECIALIST_DEFINITIONS` entries now declare `recursion_limit` and
+   `timeout_seconds`; `SpecialistAgent.run` wraps `self.agent.ainvoke`
+   in `asyncio.wait_for` and returns a degraded string on
+   `asyncio.TimeoutError` so `asyncio.gather` keeps the phase alive.
+   Three new tests cover definition presence, timeout path, and
+   generic error path. 463 tests pass.
 
 6. [ ] **Pydantic `model_dump` round-trip on every node call** (audit #5) —
    `src/agent.py:629,651,655`; `src/multi_agent/orchestrator.py:80`
@@ -97,7 +100,7 @@ Source: `docs/LANGGRAPH_AUDIT.md`.
 
 ## Code cleanup & refactoring
 
-Source: `docs/LANGGRAPH_AUDIT.md`.
+Source: `docs/LANGGRAPH_AUDIT.md` + simplify pass on audit #9 diff.
 
 1. [ ] **Anthropic content-block flattener duplicated four times**
    (audit #11) — `src/multi_agent/orchestrator.py` (module-level
@@ -107,6 +110,35 @@ Source: `docs/LANGGRAPH_AUDIT.md`.
    (inline), and `src/planner.py` (inline inside `generate_plan`).
    Consolidate into one helper in `src/utils.py` (e.g.
    `flatten_anthropic_content`) and import everywhere.
+
+2. [ ] **`SPECIALIST_DEFINITIONS` is a stringly-typed dict** —
+   `src/multi_agent/specialists.py`
+   Convert to a `TypedDict` or dataclass schema. The
+   `test_definitions_include_limits` test currently enforces the
+   required keys by hand — a type would give that for free. Also
+   consider a `SpecialistName` enum for `"research"`, `"math"`,
+   `"analysis"`, `"fact_checker"`, `"translation"` — those literals
+   appear in both `orchestrator.py` and `supervisor.py` as load-bearing
+   identifiers that would drift on typo.
+
+3. [ ] **Sync-tool cancellation on specialist timeout** —
+   `src/multi_agent/specialists.py`
+   When `asyncio.wait_for` cancels the inner `ainvoke`, sync tools
+   running in executor threads (e.g. `python_repl`, `wolfram_alpha`,
+   `csv_reader`) keep executing until they finish. Not a leak — connection
+   pools are module-global — but the executor slot stays occupied past
+   the timeout. Options: (a) switch those tools to cooperative async
+   with explicit cancel points, or (b) run the whole phase on a fresh
+   executor whose `shutdown(wait=False)` can preempt stuck threads.
+
+4. [ ] **Timeout sentinel vs plain degraded string** —
+   `src/multi_agent/specialists.py` + `src/multi_agent/orchestrator.py`
+   Today a timed-out specialist returns
+   `"[name] Timed out after 180s — ..."` which is indistinguishable
+   from a real answer and gets quoted verbatim into the synthesis
+   prompt. Return a structured signal (dict or sentinel) and teach
+   the orchestrator to skip/annotate it cleanly instead. Consider
+   folding this into the context-strategy work (Context #1 + #2).
 
 ---
 
@@ -146,9 +178,9 @@ Source: `IMPROVEMENTS.md` #16.
 For the next sprint focused on agent quality:
 1. ~~LangGraph #2 — fold `replan` into `execute_step`~~ ✅
 2. ~~LangGraph #4 — async `create_delegation_plan`~~ ✅
-3. LangGraph #5 — per-specialist timeouts
+3. ~~LangGraph #5 — per-specialist timeouts~~ ✅
 4. LangGraph #1 — `depends_on` + `Send` fan-out (bigger refactor)
-5. Context #1 + #2 — fix `prior_context` strategy
+5. Context #1 + #2 — fix `prior_context` strategy (also absorbs Cleanup #4)
 6. Cleanup #1 + Error handling #1
 
 ---
@@ -172,6 +204,11 @@ For the next sprint focused on agent quality:
   sync version. Shared logic factored into four `@staticmethod` helpers;
   `Supervisor.synthesize` also switched to the new `_extract_text` helper.
   Sync method retained for the 6 existing test sites. All 460 tests pass.
+- [x] **#9 Per-specialist `recursion_limit` + `timeout_seconds`**
+  (`src/multi_agent/specialists.py`) Each `SPECIALIST_DEFINITIONS` entry
+  now declares both limits; `SpecialistAgent.run` wraps `ainvoke` in
+  `asyncio.wait_for` and returns a degraded string on `TimeoutError`
+  so `asyncio.gather` keeps the phase alive. 3 new tests; 463 pass.
 
 ### IMPROVEMENTS.md (items 1–13, all done)
 - [x] #1 Tests (283 across tools, memory, sessions, callbacks, observability)
