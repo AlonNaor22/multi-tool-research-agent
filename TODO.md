@@ -38,10 +38,16 @@ plan-execute graphs faster, more parallel, and less duplicative.
    Add `depends_on` to `PlanStep`; use `asyncio.gather` or LangGraph `Send`
    to batch independent steps.
 
-4. [ ] **`create_delegation_plan` is sync inside async nodes** (audit #8) —
-   `src/multi_agent/supervisor.py:46-59`
-   Make it async; use `await self.llm.ainvoke(...)` so it stops blocking the
-   event loop during planning.
+4. [x] **`create_delegation_plan` is sync inside async nodes** (audit #8) —
+   `src/multi_agent/supervisor.py`
+   Added `async def acreate_delegation_plan` that uses
+   `await self.llm.ainvoke(...)`. Orchestrator's `_astream_events` now
+   awaits it instead of blocking the event loop. Sync variant kept for
+   backward compat with 6 existing test call sites (standard LangChain
+   `invoke`/`ainvoke` convention). Shared logic factored into
+   `_plan_messages`, `_extract_text`, `_parse_plan_response`, and
+   `_fallback_plan` static helpers. `Supervisor.synthesize` also updated
+   to use `_extract_text` (killed one inline copy). All 460 tests pass.
 
 5. [ ] **No per-specialist recursion_limit or timeouts** (audit #9) —
    `src/multi_agent/specialists.py:115`
@@ -93,10 +99,14 @@ Source: `docs/LANGGRAPH_AUDIT.md`.
 
 Source: `docs/LANGGRAPH_AUDIT.md`.
 
-1. [ ] **`_extract_chunk_text` / `_extract_answer` duplicated three times**
-   (audit #11) — `src/multi_agent/orchestrator.py`,
-   `src/multi_agent/specialists.py:127`, `src/agent.py`
-   Consolidate into `src/utils.py` and import everywhere.
+1. [ ] **Anthropic content-block flattener duplicated four times**
+   (audit #11) — `src/multi_agent/orchestrator.py` (module-level
+   `_extract_chunk_text`), `src/multi_agent/specialists.py:127`
+   (`_extract_answer`), `src/multi_agent/supervisor.py`
+   (`Supervisor._extract_text`, added in audit #8 fix), `src/agent.py`
+   (inline), and `src/planner.py` (inline inside `generate_plan`).
+   Consolidate into one helper in `src/utils.py` (e.g.
+   `flatten_anthropic_content`) and import everywhere.
 
 ---
 
@@ -135,7 +145,7 @@ Source: `IMPROVEMENTS.md` #16.
 
 For the next sprint focused on agent quality:
 1. ~~LangGraph #2 — fold `replan` into `execute_step`~~ ✅
-2. LangGraph #4 — async `create_delegation_plan`
+2. ~~LangGraph #4 — async `create_delegation_plan`~~ ✅
 3. LangGraph #5 — per-specialist timeouts
 4. LangGraph #1 — `depends_on` + `Send` fan-out (bigger refactor)
 5. Context #1 + #2 — fix `prior_context` strategy
@@ -156,6 +166,12 @@ For the next sprint focused on agent quality:
   `execute_step` now advances `current_step` in its own return dict; the
   post-step conditional edge self-loops until done. Verified end-to-end
   with a mocked 3-step plan; all 460 other tests still pass.
+- [x] **#8 Async `create_delegation_plan`** (`src/multi_agent/supervisor.py`)
+  Added `acreate_delegation_plan` using `await self.llm.ainvoke(...)`.
+  Orchestrator `_astream_events` awaits it instead of blocking on the
+  sync version. Shared logic factored into four `@staticmethod` helpers;
+  `Supervisor.synthesize` also switched to the new `_extract_text` helper.
+  Sync method retained for the 6 existing test sites. All 460 tests pass.
 
 ### IMPROVEMENTS.md (items 1–13, all done)
 - [x] #1 Tests (283 across tools, memory, sessions, callbacks, observability)

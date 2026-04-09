@@ -69,7 +69,7 @@ class MultiAgentOrchestrator:
         * ``done``               — final answer ready
         """
         # ---- Step 1: supervisor plan ------------------------------------
-        plan = self.supervisor.create_delegation_plan(query)
+        plan = await self.supervisor.acreate_delegation_plan(query)
         yield {"type": "plan_created", "plan": plan}
 
         # ---- Step 2: dispatch phases ------------------------------------
