@@ -24,6 +24,8 @@ from typing import AsyncGenerator, Dict, Generator, List, Optional
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 
+from src.utils import extract_chunk_text
+
 from src.multi_agent.supervisor import Supervisor, DelegationPlan
 from src.multi_agent.specialists import SpecialistAgent, build_specialists
 
@@ -164,7 +166,7 @@ class MultiAgentOrchestrator:
         async for chunk in self.llm.astream(
             [HumanMessage(content=synthesis_input)]
         ):
-            text = _extract_chunk_text(chunk)
+            text = extract_chunk_text(chunk)
             if text:
                 final_answer += text
                 yield {"type": "synthesis_token", "token": text}
@@ -279,17 +281,3 @@ class MultiAgentOrchestrator:
                 break
 
         worker.join()
-
-
-def _extract_chunk_text(chunk) -> str:
-    """Extract text from an LLM chunk."""
-    content = getattr(chunk, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    return ""

@@ -1,16 +1,78 @@
 """Utility functions for the research agent.
 
 Contains async retry logic, timeout wrappers, a shared aiohttp session,
-and a simple TTL cache for reducing redundant API calls.
+Anthropic content-block helpers, and a simple TTL cache for reducing
+redundant API calls.
 """
 
 import asyncio
 import time
 import functools
 import hashlib
-from typing import Callable, Any, Dict, Optional, Tuple, Type
+from typing import Callable, Any, Dict, List, Optional, Tuple, Type, Union
 
 import aiohttp
+from langchain_core.messages import AIMessage
+
+
+# ---------------------------------------------------------------------------
+# Anthropic content helpers
+# ---------------------------------------------------------------------------
+
+def flatten_content(content: Union[str, List[dict]], sep: str = " ") -> str:
+    """Flatten Anthropic content blocks into a plain string.
+
+    Claude may return ``content`` as either a plain ``str`` or a
+    ``list[dict]`` where each dict has ``{"type": "text", "text": "..."}``.
+    This function handles both and joins text blocks with *sep*.
+
+    Args:
+        content: A string passthrough, or a list of Anthropic content blocks.
+        sep: Separator for joining text blocks (default ``" "``).
+
+    Returns:
+        The concatenated text string.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return sep.join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+
+def extract_chunk_text(chunk) -> str:
+    """Return the text content from an LLM message or streaming chunk.
+
+    Works with ``AIMessage``, ``AIMessageChunk``, or any object whose
+    ``.content`` attribute is a ``str`` or a list of Anthropic content
+    blocks.
+    """
+    return flatten_content(getattr(chunk, "content", ""), sep="")
+
+
+def extract_ai_answer(result: dict, default: str = "No answer was generated.") -> str:
+    """Extract the final text answer from a LangGraph agent result.
+
+    Walks the ``messages`` list in reverse and returns the last
+    ``AIMessage`` that contains non-empty text.
+
+    Args:
+        result: The dict returned by ``agent.ainvoke({"messages": ...})``.
+        default: Fallback string if no text is found.
+
+    Returns:
+        The AI's answer text, or *default*.
+    """
+    for msg in reversed(result.get("messages", [])):
+        if isinstance(msg, AIMessage) and msg.content:
+            text = flatten_content(msg.content, sep="\n")
+            if text:
+                return text
+    return default
 
 
 # ---------------------------------------------------------------------------

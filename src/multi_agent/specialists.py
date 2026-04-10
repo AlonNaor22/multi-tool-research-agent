@@ -10,9 +10,10 @@ from typing import Dict, List, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 
 from src.tool_health import get_available_tools
+from src.utils import extract_ai_answer
 from src.multi_agent.prompts import (
     RESEARCH_AGENT_PROMPT,
     MATH_AGENT_PROMPT,
@@ -150,7 +151,7 @@ class SpecialistAgent:
                 self.agent.ainvoke({"messages": messages}, config),
                 timeout=self.timeout_seconds,
             )
-            return self._extract_answer(result)
+            return extract_ai_answer(result)
         except asyncio.TimeoutError:
             return (
                 f"[{self.name}] Timed out after {self.timeout_seconds:.0f}s — "
@@ -159,23 +160,6 @@ class SpecialistAgent:
             )
         except Exception as e:
             return f"[{self.name}] Error: {str(e)}"
-
-    def _extract_answer(self, result: dict) -> str:
-        """Extract text from the agent result (same pattern as ResearchAgent)."""
-        messages = result.get("messages", [])
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and msg.content:
-                if isinstance(msg.content, str):
-                    return msg.content
-                if isinstance(msg.content, list):
-                    text_parts = [
-                        block["text"] for block in msg.content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ]
-                    if text_parts:
-                        return "\n".join(text_parts)
-        return "No answer was generated."
-
 
 def build_specialists(
     all_tools: list,

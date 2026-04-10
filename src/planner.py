@@ -11,6 +11,8 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from src.utils import flatten_content
+
 
 # -------------------------------------------------------------------------
 # Heuristics for detecting queries that are too simple to need planning
@@ -108,13 +110,7 @@ def generate_plan(query: str, llm: ChatAnthropic) -> ResearchPlan:
 
     try:
         response = llm.invoke(messages)
-        content = response.content
-        if isinstance(content, list):
-            content = " ".join(
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            )
+        content = flatten_content(response.content)
         data = json.loads(content)
         steps = [
             ResearchStep(

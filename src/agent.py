@@ -32,6 +32,7 @@ from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
 from src.rate_limiter import RateLimiter
 from src.tool_health import check_tool_health, get_available_tools
+from src.utils import flatten_content, extract_chunk_text, extract_ai_answer
 from config import (
     ANTHROPIC_API_KEY,
     MODEL_NAME,
@@ -362,7 +363,7 @@ class ResearchAgent:
             )
 
             # Extract the final answer from the last AI message
-            answer = self._extract_answer(result)
+            answer = extract_ai_answer(result)
 
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)
@@ -421,7 +422,7 @@ class ResearchAgent:
                 final_result = chunk
 
             # Extract the final answer
-            answer = self._extract_answer(final_result) if final_result else "No answer was generated."
+            answer = extract_ai_answer(final_result) if final_result else "No answer was generated."
 
             # Save this exchange to memory
             self.memory.add_exchange(question, answer)
@@ -439,25 +440,6 @@ class ResearchAgent:
             return answer
         except Exception as e:
             return f"Error running research query: {str(e)}"
-
-    def _extract_answer(self, result: dict) -> str:
-        """Extract the final text answer from the agent result."""
-        messages = result.get("messages", [])
-        # Walk backwards to find the last AI message with text content
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and msg.content:
-                # Content can be a string or a list of blocks
-                if isinstance(msg.content, str):
-                    return msg.content
-                # If it's a list of content blocks, extract text blocks
-                if isinstance(msg.content, list):
-                    text_parts = [
-                        block["text"] for block in msg.content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ]
-                    if text_parts:
-                        return "\n".join(text_parts)
-        return "No answer was generated."
 
     def get_last_timing(self) -> str:
         """Get the timing summary from the last query."""
@@ -661,7 +643,7 @@ class ResearchAgent:
                 {"messages": step_messages},
                 {"recursion_limit": 20},
             )
-            findings = self._extract_answer(result)
+            findings = extract_ai_answer(result)
             plan.steps[idx] = step.model_copy(
                 update={"status": "done", "findings": findings}
             )
@@ -690,14 +672,7 @@ class ResearchAgent:
                 )
 
             response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-            content = response.content
-            if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
-            return {"final_answer": content}
+            return {"final_answer": flatten_content(response.content)}
 
         # ---- Conditional edge after execute_step ------------------------
         def should_continue(state: PlanExecuteState) -> str:
@@ -793,7 +768,7 @@ class ResearchAgent:
                 {"messages": step_messages},
                 {"recursion_limit": 20},
             )
-            findings = self._extract_answer(result)
+            findings = extract_ai_answer(result)
             plan.steps[i] = step.model_copy(
                 update={"status": "done", "findings": findings}
             )
@@ -818,7 +793,7 @@ class ResearchAgent:
 
         final_answer = ""
         async for chunk in self.llm.astream([HumanMessage(content=synthesis_prompt)]):
-            text = self._extract_chunk_text(chunk)
+            text = extract_chunk_text(chunk)
             if text:
                 final_answer += text
                 if verbose:
@@ -863,7 +838,7 @@ class ResearchAgent:
             ):
                 node = metadata.get("langgraph_node", "")
                 if node == "model" and isinstance(chunk, AIMessageChunk):
-                    text = self._extract_chunk_text(chunk)
+                    text = extract_chunk_text(chunk)
                     if text:
                         final_answer += text
                         yield {"type": "synthesis_token", "token": text}
@@ -916,14 +891,7 @@ class ResearchAgent:
                     msgs = node_output.get("messages", [])
                     for msg in reversed(msgs):
                         if isinstance(msg, AIMessage) and msg.content:
-                            if isinstance(msg.content, str):
-                                findings = msg.content
-                            elif isinstance(msg.content, list):
-                                findings = "\n".join(
-                                    block.get("text", "")
-                                    for block in msg.content
-                                    if isinstance(block, dict) and block.get("type") == "text"
-                                )
+                            findings = flatten_content(msg.content, sep="\n")
                             if findings:
                                 break
                     if findings:
@@ -947,31 +915,13 @@ class ResearchAgent:
 
         final_answer = ""
         for chunk in self.llm.stream([HumanMessage(content=synthesis_prompt)]):
-            text = self._extract_chunk_text(chunk)
+            text = extract_chunk_text(chunk)
             if text:
                 final_answer += text
                 yield {"type": "synthesis_token", "token": text}
 
         self.memory.add_exchange(query, final_answer)
         yield {"type": "done", "answer": final_answer, "plan": plan}
-
-    # ------------------------------------------------------------------
-    # Helper: extract text from an LLM chunk (AIMessageChunk or AIMessage)
-    # ------------------------------------------------------------------
-
-    def _extract_chunk_text(self, chunk) -> str:
-        """Return the text content from an LLM message or chunk."""
-        content = getattr(chunk, "content", "")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return "".join(
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            )
-        return ""
-
 
 def create_research_agent():
     """Create and return a research agent. Kept for backward compatibility."""

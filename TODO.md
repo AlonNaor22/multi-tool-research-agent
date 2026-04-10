@@ -91,10 +91,11 @@ context passed between agents.
 
 Source: `docs/LANGGRAPH_AUDIT.md`.
 
-1. [ ] **`DelegationPlan` fallback silently swallows exceptions** (audit #14) —
-   `src/multi_agent/supervisor.py:112-120`
-   Bare `except` hides parser failures. Log the exception with context before
-   falling back to the single-research-agent default.
+1. [x] **`DelegationPlan` fallback silently swallows exceptions** (audit #14) —
+   `src/multi_agent/supervisor.py`
+   Both `create_delegation_plan` and `acreate_delegation_plan` now log
+   the exception via `logger.warning(..., exc_info=True)` before falling
+   back to the single-research-agent default. 463 tests pass.
 
 ---
 
@@ -102,14 +103,15 @@ Source: `docs/LANGGRAPH_AUDIT.md`.
 
 Source: `docs/LANGGRAPH_AUDIT.md` + simplify pass on audit #9 diff.
 
-1. [ ] **Anthropic content-block flattener duplicated four times**
-   (audit #11) — `src/multi_agent/orchestrator.py` (module-level
-   `_extract_chunk_text`), `src/multi_agent/specialists.py:127`
-   (`_extract_answer`), `src/multi_agent/supervisor.py`
-   (`Supervisor._extract_text`, added in audit #8 fix), `src/agent.py`
-   (inline), and `src/planner.py` (inline inside `generate_plan`).
-   Consolidate into one helper in `src/utils.py` (e.g.
-   `flatten_anthropic_content`) and import everywhere.
+1. [x] **Anthropic content-block flattener duplicated across 5 files**
+   (audit #11) — Consolidated into `src/utils.py` as three helpers:
+   `flatten_content(content, sep)` (base), `extract_chunk_text(chunk)`,
+   and `extract_ai_answer(result)`. Replaced all 7 inline copies across
+   `src/agent.py`, `src/planner.py`, `src/multi_agent/orchestrator.py`,
+   `src/multi_agent/supervisor.py`, and `src/multi_agent/specialists.py`.
+   Deleted `_extract_answer` from both `ResearchAgent` and
+   `SpecialistAgent`, `_extract_chunk_text` from both `agent.py` and
+   `orchestrator.py`, and `_extract_text` from `Supervisor`. 463 pass.
 
 2. [ ] **`SPECIALIST_DEFINITIONS` is a stringly-typed dict** —
    `src/multi_agent/specialists.py`
@@ -181,7 +183,7 @@ For the next sprint focused on agent quality:
 3. ~~LangGraph #5 — per-specialist timeouts~~ ✅
 4. LangGraph #1 — `depends_on` + `Send` fan-out (bigger refactor)
 5. Context #1 + #2 — fix `prior_context` strategy (also absorbs Cleanup #4)
-6. Cleanup #1 + Error handling #1
+6. ~~Cleanup #1 + Error handling #1~~ ✅
 
 ---
 
@@ -209,6 +211,15 @@ For the next sprint focused on agent quality:
   now declares both limits; `SpecialistAgent.run` wraps `ainvoke` in
   `asyncio.wait_for` and returns a degraded string on `TimeoutError`
   so `asyncio.gather` keeps the phase alive. 3 new tests; 463 pass.
+- [x] **#11 Consolidate content-block flattener into `src/utils.py`**
+  Added `flatten_content`, `extract_chunk_text`, `extract_ai_answer` to
+  `src/utils.py`. Replaced all 7 inline copies + 2 `_extract_answer`
+  methods across 5 files. Deleted `_extract_answer` from `ResearchAgent`
+  and `SpecialistAgent`, `_extract_chunk_text` from `agent.py` and
+  `orchestrator.py`, `_extract_text` from `Supervisor`. 463 pass.
+- [x] **#14 Log supervisor fallback exceptions** Both sync and async
+  planner paths now `logger.warning(..., exc_info=True)` before falling
+  back to single-research-agent plan.
 
 ### IMPROVEMENTS.md (items 1–13, all done)
 - [x] #1 Tests (283 across tools, memory, sessions, callbacks, observability)

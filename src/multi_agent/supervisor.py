@@ -7,6 +7,7 @@ The supervisor has NO tools. It uses the LLM to:
 """
 
 import json
+import logging
 from typing import Dict, List
 
 from langchain_anthropic import ChatAnthropic
@@ -15,6 +16,9 @@ from pydantic import BaseModel, Field
 
 from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT, SUPERVISOR_SYNTHESIZE_PROMPT
 from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
+from src.utils import flatten_content
+
+logger = logging.getLogger(__name__)
 
 
 class DelegationPlan(BaseModel):
@@ -50,17 +54,6 @@ class Supervisor:
             SystemMessage(content=SUPERVISOR_PLAN_PROMPT),
             HumanMessage(content=f"Create a delegation plan for: {query}"),
         ]
-
-    @staticmethod
-    def _extract_text(content) -> str:
-        """Flatten Anthropic content blocks into a plain string."""
-        if isinstance(content, list):
-            return " ".join(
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            )
-        return content
 
     @staticmethod
     def _parse_plan_response(content: str, query: str) -> DelegationPlan:
@@ -131,9 +124,15 @@ class Supervisor:
         """
         try:
             response = self.llm.invoke(self._plan_messages(query))
-            content = self._extract_text(response.content)
+            content = flatten_content(response.content)
             return self._parse_plan_response(content, query)
         except Exception:
+            logger.warning(
+                "Failed to parse delegation plan for query %r; "
+                "falling back to single-research-agent plan.",
+                query[:120],
+                exc_info=True,
+            )
             return self._fallback_plan(query)
 
     async def acreate_delegation_plan(self, query: str) -> DelegationPlan:
@@ -145,9 +144,15 @@ class Supervisor:
         """
         try:
             response = await self.llm.ainvoke(self._plan_messages(query))
-            content = self._extract_text(response.content)
+            content = flatten_content(response.content)
             return self._parse_plan_response(content, query)
         except Exception:
+            logger.warning(
+                "Failed to parse delegation plan for query %r; "
+                "falling back to single-research-agent plan.",
+                query[:120],
+                exc_info=True,
+            )
             return self._fallback_plan(query)
 
     async def synthesize(
@@ -185,4 +190,4 @@ class Supervisor:
         ]
 
         response = await self.llm.ainvoke(messages)
-        return self._extract_text(response.content)
+        return flatten_content(response.content)
