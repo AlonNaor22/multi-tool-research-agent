@@ -10,16 +10,13 @@ Features:
 - Search suggestions when exact match not found
 """
 
-import json
 import wikipedia
-from langchain_core.tools import Tool
-from src.utils import async_run_with_timeout, make_sync
-from src.constants import DEFAULT_SEARCH_TIMEOUT
+from src.utils import async_run_with_timeout, create_tool, parse_tool_input, truncate
+from src.constants import DEFAULT_SEARCH_TIMEOUT, WIKI_MAX_CHARS
 
 
 # Configuration
 DEFAULT_SENTENCES = 5  # Number of sentences in summary
-MAX_CHARS = 3000  # Maximum characters to return
 
 
 async def search_wikipedia(query: str) -> str:
@@ -37,21 +34,14 @@ async def search_wikipedia(query: str) -> str:
         Wikipedia article summary or error message.
     """
     # Parse input
-    sentences = DEFAULT_SENTENCES
-    auto_suggest = True
-    search_results_count = 1
-
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            search_query = options.get("query", "")
-            sentences = options.get("sentences", DEFAULT_SENTENCES)
-            auto_suggest = options.get("suggestion", True)
-            search_results_count = min(options.get("results", 1), 5)
-        else:
-            search_query = query
-    except json.JSONDecodeError:
-        search_query = query
+    search_query, opts = parse_tool_input(query, {
+        "sentences": DEFAULT_SENTENCES,
+        "suggestion": True,
+        "results": 1,
+    })
+    sentences = opts.get("sentences", DEFAULT_SENTENCES)
+    auto_suggest = opts.get("suggestion", True)
+    search_results_count = min(int(opts.get("results", 1)), 5)
 
     if not search_query:
         return "Error: No search query provided."
@@ -81,8 +71,7 @@ async def search_wikipedia(query: str) -> str:
                         lambda t=title: wikipedia.summary(t, sentences=2, auto_suggest=False),
                         timeout=DEFAULT_SEARCH_TIMEOUT,
                     )
-                    if len(summary) > 200:
-                        summary = summary[:200] + "..."
+                    summary = truncate(summary, 200)
                     result_parts.append(f"{i}. **{page.title}**\n   {summary}")
                 except wikipedia.exceptions.DisambiguationError as e:
                     result_parts.append(f"{i}. **{title}** (disambiguation page with {len(e.options)} options)")
@@ -111,8 +100,7 @@ async def search_wikipedia(query: str) -> str:
                 )
 
                 # Truncate if too long
-                if len(summary) > MAX_CHARS:
-                    summary = summary[:MAX_CHARS] + "..."
+                summary = truncate(summary, WIKI_MAX_CHARS)
 
                 return (
                     f"**{page.title}**\n"
@@ -153,22 +141,19 @@ async def search_wikipedia(query: str) -> str:
 
 
 # Create the LangChain Tool wrapper
-wikipedia_tool = Tool(
-    name="wikipedia",
-    func=make_sync(search_wikipedia),
-    coroutine=search_wikipedia,
-    description=(
-        "Look up EXPLANATIONS, HISTORY, and CONTEXT on Wikipedia. Use for understanding "
-        "topics, not for getting specific numbers. "
-        "\n\nUSE FOR:"
-        "\n- What is something: 'What is machine learning', 'Python programming'"
-        "\n- History/background: 'History of the Internet', 'Albert Einstein biography'"
-        "\n- Concepts explained: 'How does DNA work', 'What caused World War 2'"
-        "\n- General knowledge: 'Climate change', 'Renaissance art'"
-        "\n\nDO NOT USE FOR:"
-        "\n- Specific numbers/measurements (use wolfram_alpha)"
-        "\n- Current events (use web_search)"
-        "\n\nSIMPLE: 'Albert Einstein' | ADVANCED: {\"query\": \"Python\", \"sentences\": 10}"
-        "\n\nRULE: Need an EXPLANATION? -> Wikipedia. Need a NUMBER? -> Wolfram."
-    )
+wikipedia_tool = create_tool(
+    "wikipedia",
+    search_wikipedia,
+    "Look up EXPLANATIONS, HISTORY, and CONTEXT on Wikipedia. Use for understanding "
+    "topics, not for getting specific numbers. "
+    "\n\nUSE FOR:"
+    "\n- What is something: 'What is machine learning', 'Python programming'"
+    "\n- History/background: 'History of the Internet', 'Albert Einstein biography'"
+    "\n- Concepts explained: 'How does DNA work', 'What caused World War 2'"
+    "\n- General knowledge: 'Climate change', 'Renaissance art'"
+    "\n\nDO NOT USE FOR:"
+    "\n- Specific numbers/measurements (use wolfram_alpha)"
+    "\n- Current events (use web_search)"
+    "\n\nSIMPLE: 'Albert Einstein' | ADVANCED: {\"query\": \"Python\", \"sentences\": 10}"
+    "\n\nRULE: Need an EXPLANATION? -> Wikipedia. Need a NUMBER? -> Wolfram.",
 )

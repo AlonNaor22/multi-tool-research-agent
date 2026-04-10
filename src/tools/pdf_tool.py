@@ -10,10 +10,9 @@ import re
 import asyncio
 import aiohttp
 from typing import Optional
-from langchain_core.tools import Tool
 
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
-from src.constants import DEFAULT_USER_AGENT
+from src.utils import async_retry_on_error, async_fetch, create_tool
+from src.constants import DEFAULT_USER_AGENT, PDF_MAX_PAGES
 
 # Try pdfplumber first (better quality), fall back to pypdf
 try:
@@ -50,17 +49,13 @@ async def fetch_pdf(url: str, timeout: int = 30) -> bytes:
         "Accept": "application/pdf,*/*",
     }
 
-    session = await get_aiohttp_session()
-    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-        resp.raise_for_status()
+    content_bytes = await async_fetch(url, headers=headers, timeout=timeout, response_type="bytes")
 
-        # Verify it's actually a PDF
-        content_type = resp.headers.get("Content-Type", "")
-        content_bytes = await resp.read()
-        if "pdf" not in content_type.lower() and not content_bytes[:4] == b'%PDF':
-            raise ValueError(f"URL does not point to a PDF file (Content-Type: {content_type})")
+    # Verify it's actually a PDF
+    if not content_bytes[:4] == b'%PDF':
+        raise ValueError("URL does not point to a PDF file")
 
-        return content_bytes
+    return content_bytes
 
 
 def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
@@ -222,7 +217,7 @@ async def read_pdf(input_str: str) -> str:
     # Check for "N pages:" prefix
     pages_match = re.match(r'(\d+)\s+pages?:\s*(.+)', input_str, re.IGNORECASE)
     if pages_match:
-        max_pages = int(pages_match.group(1))
+        max_pages = min(int(pages_match.group(1)), PDF_MAX_PAGES)
         url = pages_match.group(2)
 
     # Check for "summary:" prefix (first 3 pages)
@@ -284,10 +279,9 @@ PDF library: {PDF_LIBRARY or 'NOT INSTALLED (pip install pdfplumber)'}"""
 
 
 # Create the LangChain Tool wrapper
-pdf_tool = Tool(
-    name="pdf_reader",
-    func=make_sync(read_pdf),
-    coroutine=read_pdf,
+pdf_tool = create_tool(
+    "pdf_reader",
+    read_pdf,
     description=(
         "Specialized PDF reader using pdfplumber — handles complex layouts, multi-column "
         "papers, and tables better than fetch_url. Use for academic papers and detailed reports."

@@ -10,16 +10,18 @@ Features:
 - Structured output with title, source, date, and snippet
 """
 
-import json
 from duckduckgo_search import DDGS
-from langchain_core.tools import Tool
-from src.utils import async_retry_on_error, async_run_with_timeout, make_sync
-from src.constants import DEFAULT_SEARCH_TIMEOUT
+from src.utils import (
+    async_retry_on_error, async_run_with_timeout, create_tool,
+    parse_tool_input, truncate,
+)
+from src.constants import (
+    DEFAULT_SEARCH_TIMEOUT, DEFAULT_MAX_RESULTS, MAX_SEARCH_RESULTS,
+    ARTICLE_BODY_MAX_CHARS,
+)
 
 
 # Configuration
-DEFAULT_MAX_RESULTS = 5
-MAX_ALLOWED_RESULTS = 10
 DEFAULT_TIMELIMIT = "w"  # Past week
 
 
@@ -73,21 +75,13 @@ async def search_news(query: str) -> str:
         Formatted news results with titles, sources, and snippets.
     """
     # Parse input
-    max_results = DEFAULT_MAX_RESULTS
-    timelimit = DEFAULT_TIMELIMIT
-    region = None
-
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            search_query = options.get("query", "")
-            max_results = min(options.get("max_results", DEFAULT_MAX_RESULTS), MAX_ALLOWED_RESULTS)
-            timelimit = options.get("timelimit", DEFAULT_TIMELIMIT)
-            region = options.get("region")  # e.g., "us-en", "uk-en"
-        else:
-            search_query = query
-    except json.JSONDecodeError:
-        search_query = query
+    search_query, opts = parse_tool_input(query, {
+        "max_results": DEFAULT_MAX_RESULTS,
+        "timelimit": DEFAULT_TIMELIMIT,
+    })
+    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
+    timelimit = opts.get("timelimit", DEFAULT_TIMELIMIT)
+    region = opts.get("region")
 
     if not search_query:
         return "Error: No search query provided."
@@ -115,8 +109,7 @@ async def search_news(query: str) -> str:
             url = article.get('url', '')
 
             # Truncate body if too long
-            if len(body) > 200:
-                body = body[:200] + "..."
+            body = truncate(body, ARTICLE_BODY_MAX_CHARS)
 
             formatted_results.append(
                 f"{i}. **{title}**\n"
@@ -132,25 +125,22 @@ async def search_news(query: str) -> str:
 
 
 # Create the LangChain Tool wrapper
-news_tool = Tool(
-    name="news_search",
-    func=make_sync(search_news),
-    coroutine=search_news,
-    description=(
-        "Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, "
-        "magazines, and news sites — with publication dates and source names."
-        "\n\nUSE FOR:"
-        "\n- Breaking news: 'earthquake today', 'election results'"
-        "\n- Journalism coverage: 'AI regulation debate', 'climate policy changes'"
-        "\n- Time-filtered stories: what happened in the past day/week/month"
-        "\n\nDO NOT USE FOR:"
-        "\n- General web info (use web_search — broader, not limited to news sources)"
-        "\n- Established facts or history (use wikipedia)"
-        "\n- Opinions/discussions (use reddit_search)"
-        "\n\nSIMPLE: 'artificial intelligence' | ADVANCED: "
-        '{\"query\": \"climate\", \"timelimit\": \"d\", \"max_results\": 5}'
-        "\n\nTIMELIMIT: 'd' (past day), 'w' (past week, default), 'm' (past month)"
-        "\n\nRULE: Need NEWS ARTICLES with sources/dates? -> news_search. "
-        "Need general web results? -> web_search."
-    )
+news_tool = create_tool(
+    "news_search",
+    search_news,
+    "Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, "
+    "magazines, and news sites — with publication dates and source names."
+    "\n\nUSE FOR:"
+    "\n- Breaking news: 'earthquake today', 'election results'"
+    "\n- Journalism coverage: 'AI regulation debate', 'climate policy changes'"
+    "\n- Time-filtered stories: what happened in the past day/week/month"
+    "\n\nDO NOT USE FOR:"
+    "\n- General web info (use web_search — broader, not limited to news sources)"
+    "\n- Established facts or history (use wikipedia)"
+    "\n- Opinions/discussions (use reddit_search)"
+    "\n\nSIMPLE: 'artificial intelligence' | ADVANCED: "
+    '{\"query\": \"climate\", \"timelimit\": \"d\", \"max_results\": 5}'
+    "\n\nTIMELIMIT: 'd' (past day), 'w' (past week, default), 'm' (past month)"
+    "\n\nRULE: Need NEWS ARTICLES with sources/dates? -> news_search. "
+    "Need general web results? -> web_search.",
 )

@@ -11,10 +11,9 @@ Features:
 - Missing value analysis
 """
 
-import json
 import os
-from langchain_core.tools import Tool
-from src.utils import make_sync
+from src.utils import parse_tool_input, truncate, create_tool
+from src.constants import CSV_MAX_OUTPUT_CHARS
 
 
 async def read_spreadsheet(query: str) -> str:
@@ -39,28 +38,17 @@ async def read_spreadsheet(query: str) -> str:
         return "Error: pandas is not installed. Run: pip install pandas openpyxl"
 
     # Parse input
-    file_path = ""
-    head_rows = 5
-    show_describe = True
-    selected_columns = None
-    filter_spec = None
-    groupby_spec = None
-
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            file_path = options.get("path", "")
-            head_rows = options.get("head", 5)
-            show_describe = options.get("describe", True)
-            selected_columns = options.get("columns")
-            filter_spec = options.get("filter")
-            groupby_spec = options.get("groupby")
-            agg_func = options.get("agg", "sum")
-            agg_column = options.get("column")
-        else:
-            file_path = query.strip()
-    except json.JSONDecodeError:
-        file_path = query.strip()
+    raw_path, options = parse_tool_input(query, {
+        "head": 5, "describe": True,
+    })
+    file_path = options.get("path", raw_path)
+    head_rows = options.get("head", 5)
+    show_describe = options.get("describe", True)
+    selected_columns = options.get("columns")
+    filter_spec = options.get("filter")
+    groupby_spec = options.get("groupby")
+    agg_func = options.get("agg", "sum")
+    agg_column = options.get("column")
 
     if not file_path:
         return "Error: No file path provided."
@@ -95,8 +83,8 @@ async def read_spreadsheet(query: str) -> str:
 
         # Handle groupby aggregation
         if groupby_spec and groupby_spec in df.columns:
-            agg_func_name = locals().get("agg_func", "sum")
-            agg_col = locals().get("agg_column")
+            agg_func_name = agg_func
+            agg_col = agg_column
             if agg_col and agg_col in df.columns:
                 result_df = df.groupby(groupby_spec)[agg_col].agg(agg_func_name)
                 return (
@@ -144,8 +132,7 @@ async def read_spreadsheet(query: str) -> str:
 
         result = "\n\n".join(sections)
 
-        if len(result) > 8000:
-            result = result[:8000] + "\n\n[Output truncated]"
+        result = truncate(result, CSV_MAX_OUTPUT_CHARS, "\n\n[Output truncated]")
 
         return result
 
@@ -153,10 +140,9 @@ async def read_spreadsheet(query: str) -> str:
         return f"Error reading file: {str(e)}"
 
 
-csv_tool = Tool(
-    name="csv_reader",
-    func=make_sync(read_spreadsheet),
-    coroutine=read_spreadsheet,
+csv_tool = create_tool(
+    "csv_reader",
+    read_spreadsheet,
     description=(
         "Read and analyze CSV or Excel spreadsheet files. Returns column info, "
         "statistics, and sample data. Can filter rows and perform aggregations."

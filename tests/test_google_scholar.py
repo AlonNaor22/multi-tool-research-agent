@@ -49,7 +49,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             result = await scholar_search("machine learning")
@@ -63,7 +63,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             result = await scholar_search("deep learning")
@@ -76,7 +76,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             result = await scholar_search("machine learning")
@@ -88,7 +88,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             result = await scholar_search("deep learning")
@@ -101,7 +101,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             result = await scholar_search("xyznonexistent123")
@@ -113,7 +113,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.side_effect = aiohttp.ClientError("blocked")
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             result = await scholar_search("test")
@@ -125,7 +125,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             result = await scholar_search('{"query": "AI", "year_from": 2020, "year_to": 2025}')
@@ -152,7 +152,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             await scholar_search("from 2020: neural networks")
@@ -166,7 +166,7 @@ class TestGoogleScholar:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.google_scholar_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import scholar_search, _cache
             _cache.clear()
             await scholar_search("caching test")

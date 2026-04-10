@@ -13,7 +13,7 @@ class TestWolframAlpha:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.wolfram_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
             from src.tools.wolfram_tool import query_wolfram_alpha
             result = await query_wolfram_alpha("distance from earth to sun")
@@ -35,7 +35,7 @@ class TestWolframAlpha:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.wolfram_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
             from src.tools.wolfram_tool import query_wolfram_alpha
             result = await query_wolfram_alpha("asdfghjkl gibberish")
@@ -47,7 +47,7 @@ class TestWolframAlpha:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.wolfram_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
             from src.tools.wolfram_tool import query_wolfram_alpha
             result = await query_wolfram_alpha("test")
@@ -59,7 +59,7 @@ class TestWolframAlpha:
         mock_session = MagicMock()
         mock_session.get.side_effect = asyncio.TimeoutError("timeout")
 
-        with patch("src.tools.wolfram_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
             from src.tools.wolfram_tool import query_wolfram_alpha
             result = await query_wolfram_alpha("test")

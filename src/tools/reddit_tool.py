@@ -9,20 +9,19 @@ import json
 import asyncio
 import aiohttp
 from typing import List, Dict
-from langchain_core.tools import Tool
 
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync, TTLCache
+from src.utils import (
+    async_retry_on_error, async_fetch, create_tool,
+    parse_result_count, truncate, cached_tool,
+)
 from src.constants import (
     DEFAULT_USER_AGENT,
     DEFAULT_HTTP_TIMEOUT,
-    DEFAULT_CACHE_TTL,
     REDDIT_SEARCH_URL,
+    REDDIT_SELFTEXT_MAX_CHARS,
 )
 
-# Cache repeated queries for 5 minutes
-_cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
-
-
+@cached_tool("reddit")
 @async_retry_on_error(max_retries=2, delay=2.0)
 async def search_reddit(
     query: str,
@@ -44,11 +43,6 @@ async def search_reddit(
     Returns:
         List of post dictionaries.
     """
-    cache_key = _cache.make_key("reddit", query, str(max_results), str(subreddit), sort, time_filter)
-    cached = _cache.get(cache_key)
-    if cached is not None:
-        return cached
-
     # Build the search URL
     if subreddit:
         url = f"https://www.reddit.com/r/{subreddit}/search.json"
@@ -59,10 +53,7 @@ async def search_reddit(
 
     headers = {"User-Agent": f"{DEFAULT_USER_AGENT} ResearchAgent/1.0"}
 
-    session = await get_aiohttp_session()
-    async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT)) as resp:
-        resp.raise_for_status()
-        data = await resp.json()
+    data = await async_fetch(url, params=params, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
 
     posts = data.get("data", {}).get("children", [])
 
@@ -72,11 +63,6 @@ async def search_reddit(
         if not post:
             continue
 
-        # Truncate self-text preview
-        selftext = (post.get("selftext") or "")[:300]
-        if len(post.get("selftext", "")) > 300:
-            selftext += "..."
-
         results.append({
             "title": post.get("title", "Untitled"),
             "subreddit": post.get("subreddit_name_prefixed", ""),
@@ -85,11 +71,10 @@ async def search_reddit(
             "url": f"https://www.reddit.com{post.get('permalink', '')}",
             "author": post.get("author", "[deleted]"),
             "created": post.get("created_utc"),
-            "selftext": selftext,
+            "selftext": truncate(post.get("selftext", ""), REDDIT_SELFTEXT_MAX_CHARS),
             "link_url": post.get("url", ""),
         })
 
-    _cache.set(cache_key, results)
     return results
 
 
@@ -164,10 +149,7 @@ async def reddit_search(input_str: str) -> str:
         pass
 
     # Check for "N results:" prefix
-    count_match = re.match(r'(\d+)\s+results?:\s*(.+)', query, re.IGNORECASE)
-    if count_match:
-        max_results = min(int(count_match.group(1)), 10)
-        query = count_match.group(2)
+    query, max_results = parse_result_count(query, default=max_results)
 
     # Check for "r/subreddit:" prefix
     sub_match = re.match(r'r/(\w+):\s*(.+)', query, re.IGNORECASE)
@@ -229,16 +211,16 @@ EXAMPLES:
   "top month: remote work productivity" """
 
 
+# Expose cache for tests (search_reddit._cache)
+_cache = search_reddit._cache
+
 # Create the LangChain Tool wrapper
-reddit_tool = Tool(
-    name="reddit_search",
-    func=make_sync(reddit_search),
-    coroutine=reddit_search,
-    description=(
-        "Search Reddit for posts, discussions, and community opinions. "
-        "\n\nFORMAT: 'query', 'r/subreddit: query', 'top week: query'"
-        "\n\nRETURNS: Post titles, scores, comment counts, subreddit, URLs, text previews."
-        "\n\nUSE FOR: Finding opinions, experiences, recent discussions, community recommendations."
-        "\n\nTIP: Add subreddit filter for focused results (e.g., r/science, r/askhistorians)."
-    )
+reddit_tool = create_tool(
+    "reddit_search",
+    reddit_search,
+    "Search Reddit for posts, discussions, and community opinions. "
+    "\n\nFORMAT: 'query', 'r/subreddit: query', 'top week: query'"
+    "\n\nRETURNS: Post titles, scores, comment counts, subreddit, URLs, text previews."
+    "\n\nUSE FOR: Finding opinions, experiences, recent discussions, community recommendations."
+    "\n\nTIP: Add subreddit filter for focused results (e.g., r/science, r/askhistorians).",
 )

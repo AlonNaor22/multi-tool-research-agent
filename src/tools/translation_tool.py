@@ -6,9 +6,8 @@ Free, no API key required, supports 100+ languages.
 
 import re
 import asyncio
-from langchain_core.tools import Tool
 
-from src.utils import async_retry_on_error, make_sync
+from src.utils import async_retry_on_error, create_tool
 
 
 # Common language name -> code mapping for user-friendly input
@@ -145,10 +144,9 @@ EXAMPLES:
 
 
 # Create the LangChain Tool wrapper
-translation_tool = Tool(
-    name="translate",
-    func=make_sync(translate_text),
-    coroutine=translate_text,
+translation_tool = create_tool(
+    "translate",
+    translate_text,
     description=(
         "Translate text between 100+ languages using Google Translate. "
         "\n\nFORMAT: 'text | source | target', 'text | to language', 'text to language'"

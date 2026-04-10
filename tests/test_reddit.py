@@ -47,7 +47,7 @@ class TestRedditSearch:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
             result = await reddit_search("python data science")
@@ -62,7 +62,7 @@ class TestRedditSearch:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
             result = await reddit_search("xyznonexistent123")
@@ -74,7 +74,7 @@ class TestRedditSearch:
         mock_session = MagicMock()
         mock_session.get.side_effect = aiohttp.ClientError("failed")
 
-        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
             result = await reddit_search("test")
@@ -86,7 +86,7 @@ class TestRedditSearch:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
             await reddit_search("r/Python: best libraries")
@@ -115,7 +115,7 @@ class TestRedditSearch:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.reddit_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
             await reddit_search("cache test query")

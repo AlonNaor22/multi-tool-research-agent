@@ -11,11 +11,9 @@ Features:
 """
 
 import os
-import json
 import asyncio
 import aiohttp
-from langchain_core.tools import Tool
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
+from src.utils import async_retry_on_error, parse_tool_input, get_aiohttp_session, create_tool
 
 
 # API endpoints
@@ -145,26 +143,19 @@ async def get_weather(query: str) -> str:
         )
 
     # Parse input
-    location = None
-    lat = None
-    lon = None
-    units = "metric"  # Default to Celsius
-    forecast = False
-    forecast_days = 3
-
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            location = options.get("location")
-            lat = options.get("lat")
-            lon = options.get("lon")
-            units = options.get("units", "metric")
-            forecast = options.get("forecast", False)
-            forecast_days = min(options.get("days", 3), 5)  # Max 5 days
-        else:
-            location = query
-    except json.JSONDecodeError:
-        location = query
+    location_str, options = parse_tool_input(query, {
+        "units": "metric", "forecast": False, "days": 3,
+    })
+    # If the input was JSON without a "query" key, location_str will be the
+    # raw JSON — ignore it in favour of the explicit "location" option.
+    if location_str and location_str.strip().startswith("{"):
+        location_str = ""
+    location = options.get("location", location_str or None)
+    lat = options.get("lat")
+    lon = options.get("lon")
+    units = options.get("units", "metric")
+    forecast = options.get("forecast", False)
+    forecast_days = min(options.get("days", 3), 5)  # Max 5 days
 
     # Validate units
     if units not in ("metric", "imperial"):
@@ -186,29 +177,18 @@ async def get_weather(query: str) -> str:
 
     try:
         session = await get_aiohttp_session()
+        url = FORECAST_URL if forecast else CURRENT_WEATHER_URL
+        async with session.get(
+            url, params=params,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            data = await resp.json()
+            if resp.status != 200:
+                return f"Weather API error: {data.get('message', 'Unknown error')}"
 
-        if forecast:
-            # Get forecast
-            async with session.get(FORECAST_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                data = await resp.json()
-
-                if resp.status == 200:
-                    return _format_forecast(data, units, forecast_days)
-                elif resp.status == 404:
-                    return f"Location not found. Try a different city name."
-                else:
-                    return f"Weather API error: {data.get('message', 'Unknown error')}"
-        else:
-            # Get current weather
-            async with session.get(CURRENT_WEATHER_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                data = await resp.json()
-
-                if resp.status == 200:
-                    return _format_current_weather(data, units)
-                elif resp.status == 404:
-                    return f"City not found. Try a different city name."
-                else:
-                    return f"Weather API error: {data.get('message', 'Unknown error')}"
+            if forecast:
+                return _format_forecast(data, units, forecast_days)
+            return _format_current_weather(data, units)
 
     except asyncio.TimeoutError:
         return "Weather request timed out. Please try again."
@@ -219,10 +199,9 @@ async def get_weather(query: str) -> str:
 
 
 # Create the LangChain Tool wrapper
-weather_tool = Tool(
-    name="weather",
-    func=make_sync(get_weather),
-    coroutine=get_weather,
+weather_tool = create_tool(
+    "weather",
+    get_weather,
     description=(
         "Get current weather or forecast for a location. "
         "\n\nSIMPLE USAGE: Just provide a city name: 'London', 'New York', 'Tokyo'"

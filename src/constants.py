@@ -34,6 +34,27 @@ PARALLEL_SEARCH_TIMEOUT = 60    # Collective wall-clock limit for parallel_searc
 # ---------------------------------------------------------------------------
 DEFAULT_MAX_CONTENT_CHARS = 5000    # Default truncation limit for tool output
 MAX_OUTPUT_LENGTH = 10000           # Python REPL output cap
+CSV_MAX_OUTPUT_CHARS = 8000         # CSV/spreadsheet output cap
+
+# ---------------------------------------------------------------------------
+# Search result defaults
+# ---------------------------------------------------------------------------
+DEFAULT_MAX_RESULTS = 5             # Default number of search results
+MAX_SEARCH_RESULTS = 10             # Upper bound for most search tools
+MAX_ARXIV_RESULTS = 15              # ArXiv allows more results
+
+# ---------------------------------------------------------------------------
+# Per-domain truncation limits (characters)
+# ---------------------------------------------------------------------------
+SNIPPET_MAX_CHARS = 250             # Search result snippets
+ARTICLE_BODY_MAX_CHARS = 200        # News article body previews
+ABSTRACT_MAX_CHARS = 400            # Academic paper abstracts
+DESCRIPTION_MAX_CHARS = 200         # Video/repo descriptions
+WIKI_MAX_CHARS = 3000               # Wikipedia article summaries
+REDDIT_SELFTEXT_MAX_CHARS = 300     # Reddit post text previews
+GITHUB_DESC_MAX_CHARS = 150         # GitHub repo descriptions
+WIKIDATA_HEADING_MAX_CHARS = 100    # Wikidata heading text
+PDF_MAX_PAGES = 20                  # Max PDF pages to extract
 
 # ---------------------------------------------------------------------------
 # Chart rendering defaults (visualization_tool)

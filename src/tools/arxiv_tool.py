@@ -13,17 +13,15 @@ Features:
 No API key required - ArXiv is completely free and open.
 """
 
-import json
 import arxiv
-from langchain_core.tools import Tool
-from src.utils import async_retry_on_error, async_run_with_timeout, make_sync
-from src.constants import DEFAULT_SEARCH_TIMEOUT
-
-
-# Configuration
-DEFAULT_MAX_RESULTS = 5
-MAX_ALLOWED_RESULTS = 15
-DEFAULT_SUMMARY_LENGTH = 400
+from src.utils import (
+    async_retry_on_error, async_run_with_timeout, create_tool,
+    parse_tool_input, truncate,
+)
+from src.constants import (
+    DEFAULT_SEARCH_TIMEOUT, DEFAULT_MAX_RESULTS, MAX_ARXIV_RESULTS,
+    ABSTRACT_MAX_CHARS,
+)
 
 # Common ArXiv categories
 ARXIV_CATEGORIES = {
@@ -97,23 +95,15 @@ async def search_arxiv(query: str) -> str:
         Formatted string with paper titles, authors, and summaries.
     """
     # Parse input
-    max_results = DEFAULT_MAX_RESULTS
-    sort_by = "relevance"
-    category = None
-    full_abstract = False
-
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            search_query = options.get("query", "")
-            max_results = min(options.get("max_results", DEFAULT_MAX_RESULTS), MAX_ALLOWED_RESULTS)
-            sort_by = options.get("sort", "relevance")
-            category = options.get("category")  # e.g., "cs.AI", "physics"
-            full_abstract = options.get("full_abstract", False)
-        else:
-            search_query = query
-    except json.JSONDecodeError:
-        search_query = query
+    search_query, opts = parse_tool_input(query, {
+        "max_results": DEFAULT_MAX_RESULTS,
+        "sort": "relevance",
+        "full_abstract": False,
+    })
+    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_ARXIV_RESULTS)
+    sort_by = opts.get("sort", "relevance")
+    category = opts.get("category")  # e.g., "cs.AI", "physics"
+    full_abstract = opts.get("full_abstract", False)
 
     if not search_query:
         return "Error: No search query provided."
@@ -141,8 +131,7 @@ async def search_arxiv(query: str) -> str:
             # Get summary
             summary = paper.summary.replace('\n', ' ')
             if not full_abstract:
-                if len(summary) > DEFAULT_SUMMARY_LENGTH:
-                    summary = summary[:DEFAULT_SUMMARY_LENGTH] + "..."
+                summary = truncate(summary, ABSTRACT_MAX_CHARS)
 
             # Get categories
             categories = ", ".join(paper.categories[:3])
@@ -164,23 +153,20 @@ async def search_arxiv(query: str) -> str:
 
 
 # Create the LangChain Tool wrapper
-arxiv_tool = Tool(
-    name="arxiv_search",
-    func=make_sync(search_arxiv),
-    coroutine=search_arxiv,
-    description=(
-        "Search ArXiv for PRE-PRINTS — the latest unpublished research in STEM fields. "
-        "ArXiv papers are first-to-publish but NOT peer-reviewed."
-        "\n\nUSE FOR:"
-        "\n- Cutting-edge research: newest papers in AI, ML, physics, math, CS, statistics"
-        "\n- Free full-text PDFs of recent papers"
-        "\n- Filtering by arXiv category (cs.AI, cs.LG, physics, math, stat.ML, etc.)"
-        "\n\nDO NOT USE FOR:"
-        "\n- Peer-reviewed/published papers (use google_scholar — it covers journals)"
-        "\n- Non-STEM fields: medicine, history, humanities, social science (use google_scholar)"
-        "\n\nSIMPLE: 'transformer neural networks' | "
-        "ADVANCED: {\"query\": \"attention\", \"max_results\": 10, \"sort\": \"date\", \"category\": \"cs.AI\"}"
-        "\n\nRULE: Need the LATEST pre-prints in STEM? -> arxiv. "
-        "Need PUBLISHED, peer-reviewed papers? -> google_scholar."
-    )
+arxiv_tool = create_tool(
+    "arxiv_search",
+    search_arxiv,
+    "Search ArXiv for PRE-PRINTS — the latest unpublished research in STEM fields. "
+    "ArXiv papers are first-to-publish but NOT peer-reviewed."
+    "\n\nUSE FOR:"
+    "\n- Cutting-edge research: newest papers in AI, ML, physics, math, CS, statistics"
+    "\n- Free full-text PDFs of recent papers"
+    "\n- Filtering by arXiv category (cs.AI, cs.LG, physics, math, stat.ML, etc.)"
+    "\n\nDO NOT USE FOR:"
+    "\n- Peer-reviewed/published papers (use google_scholar — it covers journals)"
+    "\n- Non-STEM fields: medicine, history, humanities, social science (use google_scholar)"
+    "\n\nSIMPLE: 'transformer neural networks' | "
+    "ADVANCED: {\"query\": \"attention\", \"max_results\": 10, \"sort\": \"date\", \"category\": \"cs.AI\"}"
+    "\n\nRULE: Need the LATEST pre-prints in STEM? -> arxiv. "
+    "Need PUBLISHED, peer-reviewed papers? -> google_scholar.",
 )

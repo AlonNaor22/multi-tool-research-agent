@@ -14,9 +14,8 @@ Features:
 import json
 import asyncio
 from typing import Dict, List
-from langchain_core.tools import Tool
 from src.constants import TRUNCATION_PRESERVE_RATIO
-from src.utils import make_sync
+from src.utils import create_tool
 
 # Import the async search functions from our tools
 from src.tools.search_tool import web_search
@@ -205,10 +204,9 @@ async def parallel_search(input_str: str) -> str:
 
 
 # Create the LangChain Tool wrapper
-parallel_tool = Tool(
+parallel_tool = create_tool(
     name="parallel_search",
-    func=make_sync(parallel_search),
-    coroutine=parallel_search,
+    async_fn=parallel_search,
     description=(
         "Execute multiple searches in parallel for faster results. "
         "Use this when you need to gather information from multiple sources at once. "
@@ -223,5 +221,5 @@ parallel_tool = Tool(
         '{"type": "arxiv", "query": "electric vehicle battery"}'
         ']}'
         "\n\nLIMITS: Maximum 10 searches per call. All run simultaneously."
-    )
+    ),
 )

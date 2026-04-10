@@ -11,36 +11,33 @@ Features:
 - User/organization lookup
 """
 
-import json
-import aiohttp
-from langchain_core.tools import Tool
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
-from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
+from src.utils import (
+    async_retry_on_error, async_fetch, create_tool, parse_tool_input, truncate,
+)
+from src.constants import (
+    DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT, DEFAULT_MAX_RESULTS,
+    MAX_SEARCH_RESULTS, GITHUB_DESC_MAX_CHARS,
+)
 
 GITHUB_API_BASE = "https://api.github.com"
-DEFAULT_MAX_RESULTS = 5
-MAX_ALLOWED_RESULTS = 10
 
 
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def _github_api_request(endpoint: str, params: dict) -> dict:
     """Make a request to the GitHub REST API."""
-    session = await get_aiohttp_session()
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "application/vnd.github.v3+json",
     }
     url = f"{GITHUB_API_BASE}{endpoint}"
-    async with session.get(
-        url,
-        headers=headers,
-        params=params,
-        timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT),
-    ) as resp:
-        if resp.status == 403:
+    try:
+        return await async_fetch(
+            url, params=params, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT,
+        )
+    except Exception as e:
+        if "403" in str(e):
             return {"error": "GitHub API rate limit exceeded. Try again in a minute."}
-        resp.raise_for_status()
-        return await resp.json()
+        raise
 
 
 async def github_search(query: str) -> str:
@@ -54,21 +51,14 @@ async def github_search(query: str) -> str:
     Supported sort: stars, forks, updated (repos); indexed (code); created, updated (issues)
     """
     # Parse input
-    search_type = "repositories"
-    sort = "stars"
-    max_results = DEFAULT_MAX_RESULTS
-
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            search_query = options.get("query", "")
-            search_type = options.get("type", "repositories")
-            sort = options.get("sort", "stars")
-            max_results = min(options.get("max_results", DEFAULT_MAX_RESULTS), MAX_ALLOWED_RESULTS)
-        else:
-            search_query = query
-    except json.JSONDecodeError:
-        search_query = query
+    search_query, opts = parse_tool_input(query, {
+        "max_results": DEFAULT_MAX_RESULTS,
+        "type": "repositories",
+        "sort": "stars",
+    })
+    search_type = opts.get("type", "repositories")
+    sort = opts.get("sort", "stars")
+    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
 
     if not search_query:
         return "Error: No search query provided."
@@ -106,7 +96,7 @@ async def github_search(query: str) -> str:
                 updated = item.get("updated_at", "")[:10]
                 formatted.append(
                     f"{i}. **{name}** ({lang})\n"
-                    f"   {desc[:150]}\n"
+                    f"   {truncate(desc, GITHUB_DESC_MAX_CHARS)}\n"
                     f"   Stars: {stars:,} | Forks: {forks:,} | Updated: {updated}\n"
                     f"   URL: {url}"
                 )
@@ -145,20 +135,17 @@ async def github_search(query: str) -> str:
         return f"Error searching GitHub: {str(e)}"
 
 
-github_tool = Tool(
-    name="github_search",
-    func=make_sync(github_search),
-    coroutine=github_search,
-    description=(
-        "Search GitHub for repositories, code, issues, or users. Use for finding "
-        "open-source projects, code examples, libraries, and developer tools."
-        "\n\nUSE FOR:"
-        "\n- Finding libraries: 'python web scraping framework'"
-        "\n- Code examples: '{\"query\": \"async retry decorator\", \"type\": \"code\"}'"
-        "\n- Issues/bugs: '{\"query\": \"memory leak react\", \"type\": \"issues\"}'"
-        "\n- Developers: '{\"query\": \"machine learning\", \"type\": \"users\"}'"
-        "\n\nSIMPLE: 'search query' (searches repos by stars)"
-        "\n\nADVANCED: {\"query\": \"...\", \"type\": \"repositories|code|issues|users\", "
-        "\"sort\": \"stars|forks|updated\", \"max_results\": 5}"
-    ),
+github_tool = create_tool(
+    "github_search",
+    github_search,
+    "Search GitHub for repositories, code, issues, or users. Use for finding "
+    "open-source projects, code examples, libraries, and developer tools."
+    "\n\nUSE FOR:"
+    "\n- Finding libraries: 'python web scraping framework'"
+    "\n- Code examples: '{\"query\": \"async retry decorator\", \"type\": \"code\"}'"
+    "\n- Issues/bugs: '{\"query\": \"memory leak react\", \"type\": \"issues\"}'"
+    "\n- Developers: '{\"query\": \"machine learning\", \"type\": \"users\"}'"
+    "\n\nSIMPLE: 'search query' (searches repos by stars)"
+    "\n\nADVANCED: {\"query\": \"...\", \"type\": \"repositories|code|issues|users\", "
+    "\"sort\": \"stars|forks|updated\", \"max_results\": 5}",
 )

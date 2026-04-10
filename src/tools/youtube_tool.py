@@ -8,14 +8,12 @@ YouTube frontend changes.
 import re
 import json
 from typing import List, Dict
-from langchain_core.tools import Tool
 
-from src.utils import async_retry_on_error, async_run_with_timeout, make_sync, TTLCache
-from src.constants import DEFAULT_SEARCH_TIMEOUT, DEFAULT_CACHE_TTL
-
-# Cache repeated queries for 5 minutes
-_cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
-
+from src.utils import (
+    async_retry_on_error, async_run_with_timeout, create_tool,
+    parse_result_count, truncate, cached_tool,
+)
+from src.constants import DEFAULT_SEARCH_TIMEOUT, DESCRIPTION_MAX_CHARS
 
 def _format_duration(seconds) -> str:
     """Convert seconds to H:MM:SS or MM:SS string."""
@@ -42,6 +40,7 @@ def _format_views(count) -> str:
         return "Unknown views"
 
 
+@cached_tool("youtube")
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def async_search_youtube_ytdlp(query: str, max_results: int = 5) -> List[Dict]:
     """
@@ -54,11 +53,6 @@ async def async_search_youtube_ytdlp(query: str, max_results: int = 5) -> List[D
     Returns:
         List of video dictionaries.
     """
-    cache_key = _cache.make_key("youtube", query, str(max_results))
-    cached = _cache.get(cache_key)
-    if cached is not None:
-        return cached
-
     import yt_dlp
 
     ydl_opts = {
@@ -93,10 +87,9 @@ async def async_search_youtube_ytdlp(query: str, max_results: int = 5) -> List[D
             "views": _format_views(entry.get("view_count")),
             "duration": _format_duration(entry.get("duration")),
             "published": entry.get("upload_date") or "",
-            "description": (entry.get("description") or "")[:200],
+            "description": truncate(entry.get("description", ""), DESCRIPTION_MAX_CHARS),
         })
 
-    _cache.set(cache_key, results)
     return results
 
 
@@ -149,10 +142,7 @@ async def youtube_search(input_str: str) -> str:
     query = input_str
 
     # Check for "N results:" prefix
-    count_match = re.match(r'(\d+)\s+results?:\s*(.+)', input_str, re.IGNORECASE)
-    if count_match:
-        max_results = min(int(count_match.group(1)), 10)
-        query = count_match.group(2)
+    query, max_results = parse_result_count(query)
 
     # Check for "search:" prefix
     if query.lower().startswith("search:"):
@@ -192,15 +182,15 @@ TIPS:
   - Add year for recent content (e.g., "python 2024")"""
 
 
+# Expose cache for tests (async_search_youtube_ytdlp._cache)
+_cache = async_search_youtube_ytdlp._cache
+
 # Create the LangChain Tool wrapper
-youtube_tool = Tool(
-    name="youtube_search",
-    func=make_sync(youtube_search),
-    coroutine=youtube_search,
-    description=(
-        "Search YouTube for videos on any topic. "
-        "\n\nFORMAT: 'python tutorial', '5 results: machine learning'"
-        "\n\nRETURNS: Video titles, channels, duration, views, URLs, and descriptions."
-        "\n\nUSE FOR: Finding tutorials, explanations, lectures, demonstrations, news coverage."
-    )
+youtube_tool = create_tool(
+    "youtube_search",
+    youtube_search,
+    "Search YouTube for videos on any topic. "
+    "\n\nFORMAT: 'python tutorial', '5 results: machine learning'"
+    "\n\nRETURNS: Video titles, channels, duration, views, URLs, and descriptions."
+    "\n\nUSE FOR: Finding tutorials, explanations, lectures, demonstrations, news coverage.",
 )

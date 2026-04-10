@@ -41,7 +41,7 @@ class TestPdfReader:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("src.tools.pdf_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.pdf_tool.pdfplumber") as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
             from src.tools.pdf_tool import read_pdf
@@ -54,7 +54,7 @@ class TestPdfReader:
         mock_session = MagicMock()
         mock_session.get.side_effect = aiohttp.ClientError("failed")
 
-        with patch("src.tools.pdf_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.pdf_tool import read_pdf
             result = await read_pdf("https://example.com/paper.pdf")
 
@@ -134,7 +134,7 @@ class TestPdfReader:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("src.tools.pdf_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.pdf_tool.pdfplumber") as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
             from src.tools.pdf_tool import read_pdf

@@ -9,9 +9,8 @@ import re
 import asyncio
 import aiohttp
 from typing import Optional, Dict
-from langchain_core.tools import Tool
 
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
+from src.utils import async_retry_on_error, async_fetch, create_tool
 from src.constants import DEFAULT_HTTP_TIMEOUT
 
 
@@ -90,10 +89,7 @@ async def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
         "to": to_currency,
     }
 
-    session = await get_aiohttp_session()
-    async with session.get(base_url, params=params, timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT)) as resp:
-        resp.raise_for_status()
-        return await resp.json()
+    return await async_fetch(base_url, params=params, timeout=DEFAULT_HTTP_TIMEOUT)
 
 
 async def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
@@ -237,10 +233,9 @@ Note: Exchange rates are fetched in real-time from frankfurter.app"""
 
 
 # Create the LangChain Tool wrapper
-currency_tool = Tool(
-    name="currency_converter",
-    func=make_sync(currency_convert),
-    coroutine=currency_convert,
+currency_tool = create_tool(
+    "currency_converter",
+    currency_convert,
     description=(
         "Convert between currencies using real-time exchange rates. "
         "\n\nFORMAT: '100 USD to EUR', 'convert 50 dollars to pounds', 'rate EUR GBP'"

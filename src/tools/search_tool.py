@@ -10,16 +10,15 @@ Features:
 - Retry logic for reliability
 """
 
-import json
 from duckduckgo_search import DDGS
-from langchain_core.tools import Tool
-from src.utils import async_retry_on_error, async_run_with_timeout, make_sync
-from src.constants import DEFAULT_SEARCH_TIMEOUT
-
-
-# Configuration defaults
-DEFAULT_MAX_RESULTS = 5
-MAX_ALLOWED_RESULTS = 10
+from src.utils import (
+    async_retry_on_error, async_run_with_timeout, create_tool,
+    parse_tool_input, truncate,
+)
+from src.constants import (
+    DEFAULT_SEARCH_TIMEOUT, DEFAULT_MAX_RESULTS, MAX_SEARCH_RESULTS,
+    SNIPPET_MAX_CHARS,
+)
 
 
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
@@ -69,20 +68,9 @@ async def web_search(query: str) -> str:
         Formatted search results with title, URL, and snippet.
     """
     # Parse input - could be simple string or JSON with options
-    max_results = DEFAULT_MAX_RESULTS
-    region = None  # None = worldwide
-
-    try:
-        # Try to parse as JSON for advanced options
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            search_query = options.get("query", "")
-            max_results = min(options.get("max_results", DEFAULT_MAX_RESULTS), MAX_ALLOWED_RESULTS)
-            region = options.get("region")  # e.g., "us-en", "uk-en", "de-de"
-        else:
-            search_query = query
-    except json.JSONDecodeError:
-        search_query = query
+    search_query, opts = parse_tool_input(query, {"max_results": DEFAULT_MAX_RESULTS})
+    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
+    region = opts.get("region")  # e.g., "us-en", "uk-en", "de-de"
 
     if not search_query:
         return "Error: No search query provided."
@@ -101,8 +89,7 @@ async def web_search(query: str) -> str:
             snippet = result.get("body", result.get("snippet", "No description"))
 
             # Truncate snippet if too long
-            if len(snippet) > 250:
-                snippet = snippet[:250] + "..."
+            snippet = truncate(snippet, SNIPPET_MAX_CHARS)
 
             formatted_results.append(
                 f"{i}. **{title}**\n"
@@ -118,24 +105,21 @@ async def web_search(query: str) -> str:
 
 
 # Create the LangChain Tool wrapper
-search_tool = Tool(
-    name="web_search",
-    func=make_sync(web_search),
-    coroutine=web_search,
-    description=(
-        "Search the GENERAL WEB for information from all types of websites. Returns "
-        "a mix of blogs, forums, company sites, docs, and articles — not limited to news."
-        "\n\nUSE FOR:"
-        "\n- General lookups: 'Tesla stock price today', 'Python 3.12 features'"
-        "\n- Comparisons/reviews: 'best laptop 2024', 'React vs Vue'"
-        "\n- How-to/tutorials: 'how to deploy Flask on AWS'"
-        "\n- Anything not in Wikipedia or needing fresh data from diverse sources"
-        "\n\nDO NOT USE FOR:"
-        "\n- News articles with sources/dates (use news_search — it returns journalism)"
-        "\n- Established facts/history (use wikipedia)"
-        "\n- Entity facts like population or GDP (use wikidata)"
-        "\n- Scientific constants (use wolfram_alpha)"
-        "\n\nSIMPLE: 'search query' | ADVANCED: {\"query\": \"...\", \"max_results\": 5}"
-        "\n\nRULE: Need GENERAL WEB results? -> web_search. Need NEWS ARTICLES? -> news_search."
-    )
+search_tool = create_tool(
+    "web_search",
+    web_search,
+    "Search the GENERAL WEB for information from all types of websites. Returns "
+    "a mix of blogs, forums, company sites, docs, and articles — not limited to news."
+    "\n\nUSE FOR:"
+    "\n- General lookups: 'Tesla stock price today', 'Python 3.12 features'"
+    "\n- Comparisons/reviews: 'best laptop 2024', 'React vs Vue'"
+    "\n- How-to/tutorials: 'how to deploy Flask on AWS'"
+    "\n- Anything not in Wikipedia or needing fresh data from diverse sources"
+    "\n\nDO NOT USE FOR:"
+    "\n- News articles with sources/dates (use news_search — it returns journalism)"
+    "\n- Established facts/history (use wikipedia)"
+    "\n- Entity facts like population or GDP (use wikidata)"
+    "\n- Scientific constants (use wolfram_alpha)"
+    "\n\nSIMPLE: 'search query' | ADVANCED: {\"query\": \"...\", \"max_results\": 5}"
+    "\n\nRULE: Need GENERAL WEB results? -> web_search. Need NEWS ARTICLES? -> news_search.",
 )

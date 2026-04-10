@@ -23,10 +23,12 @@ NOTE: This is NOT a fully sandboxed environment. For production use, consider:
 import multiprocessing
 from langchain_core.tools import Tool
 
+from src.constants import MAX_OUTPUT_LENGTH
+from src.utils import truncate
+
 
 # Configuration
 EXECUTION_TIMEOUT = 5  # seconds
-MAX_OUTPUT_LENGTH = 10000  # characters
 
 
 def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
@@ -187,8 +189,7 @@ def execute_python(code: str) -> str:
         output = "Code executed successfully (no output)"
 
     # Truncate if too long
-    if len(output) > MAX_OUTPUT_LENGTH:
-        output = output[:MAX_OUTPUT_LENGTH] + f"\n\n[Output truncated - exceeded {MAX_OUTPUT_LENGTH} characters]"
+    output = truncate(output, MAX_OUTPUT_LENGTH, suffix=f"\n\n[Output truncated - exceeded {MAX_OUTPUT_LENGTH} characters]")
 
     return output
 

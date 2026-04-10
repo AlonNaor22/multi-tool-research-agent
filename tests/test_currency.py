@@ -21,7 +21,7 @@ class TestCurrencyConversion:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.currency_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.currency_tool import currency_convert
             result = await currency_convert("100 USD to EUR")
 
@@ -41,7 +41,7 @@ class TestCurrencyConversion:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.currency_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.currency_tool import currency_convert
             result = await currency_convert("100 XYZ to ABC")
 
@@ -61,7 +61,7 @@ class TestCurrencyConversion:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
 
-        with patch("src.tools.currency_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.currency_tool import currency_convert
             result = await currency_convert("100 dollars to euros")
 
@@ -72,7 +72,7 @@ class TestCurrencyConversion:
         mock_session = MagicMock()
         mock_session.get.side_effect = aiohttp.ClientError("Network error")
 
-        with patch("src.tools.currency_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.currency_tool import currency_convert
             result = await currency_convert("100 USD to EUR")
 

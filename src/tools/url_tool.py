@@ -15,8 +15,7 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 from io import BytesIO
-from langchain_core.tools import Tool
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
+from src.utils import async_retry_on_error, async_fetch, create_tool, get_aiohttp_session
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
 
 # Try to import pypdf for PDF support
@@ -225,22 +224,19 @@ async def fetch_url_content(url: str) -> str:
 
 
 # Create the LangChain Tool wrapper
-url_tool = Tool(
-    name="fetch_url",
-    func=make_sync(fetch_url_content),
-    coroutine=fetch_url_content,
-    description=(
-        "Read the TEXT CONTENT of a web page or PDF at a specific URL. Returns the "
-        "main article text, title, and metadata as plain text."
-        "\n\nUSE FOR:"
-        "\n- Reading a full article/blog post from a URL"
-        "\n- Following up on a link from web_search results"
-        "\n- Reading simple PDFs (papers, reports)"
-        "\n\nDO NOT USE FOR:"
-        "\n- Extracting TABLES, LISTS, or LINKS (use web_scraper — it returns structured data)"
-        "\n- Complex multi-column PDFs (use pdf_reader — it handles complex layouts better)"
-        "\n- Searching for pages (use web_search first, then fetch_url on results)"
-        "\n\nEXAMPLES: 'https://example.com/article', 'https://arxiv.org/pdf/1234.pdf'"
-        "\n\nRULE: Need to READ a page as text? -> fetch_url. Need STRUCTURED DATA from it? -> web_scraper."
-    )
+url_tool = create_tool(
+    "fetch_url",
+    fetch_url_content,
+    "Read the TEXT CONTENT of a web page or PDF at a specific URL. Returns the "
+    "main article text, title, and metadata as plain text."
+    "\n\nUSE FOR:"
+    "\n- Reading a full article/blog post from a URL"
+    "\n- Following up on a link from web_search results"
+    "\n- Reading simple PDFs (papers, reports)"
+    "\n\nDO NOT USE FOR:"
+    "\n- Extracting TABLES, LISTS, or LINKS (use web_scraper — it returns structured data)"
+    "\n- Complex multi-column PDFs (use pdf_reader — it handles complex layouts better)"
+    "\n- Searching for pages (use web_search first, then fetch_url on results)"
+    "\n\nEXAMPLES: 'https://example.com/article', 'https://arxiv.org/pdf/1234.pdf'"
+    "\n\nRULE: Need to READ a page as text? -> fetch_url. Need STRUCTURED DATA from it? -> web_scraper.",
 )

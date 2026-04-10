@@ -15,23 +15,19 @@ Features:
 import json
 import aiohttp
 from bs4 import BeautifulSoup
-from langchain_core.tools import Tool
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync
+from src.utils import async_retry_on_error, async_fetch, create_tool, parse_tool_input
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT, DEFAULT_MAX_CONTENT_CHARS
 
 
 @async_retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
 async def _fetch_html(url: str) -> str:
     """Fetch raw HTML from a URL."""
-    session = await get_aiohttp_session()
-    headers = {"User-Agent": DEFAULT_USER_AGENT}
-    async with session.get(
+    return await async_fetch(
         url,
-        headers=headers,
-        timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT),
-    ) as resp:
-        resp.raise_for_status()
-        return await resp.text()
+        headers={"User-Agent": DEFAULT_USER_AGENT},
+        timeout=DEFAULT_HTTP_TIMEOUT,
+        response_type="text",
+    )
 
 
 def _extract_tables(soup: BeautifulSoup, max_tables: int = 5) -> str:
@@ -152,18 +148,13 @@ async def scrape_webpage(query: str) -> str:
     extract_types = ["tables", "lists", "links", "headings"]
     css_selector = None
 
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            url = options.get("url", "")
-            extract = options.get("extract", ["all"])
-            css_selector = options.get("selector")
-            if "all" not in extract:
-                extract_types = extract
-        else:
-            url = query.strip()
-    except json.JSONDecodeError:
-        url = query.strip()
+    url, opts = parse_tool_input(query, {"extract": ["all"], "selector": None})
+    if "url" in opts:
+        url = opts["url"]
+    css_selector = opts.get("selector")
+    extract = opts.get("extract", ["all"])
+    if "all" not in extract:
+        extract_types = extract
 
     if not url:
         return "Error: No URL provided."
@@ -227,21 +218,18 @@ async def scrape_webpage(query: str) -> str:
         return f"Error scraping {url}: {str(e)}"
 
 
-scraper_tool = Tool(
-    name="web_scraper",
-    func=make_sync(scrape_webpage),
-    coroutine=scrape_webpage,
-    description=(
-        "Extract structured data from web pages — tables, lists, links, and headings. "
-        "Use this instead of fetch_url when you need organized data, not raw text."
-        "\n\nUSE FOR:"
-        "\n- Tables: statistics pages, comparison charts, data tables"
-        "\n- Lists: product features, ranked items, requirements"
-        "\n- Links: resource pages, directories, navigation structure"
-        "\n- Page structure: understand how content is organized"
-        "\n\nSIMPLE: 'https://example.com' (extracts all structured data)"
-        "\n\nADVANCED: {\"url\": \"...\", \"extract\": [\"tables\", \"links\"]}"
-        "\n\nCSS SELECTOR: {\"url\": \"...\", \"selector\": \"div.main-content\"}"
-        "\n\nDO NOT USE FOR: raw text reading (use fetch_url), PDF files (use pdf_reader)"
-    ),
+scraper_tool = create_tool(
+    "web_scraper",
+    scrape_webpage,
+    "Extract structured data from web pages — tables, lists, links, and headings. "
+    "Use this instead of fetch_url when you need organized data, not raw text."
+    "\n\nUSE FOR:"
+    "\n- Tables: statistics pages, comparison charts, data tables"
+    "\n- Lists: product features, ranked items, requirements"
+    "\n- Links: resource pages, directories, navigation structure"
+    "\n- Page structure: understand how content is organized"
+    "\n\nSIMPLE: 'https://example.com' (extracts all structured data)"
+    "\n\nADVANCED: {\"url\": \"...\", \"extract\": [\"tables\", \"links\"]}"
+    "\n\nCSS SELECTOR: {\"url\": \"...\", \"selector\": \"div.main-content\"}"
+    "\n\nDO NOT USE FOR: raw text reading (use fetch_url), PDF files (use pdf_reader)",
 )

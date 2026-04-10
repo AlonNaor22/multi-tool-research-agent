@@ -14,8 +14,7 @@ Features:
 
 import json
 from datetime import datetime, timedelta, timezone
-from langchain_core.tools import Tool
-from src.utils import make_sync
+from src.utils import create_tool
 
 # Common timezone offsets (no pytz dependency needed)
 TIMEZONE_OFFSETS = {
@@ -258,10 +257,9 @@ async def datetime_calculate(query: str) -> str:
         return f"Error: {str(e)}"
 
 
-datetime_tool = Tool(
-    name="datetime_calculator",
-    func=make_sync(datetime_calculate),
-    coroutine=datetime_calculate,
+datetime_tool = create_tool(
+    "datetime_calculator",
+    datetime_calculate,
     description=(
         "Perform date/time calculations: arithmetic, timezone conversion, "
         "business days, and date info. All input is JSON."

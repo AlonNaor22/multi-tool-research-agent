@@ -12,18 +12,13 @@ import json
 import asyncio
 import aiohttp
 from typing import Dict, List, Optional
-from langchain_core.tools import Tool
 
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync, TTLCache
+from src.utils import async_retry_on_error, async_fetch, create_tool, truncate, cached_tool
 from src.constants import (
     WIKIDATA_SPARQL_URL,
     DEFAULT_HTTP_TIMEOUT,
-    DEFAULT_CACHE_TTL,
+    WIKIDATA_HEADING_MAX_CHARS,
 )
-
-# Cache repeated queries for 5 minutes
-_cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
-
 
 @async_retry_on_error(max_retries=2, delay=2.0)
 async def _run_sparql(sparql_query: str) -> List[Dict]:
@@ -33,15 +28,12 @@ async def _run_sparql(sparql_query: str) -> List[Dict]:
         "User-Agent": "ResearchAgent/1.0",
     }
 
-    session = await get_aiohttp_session()
-    async with session.get(
+    data = await async_fetch(
         WIKIDATA_SPARQL_URL,
         params={"query": sparql_query},
         headers=headers,
-        timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT),
-    ) as resp:
-        resp.raise_for_status()
-        data = await resp.json()
+        timeout=DEFAULT_HTTP_TIMEOUT,
+    )
 
     bindings = data.get("results", {}).get("bindings", [])
 
@@ -165,59 +157,51 @@ async def wikidata_query(input_str: str) -> str:
     if input_str.lower() in ("help", "?"):
         return _get_help()
 
-    cache_key = _cache.make_key("wikidata", input_str)
-    cached = _cache.get(cache_key)
-    if cached is not None:
-        return cached
-
     try:
-        # Raw SPARQL mode
-        if input_str.lower().startswith("sparql:"):
-            sparql = input_str[7:].strip()
-            results = await _run_sparql(sparql)
-            if not results:
-                output = "SPARQL query returned no results."
-            else:
-                # Format as a simple table
-                lines = [f"SPARQL Results ({len(results)} rows):", ""]
-                for i, row in enumerate(results[:20], 1):
-                    parts = [f"{k}: {v}" for k, v in row.items()]
-                    lines.append(f"{i}. {' | '.join(parts)}")
-                if len(results) > 20:
-                    lines.append(f"[... {len(results) - 20} more rows ...]")
-                output = "\n".join(lines)
-            _cache.set(cache_key, output)
-            return output
-
-        # Search mode
-        if input_str.lower().startswith("search:"):
-            search_term = input_str[7:].strip()
-            sparql = _search_entities_sparql(search_term)
-            results = await _run_sparql(sparql)
-            output = format_search_results(results, search_term)
-            _cache.set(cache_key, output)
-            return output
-
-        # Default: entity fact lookup
-        entity = input_str
-        sparql = _entity_lookup_sparql(entity)
-        results = await _run_sparql(sparql)
-
-        if not results:
-            # Try searching instead of exact match
-            sparql = _search_entities_sparql(entity)
-            results = await _run_sparql(sparql)
-            output = format_search_results(results, entity)
-        else:
-            output = format_entity_facts(results, entity)
-
-        _cache.set(cache_key, output)
-        return output
-
+        return await _wikidata_cached_fetch(input_str)
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return f"Error querying Wikidata: {str(e)}"
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+@cached_tool("wikidata")
+async def _wikidata_cached_fetch(input_str: str) -> str:
+    """Inner cacheable function for wikidata_query."""
+    # Raw SPARQL mode
+    if input_str.lower().startswith("sparql:"):
+        sparql = input_str[7:].strip()
+        results = await _run_sparql(sparql)
+        if not results:
+            return "SPARQL query returned no results."
+        # Format as a simple table
+        lines = [f"SPARQL Results ({len(results)} rows):", ""]
+        for i, row in enumerate(results[:20], 1):
+            parts = [f"{k}: {v}" for k, v in row.items()]
+            lines.append(f"{i}. {' | '.join(parts)}")
+        if len(results) > 20:
+            lines.append(f"[... {len(results) - 20} more rows ...]")
+        return "\n".join(lines)
+
+    # Search mode
+    if input_str.lower().startswith("search:"):
+        search_term = input_str[7:].strip()
+        sparql = _search_entities_sparql(search_term)
+        results = await _run_sparql(sparql)
+        return format_search_results(results, search_term)
+
+    # Default: entity fact lookup
+    entity = input_str
+    sparql = _entity_lookup_sparql(entity)
+    results = await _run_sparql(sparql)
+
+    if not results:
+        # Try searching instead of exact match
+        sparql = _search_entities_sparql(entity)
+        results = await _run_sparql(sparql)
+        return format_search_results(results, entity)
+
+    return format_entity_facts(results, entity)
 
 
 def _get_help() -> str:
@@ -252,12 +236,13 @@ EXAMPLES:
   "sparql: SELECT ?city ?pop WHERE { ?city wdt:P31 wd:Q515 . ?city wdt:P1082 ?pop } LIMIT 5" """
 
 
+# Expose cache for tests (_wikidata_cached_fetch._cache)
+_cache = _wikidata_cached_fetch._cache
+
 # Create the LangChain Tool wrapper
-wikidata_tool = Tool(
-    name="wikidata",
-    func=make_sync(wikidata_query),
-    coroutine=wikidata_query,
-    description=(
+wikidata_tool = create_tool(
+    "wikidata",
+    wikidata_query,
         "Look up STRUCTURED ENTITY FACTS from Wikidata — the database behind Wikipedia. "
         "Use when you need a specific property of a known entity (country, person, city, etc.)."
         "\n\nUSE FOR:"
@@ -270,7 +255,6 @@ wikidata_tool = Tool(
         "\n- Scientific constants or physical properties (use wolfram_alpha)"
         "\n- Current events or recent changes (use web_search)"
         "\n\nFORMAT: 'entity name', 'search: term', 'sparql: SPARQL query'"
-        "\n\nRULE: Need a FACT about an ENTITY? -> Wikidata. Need an EXPLANATION? -> Wikipedia. "
-        "Need a SCIENTIFIC VALUE? -> Wolfram."
-    )
+    "\n\nRULE: Need a FACT about an ENTITY? -> Wikidata. Need an EXPLANATION? -> Wikipedia. "
+    "Need a SCIENTIFIC VALUE? -> Wolfram.",
 )

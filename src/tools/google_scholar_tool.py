@@ -8,30 +8,32 @@ Free API, no key required.
 """
 
 import re
-import json
 import asyncio
 import aiohttp
 from typing import List, Dict, Optional
-from langchain_core.tools import Tool
 
-from src.utils import async_retry_on_error, get_aiohttp_session, make_sync, TTLCache
+from src.utils import (
+    async_retry_on_error, async_fetch, cached_tool, create_tool,
+    parse_tool_input, parse_result_count, truncate,
+)
 from src.constants import (
     SEMANTIC_SCHOLAR_BASE_URL,
     DEFAULT_HTTP_TIMEOUT,
-    DEFAULT_CACHE_TTL,
+    DEFAULT_MAX_RESULTS,
+    MAX_SEARCH_RESULTS,
+    ABSTRACT_MAX_CHARS,
+    SNIPPET_MAX_CHARS,
 )
-
-# Cache repeated queries for 5 minutes
-_cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
 
 # Fields to request from the Semantic Scholar API
 _PAPER_FIELDS = "title,authors,year,citationCount,abstract,url,externalIds,publicationTypes"
 
 
+@cached_tool("scholar")
 @async_retry_on_error(max_retries=2, delay=2.0)
 async def search_semantic_scholar(
     query: str,
-    max_results: int = 5,
+    max_results: int = DEFAULT_MAX_RESULTS,
     year_from: Optional[int] = None,
     year_to: Optional[int] = None,
 ) -> List[Dict]:
@@ -47,16 +49,11 @@ async def search_semantic_scholar(
     Returns:
         List of paper dictionaries.
     """
-    cache_key = _cache.make_key("scholar", query, str(max_results), str(year_from), str(year_to))
-    cached = _cache.get(cache_key)
-    if cached is not None:
-        return cached
-
     url = f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search"
 
     params = {
         "query": query,
-        "limit": min(max_results, 10),
+        "limit": min(max_results, MAX_SEARCH_RESULTS),
         "fields": _PAPER_FIELDS,
     }
 
@@ -68,10 +65,7 @@ async def search_semantic_scholar(
     elif year_to:
         params["year"] = f"-{year_to}"
 
-    session = await get_aiohttp_session()
-    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=DEFAULT_HTTP_TIMEOUT)) as resp:
-        resp.raise_for_status()
-        data = await resp.json()
+    data = await async_fetch(url, params=params, timeout=DEFAULT_HTTP_TIMEOUT)
 
     papers = data.get("data", [])
 
@@ -99,11 +93,10 @@ async def search_semantic_scholar(
             "authors": authors_str,
             "year": paper.get("year"),
             "citations": paper.get("citationCount", 0),
-            "abstract": (paper.get("abstract") or "")[:400],
+            "abstract": truncate(paper.get("abstract") or "", ABSTRACT_MAX_CHARS),
             "url": paper_url,
         })
 
-    _cache.set(cache_key, results)
     return results
 
 
@@ -128,7 +121,7 @@ def format_results(results: List[Dict], query: str) -> str:
             lines.append(f"   URL: {paper['url']}")
 
         if paper.get("abstract"):
-            lines.append(f"   Abstract: {paper['abstract'][:250]}...")
+            lines.append(f"   Abstract: {truncate(paper['abstract'], SNIPPET_MAX_CHARS)}")
 
         lines.append("")
 
@@ -163,27 +156,15 @@ async def scholar_search(input_str: str) -> str:
         return _get_help()
 
     # Parse options
-    max_results = 5
-    year_from = None
-    year_to = None
-    query = input_str
-
-    # Try JSON input first
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            query = options.get("query", query)
-            max_results = min(options.get("max_results", 5), 10)
-            year_from = options.get("year_from")
-            year_to = options.get("year_to")
-    except json.JSONDecodeError:
-        pass
+    query, opts = parse_tool_input(input_str, {
+        "max_results": DEFAULT_MAX_RESULTS,
+    })
+    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
+    year_from = opts.get("year_from")
+    year_to = opts.get("year_to")
 
     # Check for "N results:" prefix
-    count_match = re.match(r'(\d+)\s+results?:\s*(.+)', query, re.IGNORECASE)
-    if count_match:
-        max_results = min(int(count_match.group(1)), 10)
-        query = count_match.group(2)
+    query, max_results = parse_result_count(query, max_results, MAX_SEARCH_RESULTS)
 
     # Check for "from YEAR:" prefix
     from_match = re.match(r'from\s+(\d{4}):\s*(.+)', query, re.IGNORECASE)
@@ -251,24 +232,24 @@ EXAMPLES:
   "2000-2010: roman climate reconstruction" """
 
 
+# Expose cache for test clearing
+_cache = search_semantic_scholar._cache
+
 # Create the LangChain Tool wrapper
-google_scholar_tool = Tool(
-    name="google_scholar",
-    func=make_sync(scholar_search),
-    coroutine=scholar_search,
-    description=(
-        "Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. "
-        "Covers journals, conferences, and theses — with citation counts."
-        "\n\nUSE FOR:"
-        "\n- Any academic field: medicine, history, social science, law, STEM, humanities"
-        "\n- Papers with citation counts (to judge impact)"
-        "\n- Year-filtered searches: 'from 2020: topic' or '2010-2020: topic'"
-        "\n- Published, vetted research (not pre-prints)"
-        "\n\nDO NOT USE FOR:"
-        "\n- Latest unpublished pre-prints (use arxiv_search — it has newest STEM papers)"
-        "\n- General web info (use web_search)"
-        "\n\nFORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'"
-        "\n\nRULE: Need PUBLISHED papers with citations? -> google_scholar. "
-        "Need the NEWEST pre-prints in STEM? -> arxiv."
-    )
+google_scholar_tool = create_tool(
+    "google_scholar",
+    scholar_search,
+    "Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. "
+    "Covers journals, conferences, and theses — with citation counts."
+    "\n\nUSE FOR:"
+    "\n- Any academic field: medicine, history, social science, law, STEM, humanities"
+    "\n- Papers with citation counts (to judge impact)"
+    "\n- Year-filtered searches: 'from 2020: topic' or '2010-2020: topic'"
+    "\n- Published, vetted research (not pre-prints)"
+    "\n\nDO NOT USE FOR:"
+    "\n- Latest unpublished pre-prints (use arxiv_search — it has newest STEM papers)"
+    "\n- General web info (use web_search)"
+    "\n\nFORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'"
+    "\n\nRULE: Need PUBLISHED papers with citations? -> google_scholar. "
+    "Need the NEWEST pre-prints in STEM? -> arxiv.",
 )

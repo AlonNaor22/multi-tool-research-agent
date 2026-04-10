@@ -1,11 +1,13 @@
 """Utility functions for the research agent.
 
 Contains async retry logic, timeout wrappers, a shared aiohttp session,
-Anthropic content-block helpers, and a simple TTL cache for reducing
-redundant API calls.
+Anthropic content-block helpers, tool-input parsing, text truncation,
+tool factory, HTTP fetch helper, caching decorator, and a simple TTL cache.
 """
 
 import asyncio
+import json
+import re
 import time
 import functools
 import hashlib
@@ -13,6 +15,9 @@ from typing import Callable, Any, Dict, List, Optional, Tuple, Type, Union
 
 import aiohttp
 from langchain_core.messages import AIMessage
+from langchain_core.tools import Tool
+
+from src.constants import DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_HEADERS, DEFAULT_CACHE_TTL
 
 
 # ---------------------------------------------------------------------------
@@ -311,3 +316,171 @@ class TTLCache:
         """Build a deterministic cache key from string parts."""
         raw = "|".join(str(p) for p in parts)
         return hashlib.md5(raw.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Tool-input parsing
+# ---------------------------------------------------------------------------
+
+def parse_tool_input(raw: str, defaults: Optional[Dict] = None) -> Tuple[str, Dict]:
+    """Parse a tool's raw input string into ``(query, options)``.
+
+    Most tools accept either a plain string or a JSON object with a
+    ``"query"`` key plus optional fields.  This replaces the identical
+    ``if raw.startswith("{") … json.loads … except JSONDecodeError``
+    boilerplate that appeared in 11+ tool files.
+
+    Returns:
+        A ``(query_string, options_dict)`` tuple.  If the input is not
+        valid JSON, the raw string is returned as the query and *defaults*
+        (if any) are used as the options.
+    """
+    opts: Dict[str, Any] = dict(defaults or {})
+    raw = raw.strip()
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+            query = parsed.pop("query", raw)
+            opts.update(parsed)
+            return query, opts
+        except json.JSONDecodeError:
+            pass
+    return raw, opts
+
+
+def parse_result_count(
+    query: str, default: int = 5, max_allowed: int = 10,
+) -> Tuple[str, int]:
+    """Extract an optional ``"N results: <query>"`` prefix.
+
+    Several search tools let the user write ``"5 results: quantum computing"``
+    to control result count.  This replaces the identical regex that appeared
+    in google_scholar, reddit, and youtube tools.
+
+    Returns:
+        ``(clean_query, max_results)``
+    """
+    m = re.match(r"(\d+)\s+results?:\s*(.+)", query, re.IGNORECASE)
+    if m:
+        return m.group(2).strip(), min(int(m.group(1)), max_allowed)
+    return query, default
+
+
+# ---------------------------------------------------------------------------
+# Text truncation
+# ---------------------------------------------------------------------------
+
+def truncate(text: str, limit: int, suffix: str = "...") -> str:
+    """Truncate *text* to *limit* characters, appending *suffix* if cut."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + suffix
+
+
+# ---------------------------------------------------------------------------
+# Tool factory
+# ---------------------------------------------------------------------------
+
+def create_tool(name: str, async_fn: Callable, description: str) -> Tool:
+    """Create a LangChain ``Tool`` with sync + async support.
+
+    Replaces the identical ``Tool(name=…, func=make_sync(…), coroutine=…,
+    description=…)`` boilerplate found in 17+ tool files.
+    """
+    return Tool(
+        name=name,
+        func=make_sync(async_fn),
+        coroutine=async_fn,
+        description=description,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Async HTTP fetch
+# ---------------------------------------------------------------------------
+
+async def async_fetch(
+    url: str,
+    *,
+    params: Optional[Dict] = None,
+    headers: Optional[Dict] = None,
+    timeout: int = DEFAULT_HTTP_TIMEOUT,
+    response_type: str = "json",
+) -> Any:
+    """Fetch a URL via the shared aiohttp session.
+
+    Wraps the ``get_aiohttp_session() → session.get() → resp.raise_for_status()``
+    boilerplate used by 10+ tool files.
+
+    Args:
+        url: The URL to GET.
+        params: Optional query parameters.
+        headers: HTTP headers (defaults to ``DEFAULT_HTTP_HEADERS``).
+        timeout: Request timeout in seconds.
+        response_type: ``"json"``, ``"text"``, or ``"bytes"``.
+
+    Returns:
+        Parsed JSON dict, text string, or raw bytes depending on
+        *response_type*.
+
+    Raises:
+        aiohttp.ClientError / asyncio.TimeoutError on failure.
+    """
+    session = await get_aiohttp_session()
+    hdrs = headers if headers is not None else dict(DEFAULT_HTTP_HEADERS)
+    async with session.get(
+        url,
+        params=params,
+        headers=hdrs,
+        timeout=aiohttp.ClientTimeout(total=timeout),
+    ) as resp:
+        resp.raise_for_status()
+        if response_type == "json":
+            return await resp.json()
+        if response_type == "bytes":
+            return await resp.read()
+        return await resp.text()
+
+
+# ---------------------------------------------------------------------------
+# Caching decorator for tool functions
+# ---------------------------------------------------------------------------
+
+def cached_tool(prefix: str, ttl: int = DEFAULT_CACHE_TTL):
+    """Decorator that adds TTLCache get/set around a tool's main function.
+
+    Replaces the identical cache boilerplate in google_scholar, reddit,
+    youtube, and wikidata tools.
+
+    The cache key is built from ``(prefix, *args)`` — all positional args
+    are stringified and hashed.
+
+    Usage::
+
+        _cache = TTLCache(ttl=DEFAULT_CACHE_TTL)
+
+        @cached_tool("scholar")
+        async def _fetch_papers(query: str, max_results: int) -> list:
+            ...
+
+    The decorator must be applied to the **inner** async function, not the
+    top-level tool entry point (which handles input parsing/formatting).
+    """
+    _cache = TTLCache(ttl=ttl)
+
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs) -> Any:
+            key = _cache.make_key(prefix, *(str(a) for a in args))
+            cached = _cache.get(key)
+            if cached is not None:
+                return cached
+            result = await func(*args, **kwargs)
+            _cache.set(key, result)
+            return result
+
+        # Expose cache for test clearing
+        wrapper._cache = _cache
+        return wrapper
+
+    return decorator
