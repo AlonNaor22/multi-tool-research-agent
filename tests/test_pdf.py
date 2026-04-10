@@ -16,11 +16,11 @@ class TestPdfReader:
             assert "not installed" in result.lower() or "install" in result.lower()
 
     async def test_invalid_url(self):
-        from src.tools.pdf_tool import read_pdf
-        result = await read_pdf("")
+        from src.tools.pdf_tool import pdf_reader
+        result = await pdf_reader("")
         assert len(result) > 0  # Should return error, not crash
 
-    async def test_successful_pdf_read_pdfplumber(self):
+    async def test_successful_pdf_pdf_readerplumber(self):
         """Test PDF reading with pdfplumber mocked."""
         pdf_bytes = b"%PDF-1.4 fake pdf content"
         mock_resp = AsyncMockResponse(
@@ -44,8 +44,8 @@ class TestPdfReader:
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.pdf_tool.pdfplumber") as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
-            from src.tools.pdf_tool import read_pdf
-            result = await read_pdf("https://example.com/paper.pdf")
+            from src.tools.pdf_tool import pdf_reader
+            result = await pdf_reader("https://example.com/paper.pdf")
 
             assert "extracted PDF text" in result or "Test PDF" in result
 
@@ -55,8 +55,8 @@ class TestPdfReader:
         mock_session.get.side_effect = aiohttp.ClientError("failed")
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.pdf_tool import read_pdf
-            result = await read_pdf("https://example.com/paper.pdf")
+            from src.tools.pdf_tool import pdf_reader
+            result = await pdf_reader("https://example.com/paper.pdf")
 
             assert "Error" in result or "error" in result.lower()
 
@@ -110,8 +110,8 @@ class TestPdfReader:
         assert "truncated" in result.lower()
 
     async def test_help_command(self):
-        from src.tools.pdf_tool import read_pdf
-        result = await read_pdf("help")
+        from src.tools.pdf_tool import pdf_reader
+        result = await pdf_reader("help")
         assert "FORMAT" in result
 
     async def test_summary_prefix(self):
@@ -137,7 +137,7 @@ class TestPdfReader:
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.pdf_tool.pdfplumber") as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
-            from src.tools.pdf_tool import read_pdf
-            result = await read_pdf("summary: https://example.com/paper.pdf")
+            from src.tools.pdf_tool import pdf_reader
+            result = await pdf_reader("summary: https://example.com/paper.pdf")
 
             assert "more pages not shown" in result

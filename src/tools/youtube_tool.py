@@ -2,8 +2,9 @@
 
 from typing import List, Dict
 
+from langchain_core.tools import tool
 from src.utils import (
-    async_retry_on_error, async_run_with_timeout, create_tool,
+    async_retry_on_error, async_run_with_timeout,
     parse_result_count, truncate, cached_tool, safe_tool_call, require_input,
 )
 from src.constants import DEFAULT_SEARCH_TIMEOUT, DESCRIPTION_MAX_CHARS
@@ -100,7 +101,13 @@ def format_results(results: List[Dict], query: str) -> str:
 
 @safe_tool_call("searching YouTube")
 async def youtube_search(input_str: str) -> str:
-    """Search YouTube for videos matching a query string."""
+    """Search YouTube for videos on any topic.
+
+FORMAT: 'python tutorial', '5 results: machine learning'
+
+RETURNS: Video titles, channels, duration, views, URLs, and descriptions.
+
+USE FOR: Finding tutorials, explanations, lectures, demonstrations, news coverage."""
     err = require_input(input_str, "search query")
     if err:
         return err
@@ -154,12 +161,4 @@ TIPS:
 # Expose cache for tests (async_search_youtube_ytdlp._cache)
 _cache = async_search_youtube_ytdlp._cache
 
-# Create the LangChain Tool wrapper
-youtube_tool = create_tool(
-    "youtube_search",
-    youtube_search,
-    "Search YouTube for videos on any topic. "
-    "\n\nFORMAT: 'python tutorial', '5 results: machine learning'"
-    "\n\nRETURNS: Video titles, channels, duration, views, URLs, and descriptions."
-    "\n\nUSE FOR: Finding tutorials, explanations, lectures, demonstrations, news coverage.",
-)
+youtube_tool = tool(youtube_search)

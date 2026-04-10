@@ -2,12 +2,14 @@
 
 import os
 import json
+from typing import Type, Literal
 from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-from langchain_core.tools import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 from src.constants import CHART_FIGSIZE, CHART_DPI
 
 
@@ -50,28 +52,17 @@ def get_colors(palette: str, count: int) -> list:
     return [colors[i % len(colors)] for i in range(count)]
 
 
-def generate_chart(input_str: str) -> str:
-    """Generate a chart from a JSON specification and save as PNG."""
-    try:
-        spec = json.loads(input_str)
-    except json.JSONDecodeError as e:
-        return (
-            f"Error: Invalid JSON input. {str(e)}\n\n"
-            'Expected format: {"chart_type": "bar", "title": "My Chart", '
-            '"data": {"labels": [...], "values": [...]}}'
-        )
-
-    if "chart_type" not in spec:
-        return f"Error: Missing 'chart_type'. Options: {', '.join(VALID_CHART_TYPES)}"
-    if "data" not in spec:
-        return "Error: Missing 'data' field."
-
-    chart_type = spec["chart_type"].lower()
+def _generate_chart_from_spec(spec: dict) -> str:
+    """Generate a chart from a spec dict and save as PNG."""
+    chart_type = spec.get("chart_type", "bar").lower()
     if chart_type not in VALID_CHART_TYPES:
         return f"Error: Unknown chart_type '{chart_type}'. Options: {', '.join(VALID_CHART_TYPES)}"
 
+    data = spec.get("data", {})
+    if not data:
+        return "Error: Missing 'data' field."
+
     title = spec.get("title", "Chart")
-    data = spec["data"]
     palette = spec.get("palette", "default")
     show_grid = spec.get("grid", False)
     show_legend = spec.get("legend", True)
@@ -407,18 +398,24 @@ def _draw_function(ax, data, spec, palette, single_color, show_legend):
 
 
 # ---------------------------------------------------------------------------
-# Async wrapper and Tool definition
+# BaseTool subclass
 # ---------------------------------------------------------------------------
 
-async def async_generate_chart(input_str: str) -> str:
-    return generate_chart(input_str)
+class ChartInput(BaseModel):
+    chart_type: Literal["bar", "stacked_bar", "line", "area", "pie", "scatter",
+                        "histogram", "box", "violin", "heatmap", "function"] = Field(
+        description="Type of chart to create"
+    )
+    data: dict = Field(description="Chart data (labels, values, series, etc.)")
+    title: str = Field(default="", description="Chart title")
+    palette: str = Field(default="default", description="Color palette: default/warm/cool/pastel")
+    grid: bool = Field(default=True, description="Show grid lines")
+    legend: bool = Field(default=True, description="Show legend")
 
 
-visualization_tool = Tool(
-    name="create_chart",
-    func=generate_chart,
-    coroutine=async_generate_chart,
-    description=(
+class VisualizationTool(BaseTool):
+    name: str = "create_chart"
+    description: str = (
         "Generate charts and graphs from data. Saves PNG images to output/ folder. "
         "\n\nCHART TYPES: bar, stacked_bar, line, area, pie, scatter, histogram, box, violin, heatmap, function"
         "\n\nBASIC FORMAT:"
@@ -431,4 +428,25 @@ visualization_tool = Tool(
         "\n\nFUNCTION: {\"data\": {\"expression\": \"sin(x)\", \"x_range\": [-6.28, 6.28]}}"
         "\n\nSTACKED BAR: {\"chart_type\": \"stacked_bar\", \"data\": {\"labels\": [...], \"series\": [...]}}"
     )
-)
+    args_schema: Type[BaseModel] = ChartInput
+
+    def _run(self, chart_type: str = "bar", data: dict = None, title: str = "",
+             palette: str = "default", grid: bool = True, legend: bool = True) -> str:
+        spec = {"chart_type": chart_type, "data": data or {}, "title": title,
+                "palette": palette, "grid": grid, "legend": legend}
+        return _generate_chart_from_spec(spec)
+
+    async def _arun(self, **kwargs) -> str:
+        return self._run(**kwargs)
+
+
+visualization_tool = VisualizationTool()
+
+
+def generate_chart(input_str: str) -> str:
+    """Parse a JSON string and generate a chart. Used by tests and CLI."""
+    try:
+        spec = json.loads(input_str)
+    except (json.JSONDecodeError, TypeError):
+        return f"Error: Invalid JSON input. Provide a JSON object with chart_type and data."
+    return _generate_chart_from_spec(spec)

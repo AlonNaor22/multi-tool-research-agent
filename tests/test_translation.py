@@ -9,8 +9,8 @@ class TestTranslation:
 
     async def test_pipe_format_three_parts(self):
         with patch("src.tools.translation_tool._async_do_translate", return_value="Hola mundo"):
-            from src.tools.translation_tool import translate_text
-            result = await translate_text("Hello world | en | es")
+            from src.tools.translation_tool import translate
+            result = await translate("Hello world | en | es")
 
             assert "Hola mundo" in result
             assert "en" in result
@@ -18,15 +18,15 @@ class TestTranslation:
 
     async def test_pipe_format_two_parts(self):
         with patch("src.tools.translation_tool._async_do_translate", return_value="Bonjour le monde"):
-            from src.tools.translation_tool import translate_text
-            result = await translate_text("Hello world | to french")
+            from src.tools.translation_tool import translate
+            result = await translate("Hello world | to french")
 
             assert "Bonjour le monde" in result
 
     async def test_natural_format(self):
         with patch("src.tools.translation_tool._async_do_translate", return_value="Hallo Welt"):
-            from src.tools.translation_tool import translate_text
-            result = await translate_text("Hello world to german")
+            from src.tools.translation_tool import translate
+            result = await translate("Hello world to german")
 
             assert "Hallo Welt" in result
 
@@ -38,24 +38,24 @@ class TestTranslation:
         assert _normalize_language("auto") == "auto"
 
     async def test_empty_input(self):
-        from src.tools.translation_tool import translate_text
-        result = await translate_text("")
+        from src.tools.translation_tool import translate
+        result = await translate("")
         assert "Error" in result
 
     async def test_help_command(self):
-        from src.tools.translation_tool import translate_text
-        result = await translate_text("help")
+        from src.tools.translation_tool import translate
+        result = await translate("help")
         assert "FORMAT" in result
 
     async def test_handles_translation_error(self):
         with patch("src.tools.translation_tool._async_do_translate",
                    side_effect=Exception("Translation API failed")):
-            from src.tools.translation_tool import translate_text
-            result = await translate_text("Hello | en | es")
+            from src.tools.translation_tool import translate
+            result = await translate("Hello | en | es")
 
             assert "Error" in result
 
     async def test_unparseable_input(self):
-        from src.tools.translation_tool import translate_text
-        result = await translate_text("just some random text without target")
+        from src.tools.translation_tool import translate
+        result = await translate("just some random text without target")
         assert "Error" in result or "Could not parse" in result

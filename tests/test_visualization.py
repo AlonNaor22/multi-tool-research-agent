@@ -150,10 +150,10 @@ class TestValidation:
         result = generate_chart("not valid json")
         assert "Error" in result
 
-    async def test_missing_chart_type(self):
+    async def test_missing_chart_type_defaults_to_bar(self):
         from src.tools.visualization_tool import generate_chart
         result = generate_chart(json.dumps({"data": {"labels": ["A"], "values": [1]}}))
-        assert "chart_type" in result
+        assert "saved" in result.lower() or ".png" in result
 
     async def test_missing_data(self):
         from src.tools.visualization_tool import generate_chart

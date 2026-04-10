@@ -3,8 +3,9 @@
 import json
 import math
 import re
-from typing import Dict, Optional
-from langchain_core.tools import Tool
+from typing import Dict, Optional, Type
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 from src.tools.step_solver import detect_operation, StepByStepSolver
 
@@ -251,22 +252,17 @@ For symbolic algebra (simplify/expand/factor), systems, eigenvalues, use 'equati
 _calculator = AdvancedCalculator()
 
 
-def calculate(expression: str) -> str:
-    """Entry point for the calculator tool, called by the LangChain agent."""
-    return _calculator.calculate(expression)
+# ---------------------------------------------------------------------------
+# BaseTool subclass
+# ---------------------------------------------------------------------------
+
+class CalculatorInput(BaseModel):
+    expression: str = Field(description="Math expression, equation, variable assignment, or command (help/vars/clear)")
 
 
-async def async_calculate(expression: str) -> str:
-    """Async wrapper for calculate()."""
-    return calculate(expression)
-
-
-# Create the LangChain Tool wrapper
-calculator_tool = Tool(
-    name="calculator",
-    func=calculate,
-    coroutine=async_calculate,
-    description=(
+class CalculatorTool(BaseTool):
+    name: str = "calculator"
+    description: str = (
         "Perform mathematical calculations with step-by-step solutions for students. "
         "\n\nBASIC MATH: '2 + 2', '100 * 0.15', '2 ** 10' (power), '17 % 5' (modulo)"
         "\n\nSTEP-BY-STEP: Complex expressions automatically show solution steps."
@@ -281,4 +277,16 @@ calculator_tool = Tool(
         "\n\nNOTE: For unit conversions use 'unit_converter'. For symbolic algebra "
         "(simplify/expand/factor), systems of equations, eigenvalues, or RREF use 'equation_solver'."
     )
-)
+    args_schema: Type[BaseModel] = CalculatorInput
+
+    def _run(self, expression: str = "") -> str:
+        return _calculator.calculate(expression)
+
+    async def _arun(self, **kwargs) -> str:
+        return self._run(**kwargs)
+
+
+calculator_tool = CalculatorTool()
+
+# Public function for direct calls (tests, CLI)
+calculate = _calculator.calculate

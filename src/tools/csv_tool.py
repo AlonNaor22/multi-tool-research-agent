@@ -1,13 +1,24 @@
 """CSV/Spreadsheet reader — reads CSV/Excel files with stats and previews."""
 
 import os
-from src.utils import parse_tool_input, truncate, create_tool, safe_tool_call, require_input
+from langchain_core.tools import tool
+from src.utils import parse_tool_input, truncate, safe_tool_call, require_input
 from src.constants import CSV_MAX_OUTPUT_CHARS
 
 
 @safe_tool_call("reading file")
-async def read_spreadsheet(query: str) -> str:
-    """Read and analyze a CSV or Excel file with optional filtering and aggregation."""
+async def csv_reader(query: str) -> str:
+    """Read and analyze CSV or Excel spreadsheet files. Returns column info, statistics, and sample data. Can filter rows and perform aggregations.
+
+    USE FOR:
+    - Reading data files: 'data/sales.csv'
+    - Previewing data: '{"path": "data.csv", "head": 10}'
+    - Filtering: '{"path": "data.csv", "filter": {"column": "country", "value": "USA"}}'
+    - Aggregation: '{"path": "data.csv", "groupby": "category", "agg": "sum", "column": "revenue"}'
+
+    SUPPORTS: .csv, .xlsx, .xls, .tsv
+
+    DO NOT USE FOR: creating charts (use create_chart), complex analysis (use python_repl)"""
     try:
         import pandas as pd
     except ImportError:
@@ -116,18 +127,4 @@ async def read_spreadsheet(query: str) -> str:
         return f"Error reading file: {str(e)}"
 
 
-csv_tool = create_tool(
-    "csv_reader",
-    read_spreadsheet,
-    description=(
-        "Read and analyze CSV or Excel spreadsheet files. Returns column info, "
-        "statistics, and sample data. Can filter rows and perform aggregations."
-        "\n\nUSE FOR:"
-        "\n- Reading data files: 'data/sales.csv'"
-        "\n- Previewing data: '{\"path\": \"data.csv\", \"head\": 10}'"
-        "\n- Filtering: '{\"path\": \"data.csv\", \"filter\": {\"column\": \"country\", \"value\": \"USA\"}}'"
-        "\n- Aggregation: '{\"path\": \"data.csv\", \"groupby\": \"category\", \"agg\": \"sum\", \"column\": \"revenue\"}}'"
-        "\n\nSUPPORTS: .csv, .xlsx, .xls, .tsv"
-        "\n\nDO NOT USE FOR: creating charts (use create_chart), complex analysis (use python_repl)"
-    ),
-)
+csv_tool = tool(csv_reader)

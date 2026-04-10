@@ -5,8 +5,9 @@ import asyncio
 import aiohttp
 from typing import List, Dict, Optional
 
+from langchain_core.tools import tool
 from src.utils import (
-    async_retry_on_error, async_fetch, cached_tool, create_tool,
+    async_retry_on_error, async_fetch, cached_tool,
     parse_tool_input, parse_result_count, truncate,
     safe_tool_call, require_input,
 )
@@ -114,8 +115,22 @@ def format_results(results: List[Dict], query: str) -> str:
 
 
 @safe_tool_call("searching academic papers")
-async def scholar_search(input_str: str) -> str:
-    """Takes a query string with optional filters, searches Semantic Scholar, returns formatted results."""
+async def google_scholar(input_str: str) -> str:
+    """Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. Covers journals, conferences, and theses — with citation counts.
+
+USE FOR:
+- Any academic field: medicine, history, social science, law, STEM, humanities
+- Papers with citation counts (to judge impact)
+- Year-filtered searches: 'from 2020: topic' or '2010-2020: topic'
+- Published, vetted research (not pre-prints)
+
+DO NOT USE FOR:
+- Latest unpublished pre-prints (use arxiv_search — it has newest STEM papers)
+- General web info (use web_search)
+
+FORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'
+
+RULE: Need PUBLISHED papers with citations? -> google_scholar. Need the NEWEST pre-prints in STEM? -> arxiv."""
     input_str = input_str.strip()
 
     err = require_input(input_str, "search query")
@@ -200,21 +215,4 @@ EXAMPLES:
 # Expose cache for test clearing
 _cache = search_semantic_scholar._cache
 
-# Create the LangChain Tool wrapper
-google_scholar_tool = create_tool(
-    "google_scholar",
-    scholar_search,
-    "Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. "
-    "Covers journals, conferences, and theses — with citation counts."
-    "\n\nUSE FOR:"
-    "\n- Any academic field: medicine, history, social science, law, STEM, humanities"
-    "\n- Papers with citation counts (to judge impact)"
-    "\n- Year-filtered searches: 'from 2020: topic' or '2010-2020: topic'"
-    "\n- Published, vetted research (not pre-prints)"
-    "\n\nDO NOT USE FOR:"
-    "\n- Latest unpublished pre-prints (use arxiv_search — it has newest STEM papers)"
-    "\n- General web info (use web_search)"
-    "\n\nFORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'"
-    "\n\nRULE: Need PUBLISHED papers with citations? -> google_scholar. "
-    "Need the NEWEST pre-prints in STEM? -> arxiv.",
-)
+google_scholar_tool = tool(google_scholar)

@@ -1,8 +1,9 @@
 """News search tool using DuckDuckGo News."""
 
 from duckduckgo_search import DDGS
+from langchain_core.tools import tool
 from src.utils import (
-    async_retry_on_error, async_run_with_timeout, create_tool,
+    async_retry_on_error, async_run_with_timeout,
     parse_tool_input, truncate, safe_tool_call, require_input,
 )
 from src.constants import (
@@ -40,8 +41,24 @@ async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
 
 
 @safe_tool_call("searching news")
-async def search_news(query: str) -> str:
-    """Takes a query string, searches DuckDuckGo News, returns formatted news articles."""
+async def news_search(query: str) -> str:
+    """Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, magazines, and news sites — with publication dates and source names.
+
+USE FOR:
+- Breaking news: 'earthquake today', 'election results'
+- Journalism coverage: 'AI regulation debate', 'climate policy changes'
+- Time-filtered stories: what happened in the past day/week/month
+
+DO NOT USE FOR:
+- General web info (use web_search — broader, not limited to news sources)
+- Established facts or history (use wikipedia)
+- Opinions/discussions (use reddit_search)
+
+SIMPLE: 'artificial intelligence' | ADVANCED: {"query": "climate", "timelimit": "d", "max_results": 5}
+
+TIMELIMIT: 'd' (past day), 'w' (past week, default), 'm' (past month)
+
+RULE: Need NEWS ARTICLES with sources/dates? -> news_search. Need general web results? -> web_search."""
     # Parse input
     search_query, opts = parse_tool_input(query, {
         "max_results": DEFAULT_MAX_RESULTS,
@@ -88,23 +105,4 @@ async def search_news(query: str) -> str:
     return "\n\n".join(formatted_results)
 
 
-# Create the LangChain Tool wrapper
-news_tool = create_tool(
-    "news_search",
-    search_news,
-    "Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, "
-    "magazines, and news sites — with publication dates and source names."
-    "\n\nUSE FOR:"
-    "\n- Breaking news: 'earthquake today', 'election results'"
-    "\n- Journalism coverage: 'AI regulation debate', 'climate policy changes'"
-    "\n- Time-filtered stories: what happened in the past day/week/month"
-    "\n\nDO NOT USE FOR:"
-    "\n- General web info (use web_search — broader, not limited to news sources)"
-    "\n- Established facts or history (use wikipedia)"
-    "\n- Opinions/discussions (use reddit_search)"
-    "\n\nSIMPLE: 'artificial intelligence' | ADVANCED: "
-    '{\"query\": \"climate\", \"timelimit\": \"d\", \"max_results\": 5}'
-    "\n\nTIMELIMIT: 'd' (past day), 'w' (past week, default), 'm' (past month)"
-    "\n\nRULE: Need NEWS ARTICLES with sources/dates? -> news_search. "
-    "Need general web results? -> web_search.",
-)
+news_tool = tool(news_search)

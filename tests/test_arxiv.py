@@ -42,8 +42,8 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.Relevance = "relevance"
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
-            from src.tools.arxiv_tool import search_arxiv
-            result = await search_arxiv("transformer attention")
+            from src.tools.arxiv_tool import arxiv_search
+            result = await arxiv_search("transformer attention")
 
             assert "Attention Is All You Need" in result
             assert "Vaswani" in result
@@ -58,8 +58,8 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.Relevance = "relevance"
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
-            from src.tools.arxiv_tool import search_arxiv
-            result = await search_arxiv("xyznonexistent123")
+            from src.tools.arxiv_tool import arxiv_search
+            result = await arxiv_search("xyznonexistent123")
 
             assert "No" in result or "no" in result.lower()
 
@@ -84,8 +84,8 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.Relevance = "relevance"
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
-            from src.tools.arxiv_tool import search_arxiv
-            result = await search_arxiv("big paper")
+            from src.tools.arxiv_tool import arxiv_search
+            result = await arxiv_search("big paper")
 
             assert "et al" in result
 
@@ -99,7 +99,7 @@ class TestArxivSearch:
             mock_arxiv.SortCriterion.Relevance = "relevance"
             mock_arxiv.SortCriterion.SubmittedDate = "date"
 
-            from src.tools.arxiv_tool import search_arxiv
-            result = await search_arxiv('{"query": "neural networks", "max_results": 3, "sort": "date"}')
+            from src.tools.arxiv_tool import arxiv_search
+            result = await arxiv_search('{"query": "neural networks", "max_results": 3, "sort": "date"}')
 
             assert len(result) > 0  # Should not crash on JSON input

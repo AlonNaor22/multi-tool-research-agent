@@ -34,8 +34,8 @@ class TestUrlFetch:
         mock_session.get.return_value = mock_resp
 
         with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.url_tool import fetch_url_content
-            result = await fetch_url_content("https://example.com")
+            from src.tools.url_tool import fetch_url
+            result = await fetch_url("https://example.com")
 
             assert "Main Heading" in result or "main content" in result
 
@@ -49,8 +49,8 @@ class TestUrlFetch:
         mock_session.get.return_value = mock_resp
 
         with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.url_tool import fetch_url_content
-            result = await fetch_url_content("https://example.com")
+            from src.tools.url_tool import fetch_url
+            result = await fetch_url("https://example.com")
 
             assert "Test Page" in result or "test page" in result.lower()
 
@@ -66,8 +66,8 @@ class TestUrlFetch:
         mock_session.get.return_value = mock_resp
 
         with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.url_tool import fetch_url_content
-            result = await fetch_url_content("https://example.com/404")
+            from src.tools.url_tool import fetch_url
+            result = await fetch_url("https://example.com/404")
 
             assert "404" in result or "error" in result.lower()
 
@@ -77,8 +77,8 @@ class TestUrlFetch:
         mock_session.get.side_effect = asyncio.TimeoutError("timeout")
 
         with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.url_tool import fetch_url_content
-            result = await fetch_url_content("https://example.com")
+            from src.tools.url_tool import fetch_url
+            result = await fetch_url("https://example.com")
 
             assert "timeout" in result.lower()
 
@@ -93,8 +93,8 @@ class TestUrlFetch:
         mock_session.get.return_value = mock_resp
 
         with patch("src.tools.url_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.url_tool import fetch_url_content
-            result = await fetch_url_content("https://example.com")
+            from src.tools.url_tool import fetch_url
+            result = await fetch_url("https://example.com")
 
             # Should be truncated, not the full 10000 chars
             assert len(result) < 10000

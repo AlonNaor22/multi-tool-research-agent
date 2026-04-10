@@ -2,8 +2,9 @@
 
 import re
 import json
-from typing import List, Optional
-from langchain_core.tools import Tool
+from typing import List, Optional, Type, Literal
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 try:
     from sympy import (
@@ -348,68 +349,6 @@ def _handle_symbolic(op: str, input_str: str) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def solve_equation(input_str: str) -> str:
-    """Solve equations, systems, matrix ops, or symbolic algebra via prefix dispatch."""
-    if not SYMPY_AVAILABLE:
-        return "Error: SymPy library is not installed. Run: pip install sympy"
-
-    input_str = input_str.strip()
-    if not input_str:
-        return "Error: Empty input"
-    if input_str.lower() in ("help", "?"):
-        return _get_help()
-
-    # Remove "solve" prefix if present
-    if input_str.lower().startswith("solve"):
-        input_str = input_str[5:].strip()
-
-    lower = input_str.lower()
-
-    # --- Systems of equations ---
-    if lower.startswith("system:"):
-        return _solve_system(input_str[7:].strip())
-
-    # --- Matrix operations ---
-    matrix_ops = {
-        "matrix:": "multiply", "multiply:": "multiply",
-        "inverse:": "inverse", "inv:": "inverse",
-        "determinant:": "determinant", "det:": "determinant",
-        "eigenvalues:": "eigenvalues", "eigen:": "eigenvalues",
-        "transpose:": "transpose",
-        "rank:": "rank",
-        "rref:": "rref",
-    }
-    for prefix, op in matrix_ops.items():
-        if lower.startswith(prefix):
-            return _handle_matrix_operation(op, input_str[len(prefix):].strip())
-
-    # --- Symbolic algebra ---
-    symbolic_ops = {
-        "simplify:": "simplify",
-        "expand:": "expand",
-        "factor:": "factor",
-        "derivative:": "derivative", "diff:": "diff",
-        "integrate:": "integrate", "integral:": "integral",
-    }
-    for prefix, op in symbolic_ops.items():
-        if lower.startswith(prefix):
-            return _handle_symbolic(op, input_str[len(prefix):].strip())
-
-    # --- Default: solve for x with optional "for x:" prefix ---
-    target_var = None
-    solve_for_match = re.match(r'for\s+([a-zA-Z])\s*:\s*(.+)', input_str, re.IGNORECASE)
-    if solve_for_match:
-        target_var = solve_for_match.group(1)
-        input_str = solve_for_match.group(2)
-
-    try:
-        return _solve_single_equation(input_str, target_var)
-    except SympifyError as e:
-        return f"Error parsing equation: {str(e)}"
-    except Exception as e:
-        return f"Error solving equation: {str(e)}"
-
-
 def _get_help() -> str:
     """Return help text."""
     return """Equation Solver & Symbolic Math Help:
@@ -442,17 +381,24 @@ CALCULUS:
   integrate: x^2 + 3x"""
 
 
-async def async_solve_equation(input_str: str) -> str:
-    """Async wrapper for solve_equation()."""
-    return solve_equation(input_str)
+# ---------------------------------------------------------------------------
+# BaseTool subclass
+# ---------------------------------------------------------------------------
+
+class EquationSolverInput(BaseModel):
+    operation: Literal[
+        "solve", "system", "simplify", "expand", "factor",
+        "derivative", "integral",
+        "matrix_det", "matrix_mul", "matrix_inv",
+        "matrix_transpose", "matrix_rank", "matrix_rref",
+        "eigenvalues"
+    ] = Field(default="solve", description="Math operation to perform")
+    expression: str = Field(description="The equation, matrix, or expression to operate on")
 
 
-# Create the LangChain Tool wrapper
-equation_solver_tool = Tool(
-    name="equation_solver",
-    func=solve_equation,
-    coroutine=async_solve_equation,
-    description=(
+class EquationSolverTool(BaseTool):
+    name: str = "equation_solver"
+    description: str = (
         "Solve equations, systems of equations, matrix operations, and symbolic algebra. "
         "\n\nEQUATIONS: 'x^2 - 4 = 0', 'solve for x: 2x + y = 10'"
         "\n\nSYSTEMS: 'system: x + y = 5, 2x - y = 1'"
@@ -460,4 +406,72 @@ equation_solver_tool = Tool(
         "\n\nALGEBRA: 'simplify: expr', 'expand: expr', 'factor: expr'"
         "\n\nCALCULUS: 'derivative: x^3 + 2x', 'integrate: x^2'"
     )
-)
+    args_schema: Type[BaseModel] = EquationSolverInput
+
+    def _run(self, operation: str = "solve", expression: str = "") -> str:
+        if not SYMPY_AVAILABLE:
+            return "Error: SymPy library is not installed. Run: pip install sympy"
+
+        expression = expression.strip()
+        if not expression:
+            return "Error: No expression provided."
+        if expression.lower() in ("help", "?"):
+            return _get_help()
+
+        op = operation.lower()
+        if op == "system":
+            return _solve_system(expression)
+        elif op in ("matrix_det",):
+            return _handle_matrix_operation("determinant", expression)
+        elif op in ("matrix_mul",):
+            return _handle_matrix_operation("multiply", expression)
+        elif op in ("matrix_inv",):
+            return _handle_matrix_operation("inverse", expression)
+        elif op == "matrix_transpose":
+            return _handle_matrix_operation("transpose", expression)
+        elif op == "matrix_rank":
+            return _handle_matrix_operation("rank", expression)
+        elif op == "matrix_rref":
+            return _handle_matrix_operation("rref", expression)
+        elif op == "eigenvalues":
+            return _handle_matrix_operation("eigenvalues", expression)
+        elif op in ("simplify", "expand", "factor", "derivative", "integral"):
+            return _handle_symbolic(op, expression)
+        else:
+            # Default: solve as equation
+            try:
+                return _solve_single_equation(expression)
+            except SympifyError as e:
+                return f"Error parsing equation: {str(e)}"
+            except Exception as e:
+                return f"Error solving equation: {str(e)}"
+
+    async def _arun(self, **kwargs) -> str:
+        return self._run(**kwargs)
+
+
+equation_solver_tool = EquationSolverTool()
+
+def solve_equation(input_str: str) -> str:
+    """Parse a string with optional prefix and solve. Used by tests and CLI."""
+    if not input_str or not input_str.strip():
+        return "Error: Empty input"
+    text = input_str.strip()
+    low = text.lower()
+    if low in ("help", "?"):
+        return equation_solver_tool._run(operation="solve", expression="help")
+    # Detect operation from prefix
+    for prefix, op in [
+        ("system:", "system"), ("simplify:", "simplify"), ("expand:", "expand"),
+        ("factor:", "factor"), ("derivative:", "derivative"), ("diff:", "derivative"),
+        ("integrate:", "integral"), ("integral:", "integral"),
+        ("matrix:", "matrix_mul"), ("multiply:", "matrix_mul"),
+        ("inverse:", "matrix_inv"), ("inv:", "matrix_inv"),
+        ("determinant:", "matrix_det"), ("det:", "matrix_det"),
+        ("eigenvalues:", "eigenvalues"), ("eigen:", "eigenvalues"),
+        ("transpose:", "matrix_transpose"), ("rank:", "matrix_rank"),
+        ("rref:", "matrix_rref"),
+    ]:
+        if low.startswith(prefix):
+            return equation_solver_tool._run(operation=op, expression=text[len(prefix):].strip())
+    return equation_solver_tool._run(operation="solve", expression=text)

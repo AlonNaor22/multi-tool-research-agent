@@ -1,7 +1,7 @@
 """Python REPL tool — process-isolated code execution with timeout and restricted builtins."""
 
 import multiprocessing
-from langchain_core.tools import Tool
+from langchain_core.tools import tool
 
 from src.constants import MAX_OUTPUT_LENGTH
 from src.utils import truncate
@@ -150,28 +150,21 @@ def execute_python(code: str) -> str:
     return output
 
 
-async def async_execute_python(code: str) -> str:
-    """Async wrapper for execute_python()."""
+async def python_repl(code: str) -> str:
+    """Execute Python code and return the output. Use this for complex calculations, data manipulation, string processing, working with lists/dicts, or any task that requires programming logic.
+
+    AVAILABLE MODULES: math, statistics, datetime, json, re, random, collections, itertools, functools. Also numpy (np) and pandas (pd) if installed.
+
+    BUILT-INS: len, range, sorted, map, filter, zip, enumerate, sum, min, max, etc.
+
+    LIMITS: 5 second timeout, 10,000 character output limit.
+
+    EXAMPLES:
+    - 'sum([1,2,3,4,5])'
+    - '[x**2 for x in range(10)]'
+    - 'import math; math.factorial(10)'
+    - 'sorted([3,1,4,1,5,9], reverse=True)'"""
     return execute_python(code)
 
 
-# Create the LangChain Tool wrapper
-python_repl_tool = Tool(
-    name="python_repl",
-    func=execute_python,
-    coroutine=async_execute_python,
-    description=(
-        "Execute Python code and return the output. Use this for complex calculations, "
-        "data manipulation, string processing, working with lists/dicts, or any task "
-        "that requires programming logic. "
-        "\n\nAVAILABLE MODULES: math, statistics, datetime, json, re, random, "
-        "collections, itertools, functools. Also numpy (np) and pandas (pd) if installed."
-        "\n\nBUILT-INS: len, range, sorted, map, filter, zip, enumerate, sum, min, max, etc."
-        "\n\nLIMITS: 5 second timeout, 10,000 character output limit."
-        "\n\nEXAMPLES:"
-        "\n- 'sum([1,2,3,4,5])'"
-        "\n- '[x**2 for x in range(10)]'"
-        "\n- 'import math; math.factorial(10)'"
-        "\n- 'sorted([3,1,4,1,5,9], reverse=True)'"
-    )
-)
+python_repl_tool = tool(python_repl)

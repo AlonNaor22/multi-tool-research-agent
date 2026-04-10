@@ -4,7 +4,8 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 from io import BytesIO
-from src.utils import async_retry_on_error, create_tool, get_aiohttp_session, safe_tool_call, require_input
+from langchain_core.tools import tool
+from src.utils import async_retry_on_error, get_aiohttp_session, safe_tool_call, require_input
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
 
 # Try to import pypdf for PDF support
@@ -157,8 +158,22 @@ def _extract_html_content(html: str, url: str) -> str:
     delay=1.0,
     exceptions=(aiohttp.ClientError, asyncio.TimeoutError)
 )
-async def fetch_url_content(url: str) -> str:
-    """Fetch and extract readable content from a URL (HTML or PDF)."""
+async def fetch_url(url: str) -> str:
+    """Read the TEXT CONTENT of a web page or PDF at a specific URL. Returns the main article text, title, and metadata as plain text.
+
+    USE FOR:
+    - Reading a full article/blog post from a URL
+    - Following up on a link from web_search results
+    - Reading simple PDFs (papers, reports)
+
+    DO NOT USE FOR:
+    - Extracting TABLES, LISTS, or LINKS (use web_scraper — it returns structured data)
+    - Complex multi-column PDFs (use pdf_reader — it handles complex layouts better)
+    - Searching for pages (use web_search first, then fetch_url on results)
+
+    EXAMPLES: 'https://example.com/article', 'https://arxiv.org/pdf/1234.pdf'
+
+    RULE: Need to READ a page as text? -> fetch_url. Need STRUCTURED DATA from it? -> web_scraper."""
     err = require_input(url, "URL")
     if err:
         return err
@@ -179,20 +194,4 @@ async def fetch_url_content(url: str) -> str:
             return _extract_html_content(html_text, url)
 
 
-# Create the LangChain Tool wrapper
-url_tool = create_tool(
-    "fetch_url",
-    fetch_url_content,
-    "Read the TEXT CONTENT of a web page or PDF at a specific URL. Returns the "
-    "main article text, title, and metadata as plain text."
-    "\n\nUSE FOR:"
-    "\n- Reading a full article/blog post from a URL"
-    "\n- Following up on a link from web_search results"
-    "\n- Reading simple PDFs (papers, reports)"
-    "\n\nDO NOT USE FOR:"
-    "\n- Extracting TABLES, LISTS, or LINKS (use web_scraper — it returns structured data)"
-    "\n- Complex multi-column PDFs (use pdf_reader — it handles complex layouts better)"
-    "\n- Searching for pages (use web_search first, then fetch_url on results)"
-    "\n\nEXAMPLES: 'https://example.com/article', 'https://arxiv.org/pdf/1234.pdf'"
-    "\n\nRULE: Need to READ a page as text? -> fetch_url. Need STRUCTURED DATA from it? -> web_scraper.",
-)
+url_tool = tool(fetch_url)

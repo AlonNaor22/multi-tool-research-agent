@@ -5,7 +5,8 @@ import asyncio
 import aiohttp
 from typing import Optional, Dict
 
-from src.utils import async_retry_on_error, async_fetch, create_tool, safe_tool_call, require_input
+from langchain_core.tools import tool
+from src.utils import async_retry_on_error, async_fetch, safe_tool_call, require_input
 from src.constants import DEFAULT_HTTP_TIMEOUT
 
 
@@ -127,8 +128,16 @@ async def convert_currency(amount: float, from_currency: str, to_currency: str) 
 
 
 @safe_tool_call("converting currency")
-async def currency_convert(input_str: str) -> str:
-    """Parse and execute a currency conversion request."""
+async def currency_converter(input_str: str) -> str:
+    """Convert between currencies using real-time exchange rates.
+
+    FORMAT: '100 USD to EUR', 'convert 50 dollars to pounds', 'rate EUR GBP'
+
+    SUPPORTED: All major world currencies (USD, EUR, GBP, JPY, CNY, etc.)
+
+    Accepts currency codes (USD) or names (dollar, euro, pound, yen).
+
+    Returns current exchange rate and converted amount."""
     err = require_input(input_str, "conversion request")
     if err:
         return err
@@ -200,15 +209,4 @@ You can use currency names (dollar, euro, pound, yen) or ISO codes (USD, EUR, GB
 Note: Exchange rates are fetched in real-time from frankfurter.app"""
 
 
-# Create the LangChain Tool wrapper
-currency_tool = create_tool(
-    "currency_converter",
-    currency_convert,
-    description=(
-        "Convert between currencies using real-time exchange rates. "
-        "\n\nFORMAT: '100 USD to EUR', 'convert 50 dollars to pounds', 'rate EUR GBP'"
-        "\n\nSUPPORTED: All major world currencies (USD, EUR, GBP, JPY, CNY, etc.)"
-        "\n\nAccepts currency codes (USD) or names (dollar, euro, pound, yen)."
-        "\n\nReturns current exchange rate and converted amount."
-    )
-)
+currency_tool = tool(currency_converter)

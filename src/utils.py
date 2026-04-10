@@ -10,7 +10,6 @@ from typing import Callable, Any, Dict, List, Optional, Tuple, Type, Union
 
 import aiohttp
 from langchain_core.messages import AIMessage
-from langchain_core.tools import Tool
 
 from src.constants import DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_HEADERS, DEFAULT_CACHE_TTL
 
@@ -147,30 +146,6 @@ async def close_aiohttp_session() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sync bridge for LangChain Tool.func
-# ---------------------------------------------------------------------------
-
-def make_sync(async_fn: Callable) -> Callable:
-    """Wraps an async fn as sync for LangChain Tool's func parameter."""
-    @functools.wraps(async_fn)
-    def wrapper(*args, **kwargs) -> Any:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            # Already inside an event loop (e.g., Streamlit) — run in a new thread
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, async_fn(*args, **kwargs)).result()
-        else:
-            return asyncio.run(async_fn(*args, **kwargs))
-
-    return wrapper
-
-
-# ---------------------------------------------------------------------------
 # Safe execute
 # ---------------------------------------------------------------------------
 
@@ -265,20 +240,6 @@ def require_input(value: str, label: str = "query") -> Optional[str]:
     if not value or not value.strip():
         return f"Error: No {label} provided."
     return None
-
-
-# ---------------------------------------------------------------------------
-# Tool factory & error wrapper
-# ---------------------------------------------------------------------------
-
-def create_tool(name: str, async_fn: Callable, description: str) -> Tool:
-    """Create a LangChain Tool with sync + async wrappers from one async fn."""
-    return Tool(
-        name=name,
-        func=make_sync(async_fn),
-        coroutine=async_fn,
-        description=description,
-    )
 
 
 def safe_tool_call(operation: str):

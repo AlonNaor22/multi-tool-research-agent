@@ -6,8 +6,9 @@ import asyncio
 import aiohttp
 from typing import List, Dict
 
+from langchain_core.tools import tool
 from src.utils import (
-    async_retry_on_error, async_fetch, create_tool,
+    async_retry_on_error, async_fetch,
     parse_result_count, truncate, cached_tool,
     safe_tool_call, require_input,
 )
@@ -93,7 +94,15 @@ def format_results(results: List[Dict], query: str) -> str:
 
 @safe_tool_call("searching Reddit")
 async def reddit_search(input_str: str) -> str:
-    """Takes a query string with optional filters, searches Reddit, returns formatted post results."""
+    """Search Reddit for posts, discussions, and community opinions.
+
+FORMAT: 'query', 'r/subreddit: query', 'top week: query'
+
+RETURNS: Post titles, scores, comment counts, subreddit, URLs, text previews.
+
+USE FOR: Finding opinions, experiences, recent discussions, community recommendations.
+
+TIP: Add subreddit filter for focused results (e.g., r/science, r/askhistorians)."""
     input_str = input_str.strip()
 
     err = require_input(input_str, "search query")
@@ -181,13 +190,4 @@ EXAMPLES:
 # Expose cache for tests (search_reddit._cache)
 _cache = search_reddit._cache
 
-# Create the LangChain Tool wrapper
-reddit_tool = create_tool(
-    "reddit_search",
-    reddit_search,
-    "Search Reddit for posts, discussions, and community opinions. "
-    "\n\nFORMAT: 'query', 'r/subreddit: query', 'top week: query'"
-    "\n\nRETURNS: Post titles, scores, comment counts, subreddit, URLs, text previews."
-    "\n\nUSE FOR: Finding opinions, experiences, recent discussions, community recommendations."
-    "\n\nTIP: Add subreddit filter for focused results (e.g., r/science, r/askhistorians).",
-)
+reddit_tool = tool(reddit_search)

@@ -2,7 +2,8 @@
 
 import json
 from datetime import datetime, timedelta, timezone
-from src.utils import create_tool, safe_tool_call
+from langchain_core.tools import tool
+from src.utils import safe_tool_call
 
 # Common timezone offsets (no pytz dependency needed)
 TIMEZONE_OFFSETS = {
@@ -82,8 +83,20 @@ def _add_business_days(start: datetime, days: int) -> datetime:
 
 
 @safe_tool_call("calculating date/time")
-async def datetime_calculate(query: str) -> str:
-    """Perform date/time calculations from a JSON spec (now, add, diff, convert, info, business_days)."""
+async def datetime_calculator(query: str) -> str:
+    """Perform date/time calculations: arithmetic, timezone conversion, business days, and date info. All input is JSON.
+
+    USE FOR:
+    - Current time: '{"operation": "now", "timezone": "EST"}'
+    - Add days: '{"operation": "add", "date": "2024-01-15", "days": 30}'
+    - Date diff: '{"operation": "diff", "from": "2024-01-01", "to": "2024-12-31"}'
+    - Timezone: '{"operation": "convert", "datetime": "2024-01-15 14:00", "from_tz": "EST", "to_tz": "JST"}'
+    - Date info: '{"operation": "info", "date": "2024-07-04"}'
+    - Business days: '{"operation": "business_days", "from": "2024-01-01", "to": "2024-01-31"}'
+
+    Supports: days, weeks, months, years, business_days in 'add' operation
+
+    DO NOT USE FOR: simple arithmetic (use calculator), recurring schedules"""
     try:
         if query.strip().startswith("{"):
             params = json.loads(query)
@@ -234,21 +247,4 @@ async def datetime_calculate(query: str) -> str:
         return f"Error: {str(e)}"
 
 
-datetime_tool = create_tool(
-    "datetime_calculator",
-    datetime_calculate,
-    description=(
-        "Perform date/time calculations: arithmetic, timezone conversion, "
-        "business days, and date info. All input is JSON."
-        "\n\nUSE FOR:"
-        "\n- Current time: '{\"operation\": \"now\", \"timezone\": \"EST\"}'"
-        "\n- Add days: '{\"operation\": \"add\", \"date\": \"2024-01-15\", \"days\": 30}'"
-        "\n- Date diff: '{\"operation\": \"diff\", \"from\": \"2024-01-01\", \"to\": \"2024-12-31\"}'"
-        "\n- Timezone: '{\"operation\": \"convert\", \"datetime\": \"2024-01-15 14:00\", "
-        "\"from_tz\": \"EST\", \"to_tz\": \"JST\"}'"
-        "\n- Date info: '{\"operation\": \"info\", \"date\": \"2024-07-04\"}'"
-        "\n- Business days: '{\"operation\": \"business_days\", \"from\": \"2024-01-01\", \"to\": \"2024-01-31\"}'"
-        "\n\nSupports: days, weeks, months, years, business_days in 'add' operation"
-        "\n\nDO NOT USE FOR: simple arithmetic (use calculator), recurring schedules"
-    ),
-)
+datetime_tool = tool(datetime_calculator)

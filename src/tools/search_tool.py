@@ -1,8 +1,9 @@
 """Web search tool using DuckDuckGo."""
 
 from duckduckgo_search import DDGS
+from langchain_core.tools import tool
 from src.utils import (
-    async_retry_on_error, async_run_with_timeout, create_tool,
+    async_retry_on_error, async_run_with_timeout,
     parse_tool_input, truncate, safe_tool_call, require_input,
 )
 from src.constants import (
@@ -35,7 +36,23 @@ async def async_web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS, r
 
 @safe_tool_call("performing web search")
 async def web_search(query: str) -> str:
-    """Takes a search query string, searches DuckDuckGo, returns formatted results."""
+    """Search the GENERAL WEB for information from all types of websites. Returns a mix of blogs, forums, company sites, docs, and articles — not limited to news.
+
+USE FOR:
+- General lookups: 'Tesla stock price today', 'Python 3.12 features'
+- Comparisons/reviews: 'best laptop 2024', 'React vs Vue'
+- How-to/tutorials: 'how to deploy Flask on AWS'
+- Anything not in Wikipedia or needing fresh data from diverse sources
+
+DO NOT USE FOR:
+- News articles with sources/dates (use news_search — it returns journalism)
+- Established facts/history (use wikipedia)
+- Entity facts like population or GDP (use wikidata)
+- Scientific constants (use wolfram_alpha)
+
+SIMPLE: 'search query' | ADVANCED: {"query": "...", "max_results": 5}
+
+RULE: Need GENERAL WEB results? -> web_search. Need NEWS ARTICLES? -> news_search."""
     # Parse input - could be simple string or JSON with options
     search_query, opts = parse_tool_input(query, {"max_results": DEFAULT_MAX_RESULTS})
     max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
@@ -69,22 +86,4 @@ async def web_search(query: str) -> str:
     return header + "\n\n".join(formatted_results)
 
 
-# Create the LangChain Tool wrapper
-search_tool = create_tool(
-    "web_search",
-    web_search,
-    "Search the GENERAL WEB for information from all types of websites. Returns "
-    "a mix of blogs, forums, company sites, docs, and articles — not limited to news."
-    "\n\nUSE FOR:"
-    "\n- General lookups: 'Tesla stock price today', 'Python 3.12 features'"
-    "\n- Comparisons/reviews: 'best laptop 2024', 'React vs Vue'"
-    "\n- How-to/tutorials: 'how to deploy Flask on AWS'"
-    "\n- Anything not in Wikipedia or needing fresh data from diverse sources"
-    "\n\nDO NOT USE FOR:"
-    "\n- News articles with sources/dates (use news_search — it returns journalism)"
-    "\n- Established facts/history (use wikipedia)"
-    "\n- Entity facts like population or GDP (use wikidata)"
-    "\n- Scientific constants (use wolfram_alpha)"
-    "\n\nSIMPLE: 'search query' | ADVANCED: {\"query\": \"...\", \"max_results\": 5}"
-    "\n\nRULE: Need GENERAL WEB results? -> web_search. Need NEWS ARTICLES? -> news_search.",
-)
+search_tool = tool(web_search)

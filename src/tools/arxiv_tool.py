@@ -1,8 +1,9 @@
 """ArXiv academic paper search tool."""
 
 import arxiv
+from langchain_core.tools import tool
 from src.utils import (
-    async_retry_on_error, async_run_with_timeout, create_tool,
+    async_retry_on_error, async_run_with_timeout,
     parse_tool_input, truncate, safe_tool_call, require_input,
 )
 from src.constants import (
@@ -58,8 +59,21 @@ async def async_search_arxiv(search_query: str, max_results: int = DEFAULT_MAX_R
 
 
 @safe_tool_call("searching ArXiv")
-async def search_arxiv(query: str) -> str:
-    """Takes a query string, searches ArXiv, returns formatted paper metadata."""
+async def arxiv_search(query: str) -> str:
+    """Search ArXiv for PRE-PRINTS — the latest unpublished research in STEM fields. ArXiv papers are first-to-publish but NOT peer-reviewed.
+
+USE FOR:
+- Cutting-edge research: newest papers in AI, ML, physics, math, CS, statistics
+- Free full-text PDFs of recent papers
+- Filtering by arXiv category (cs.AI, cs.LG, physics, math, stat.ML, etc.)
+
+DO NOT USE FOR:
+- Peer-reviewed/published papers (use google_scholar — it covers journals)
+- Non-STEM fields: medicine, history, humanities, social science (use google_scholar)
+
+SIMPLE: 'transformer neural networks' | ADVANCED: {"query": "attention", "max_results": 10, "sort": "date", "category": "cs.AI"}
+
+RULE: Need the LATEST pre-prints in STEM? -> arxiv. Need PUBLISHED, peer-reviewed papers? -> google_scholar."""
     # Parse input
     search_query, opts = parse_tool_input(query, {
         "max_results": DEFAULT_MAX_RESULTS,
@@ -114,21 +128,4 @@ async def search_arxiv(query: str) -> str:
     return "\n".join(results)
 
 
-# Create the LangChain Tool wrapper
-arxiv_tool = create_tool(
-    "arxiv_search",
-    search_arxiv,
-    "Search ArXiv for PRE-PRINTS — the latest unpublished research in STEM fields. "
-    "ArXiv papers are first-to-publish but NOT peer-reviewed."
-    "\n\nUSE FOR:"
-    "\n- Cutting-edge research: newest papers in AI, ML, physics, math, CS, statistics"
-    "\n- Free full-text PDFs of recent papers"
-    "\n- Filtering by arXiv category (cs.AI, cs.LG, physics, math, stat.ML, etc.)"
-    "\n\nDO NOT USE FOR:"
-    "\n- Peer-reviewed/published papers (use google_scholar — it covers journals)"
-    "\n- Non-STEM fields: medicine, history, humanities, social science (use google_scholar)"
-    "\n\nSIMPLE: 'transformer neural networks' | "
-    "ADVANCED: {\"query\": \"attention\", \"max_results\": 10, \"sort\": \"date\", \"category\": \"cs.AI\"}"
-    "\n\nRULE: Need the LATEST pre-prints in STEM? -> arxiv. "
-    "Need PUBLISHED, peer-reviewed papers? -> google_scholar.",
-)
+arxiv_tool = tool(arxiv_search)

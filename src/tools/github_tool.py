@@ -1,7 +1,8 @@
 """GitHub search tool via the public REST API."""
 
+from langchain_core.tools import tool
 from src.utils import (
-    async_retry_on_error, async_fetch, create_tool, parse_tool_input, truncate,
+    async_retry_on_error, async_fetch, parse_tool_input, truncate,
     safe_tool_call, require_input,
 )
 from src.constants import (
@@ -32,7 +33,17 @@ async def _github_api_request(endpoint: str, params: dict) -> dict:
 
 @safe_tool_call("searching GitHub")
 async def github_search(query: str) -> str:
-    """Takes a query string, searches GitHub repos/code/issues/users, returns formatted results."""
+    """Search GitHub for repositories, code, issues, or users. Use for finding open-source projects, code examples, libraries, and developer tools.
+
+USE FOR:
+- Finding libraries: 'python web scraping framework'
+- Code examples: '{"query": "async retry decorator", "type": "code"}'
+- Issues/bugs: '{"query": "memory leak react", "type": "issues"}'
+- Developers: '{"query": "machine learning", "type": "users"}'
+
+SIMPLE: 'search query' (searches repos by stars)
+
+ADVANCED: {"query": "...", "type": "repositories|code|issues|users", "sort": "stars|forks|updated", "max_results": 5}"""
     # Parse input
     search_query, opts = parse_tool_input(query, {
         "max_results": DEFAULT_MAX_RESULTS,
@@ -114,17 +125,4 @@ async def github_search(query: str) -> str:
     return header + "\n\n".join(formatted)
 
 
-github_tool = create_tool(
-    "github_search",
-    github_search,
-    "Search GitHub for repositories, code, issues, or users. Use for finding "
-    "open-source projects, code examples, libraries, and developer tools."
-    "\n\nUSE FOR:"
-    "\n- Finding libraries: 'python web scraping framework'"
-    "\n- Code examples: '{\"query\": \"async retry decorator\", \"type\": \"code\"}'"
-    "\n- Issues/bugs: '{\"query\": \"memory leak react\", \"type\": \"issues\"}'"
-    "\n- Developers: '{\"query\": \"machine learning\", \"type\": \"users\"}'"
-    "\n\nSIMPLE: 'search query' (searches repos by stars)"
-    "\n\nADVANCED: {\"query\": \"...\", \"type\": \"repositories|code|issues|users\", "
-    "\"sort\": \"stars|forks|updated\", \"max_results\": 5}",
-)
+github_tool = tool(github_search)

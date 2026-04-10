@@ -4,13 +4,13 @@ import json
 import asyncio
 from typing import Dict
 from src.constants import TRUNCATION_PRESERVE_RATIO
-from src.utils import create_tool
+from langchain_core.tools import tool
 
 # Import the async search functions from our tools
 from src.tools.search_tool import web_search
-from src.tools.wikipedia_tool import search_wikipedia
-from src.tools.news_tool import search_news
-from src.tools.arxiv_tool import search_arxiv
+from src.tools.wikipedia_tool import wikipedia
+from src.tools.news_tool import news_search
+from src.tools.arxiv_tool import arxiv_search
 
 
 # Timeout for the entire parallel operation (seconds)
@@ -30,9 +30,9 @@ def get_search_function(search_type: str):
     """Return the async search function for a given type, or None."""
     search_functions = {
         "web": web_search,
-        "wikipedia": search_wikipedia,
-        "news": search_news,
-        "arxiv": search_arxiv,
+        "wikipedia": wikipedia,
+        "news": news_search,
+        "arxiv": arxiv_search,
     }
     return search_functions.get(search_type.lower())
 
@@ -95,7 +95,17 @@ async def execute_single_search(search_spec: Dict) -> Dict:
 
 
 async def parallel_search(input_str: str) -> str:
-    """Execute multiple searches concurrently from a JSON spec with a 'searches' array."""
+    """Execute multiple searches in parallel for faster results. Use this when you need to gather information from multiple sources at once.
+
+    SUPPORTED TYPES: web, wikipedia, news, arxiv
+
+    FORMAT:
+    {"searches": [{"type": "web", "query": "..."}, {"type": "arxiv", "query": "..."}]}
+
+    EXAMPLE:
+    {"searches": [{"type": "web", "query": "Tesla stock 2024"}, {"type": "wikipedia", "query": "Tesla Inc"}, {"type": "news", "query": "Tesla"}, {"type": "arxiv", "query": "electric vehicle battery"}]}
+
+    LIMITS: Maximum 10 searches per call. All run simultaneously."""
     # Parse input
     try:
         spec = json.loads(input_str)
@@ -166,23 +176,4 @@ async def parallel_search(input_str: str) -> str:
     return "\n".join(output_lines)
 
 
-# Create the LangChain Tool wrapper
-parallel_tool = create_tool(
-    name="parallel_search",
-    async_fn=parallel_search,
-    description=(
-        "Execute multiple searches in parallel for faster results. "
-        "Use this when you need to gather information from multiple sources at once. "
-        "\n\nSUPPORTED TYPES: web, wikipedia, news, arxiv"
-        "\n\nFORMAT:"
-        '\n{"searches": [{"type": "web", "query": "..."}, {"type": "arxiv", "query": "..."}]}'
-        "\n\nEXAMPLE:"
-        '\n{"searches": ['
-        '{"type": "web", "query": "Tesla stock 2024"}, '
-        '{"type": "wikipedia", "query": "Tesla Inc"}, '
-        '{"type": "news", "query": "Tesla"}, '
-        '{"type": "arxiv", "query": "electric vehicle battery"}'
-        ']}'
-        "\n\nLIMITS: Maximum 10 searches per call. All run simultaneously."
-    ),
-)
+parallel_tool = tool(parallel_search)

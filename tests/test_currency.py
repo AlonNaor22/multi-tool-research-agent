@@ -22,14 +22,14 @@ class TestCurrencyConversion:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.currency_tool import currency_convert
-            result = await currency_convert("100 USD to EUR")
+            from src.tools.currency_tool import currency_converter
+            result = await currency_converter("100 USD to EUR")
 
             assert "92" in result or "EUR" in result
 
     async def test_same_currency(self):
-        from src.tools.currency_tool import currency_convert
-        result = await currency_convert("100 USD to USD")
+        from src.tools.currency_tool import currency_converter
+        result = await currency_converter("100 USD to USD")
         # Should handle same-currency conversion
         assert "100" in result or len(result) > 0
 
@@ -42,8 +42,8 @@ class TestCurrencyConversion:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.currency_tool import currency_convert
-            result = await currency_convert("100 XYZ to ABC")
+            from src.tools.currency_tool import currency_converter
+            result = await currency_converter("100 XYZ to ABC")
 
             assert len(result) > 0  # Should return error, not crash
 
@@ -62,8 +62,8 @@ class TestCurrencyConversion:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.currency_tool import currency_convert
-            result = await currency_convert("100 dollars to euros")
+            from src.tools.currency_tool import currency_converter
+            result = await currency_converter("100 dollars to euros")
 
             assert len(result) > 0
 
@@ -73,7 +73,7 @@ class TestCurrencyConversion:
         mock_session.get.side_effect = aiohttp.ClientError("Network error")
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.currency_tool import currency_convert
-            result = await currency_convert("100 USD to EUR")
+            from src.tools.currency_tool import currency_converter
+            result = await currency_converter("100 USD to EUR")
 
             assert "Error" in result or "error" in result.lower() or "failed" in result.lower()

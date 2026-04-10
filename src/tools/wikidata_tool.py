@@ -4,7 +4,8 @@ import asyncio
 import aiohttp
 from typing import Dict, List
 
-from src.utils import async_retry_on_error, async_fetch, create_tool, cached_tool, safe_tool_call, require_input
+from langchain_core.tools import tool
+from src.utils import async_retry_on_error, async_fetch, cached_tool, safe_tool_call, require_input
 from src.constants import (
     WIKIDATA_SPARQL_URL,
     DEFAULT_HTTP_TIMEOUT,
@@ -122,8 +123,23 @@ def format_search_results(results: List[Dict], query: str) -> str:
 
 
 @safe_tool_call("querying Wikidata")
-async def wikidata_query(input_str: str) -> str:
-    """Query Wikidata for structured facts about entities."""
+async def wikidata(input_str: str) -> str:
+    """Look up STRUCTURED ENTITY FACTS from Wikidata — the database behind Wikipedia. Use when you need a specific property of a known entity (country, person, city, etc.).
+
+USE FOR:
+- Entity properties: population, GDP, area, coordinates, founding date
+- Relationships: 'who is the president of France', 'capital of Japan'
+- Classifications: 'what type of animal is a platypus'
+- Cross-referencing: verify a fact from another source
+
+DO NOT USE FOR:
+- Explanations or history (use wikipedia)
+- Scientific constants or physical properties (use wolfram_alpha)
+- Current events or recent changes (use web_search)
+
+FORMAT: 'entity name', 'search: term', 'sparql: SPARQL query'
+
+RULE: Need a FACT about an ENTITY? -> Wikidata. Need an EXPLANATION? -> Wikipedia. Need a SCIENTIFIC VALUE? -> Wolfram."""
     err = require_input(input_str, "query")
     if err:
         return err
@@ -206,22 +222,4 @@ EXAMPLES:
 # Expose cache for tests (_wikidata_cached_fetch._cache)
 _cache = _wikidata_cached_fetch._cache
 
-# Create the LangChain Tool wrapper
-wikidata_tool = create_tool(
-    "wikidata",
-    wikidata_query,
-        "Look up STRUCTURED ENTITY FACTS from Wikidata — the database behind Wikipedia. "
-        "Use when you need a specific property of a known entity (country, person, city, etc.)."
-        "\n\nUSE FOR:"
-        "\n- Entity properties: population, GDP, area, coordinates, founding date"
-        "\n- Relationships: 'who is the president of France', 'capital of Japan'"
-        "\n- Classifications: 'what type of animal is a platypus'"
-        "\n- Cross-referencing: verify a fact from another source"
-        "\n\nDO NOT USE FOR:"
-        "\n- Explanations or history (use wikipedia)"
-        "\n- Scientific constants or physical properties (use wolfram_alpha)"
-        "\n- Current events or recent changes (use web_search)"
-        "\n\nFORMAT: 'entity name', 'search: term', 'sparql: SPARQL query'"
-    "\n\nRULE: Need a FACT about an ENTITY? -> Wikidata. Need an EXPLANATION? -> Wikipedia. "
-    "Need a SCIENTIFIC VALUE? -> Wolfram.",
-)
+wikidata_tool = tool(wikidata)

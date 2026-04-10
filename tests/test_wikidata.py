@@ -52,9 +52,9 @@ class TestWikidataQuery:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.wikidata_tool import wikidata_query, _cache
+            from src.tools.wikidata_tool import wikidata, _cache
             _cache.clear()
-            result = await wikidata_query("Albert Einstein")
+            result = await wikidata("Albert Einstein")
 
             assert "date of birth" in result
             assert "14 March 1879" in result
@@ -65,9 +65,9 @@ class TestWikidataQuery:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.wikidata_tool import wikidata_query, _cache
+            from src.tools.wikidata_tool import wikidata, _cache
             _cache.clear()
-            result = await wikidata_query("search: Einstein")
+            result = await wikidata("search: Einstein")
 
             assert "Albert Einstein" in result
 
@@ -77,9 +77,9 @@ class TestWikidataQuery:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.wikidata_tool import wikidata_query, _cache
+            from src.tools.wikidata_tool import wikidata, _cache
             _cache.clear()
-            result = await wikidata_query("sparql: SELECT ?item WHERE { ?item rdfs:label 'test'@en }")
+            result = await wikidata("sparql: SELECT ?item WHERE { ?item rdfs:label 'test'@en }")
 
             assert "SPARQL Results" in result or "no results" in result.lower()
 
@@ -92,9 +92,9 @@ class TestWikidataQuery:
         mock_session.get.side_effect = [empty_resp, search_resp]
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.wikidata_tool import wikidata_query, _cache
+            from src.tools.wikidata_tool import wikidata, _cache
             _cache.clear()
-            result = await wikidata_query("Einstein")
+            result = await wikidata("Einstein")
 
             assert "Albert Einstein" in result
 
@@ -104,20 +104,20 @@ class TestWikidataQuery:
         mock_session.get.side_effect = aiohttp.ClientError("failed")
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.wikidata_tool import wikidata_query, _cache
+            from src.tools.wikidata_tool import wikidata, _cache
             _cache.clear()
-            result = await wikidata_query("test")
+            result = await wikidata("test")
 
             assert "Error" in result
 
     async def test_empty_query(self):
-        from src.tools.wikidata_tool import wikidata_query
-        result = await wikidata_query("")
+        from src.tools.wikidata_tool import wikidata
+        result = await wikidata("")
         assert "Error" in result
 
     async def test_help_command(self):
-        from src.tools.wikidata_tool import wikidata_query
-        result = await wikidata_query("help")
+        from src.tools.wikidata_tool import wikidata
+        result = await wikidata("help")
         assert "SPARQL" in result
 
     async def test_caching(self):
@@ -126,9 +126,9 @@ class TestWikidataQuery:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.wikidata_tool import wikidata_query, _cache
+            from src.tools.wikidata_tool import wikidata, _cache
             _cache.clear()
-            await wikidata_query("Albert Einstein")
-            await wikidata_query("Albert Einstein")  # Should hit cache
+            await wikidata("Albert Einstein")
+            await wikidata("Albert Einstein")  # Should hit cache
 
             assert mock_session.get.call_count == 1

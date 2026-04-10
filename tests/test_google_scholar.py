@@ -50,9 +50,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await scholar_search("machine learning")
+            result = await google_scholar("machine learning")
 
             assert "Machine Learning: A Survey" in result
             assert "John Smith" in result
@@ -64,9 +64,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await scholar_search("deep learning")
+            result = await google_scholar("deep learning")
 
             # Second paper has 4 authors, should show 3 + et al.
             assert "et al." in result
@@ -77,9 +77,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await scholar_search("machine learning")
+            result = await google_scholar("machine learning")
 
             assert "doi.org" in result
 
@@ -89,9 +89,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await scholar_search("deep learning")
+            result = await google_scholar("deep learning")
 
             assert "arxiv.org" in result
 
@@ -102,9 +102,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await scholar_search("xyznonexistent123")
+            result = await google_scholar("xyznonexistent123")
 
             assert "No academic papers found" in result
 
@@ -114,9 +114,9 @@ class TestGoogleScholar:
         mock_session.get.side_effect = aiohttp.ClientError("blocked")
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await scholar_search("test")
+            result = await google_scholar("test")
 
             assert "Error" in result
 
@@ -126,9 +126,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await scholar_search('{"query": "AI", "year_from": 2020, "year_to": 2025}')
+            result = await google_scholar('{"query": "AI", "year_from": 2020, "year_to": 2025}')
 
             assert len(result) > 0
             # Verify the year param was passed
@@ -138,13 +138,13 @@ class TestGoogleScholar:
             assert params.get("year") == "2020-2025"
 
     async def test_empty_query(self):
-        from src.tools.google_scholar_tool import scholar_search
-        result = await scholar_search("")
+        from src.tools.google_scholar_tool import google_scholar
+        result = await google_scholar("")
         assert "Error" in result
 
     async def test_help_command(self):
-        from src.tools.google_scholar_tool import scholar_search
-        result = await scholar_search("help")
+        from src.tools.google_scholar_tool import google_scholar
+        result = await google_scholar("help")
         assert "Semantic Scholar" in result
 
     async def test_year_from_prefix(self):
@@ -153,9 +153,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            await scholar_search("from 2020: neural networks")
+            await google_scholar("from 2020: neural networks")
 
             call_kwargs = mock_session.get.call_args
             params = call_kwargs[1].get("params", {}) if call_kwargs[1] else {}
@@ -167,9 +167,9 @@ class TestGoogleScholar:
         mock_session.get.return_value = mock_resp
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import scholar_search, _cache
+            from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            await scholar_search("caching test")
-            await scholar_search("caching test")  # Should hit cache
+            await google_scholar("caching test")
+            await google_scholar("caching test")  # Should hit cache
 
             assert mock_session.get.call_count == 1  # Only one actual API call

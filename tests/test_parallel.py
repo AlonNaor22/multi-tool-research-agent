@@ -30,7 +30,7 @@ class TestParallelSearch:
             return "Wiki: AI article"
 
         with patch("src.tools.parallel_tool.web_search", side_effect=mock_web_search), \
-             patch("src.tools.parallel_tool.search_wikipedia", side_effect=mock_wiki_search):
+             patch("src.tools.parallel_tool.wikipedia", side_effect=mock_wiki_search):
             input_data = json.dumps({
                 "searches": [
                     {"type": "web", "query": "artificial intelligence"},
@@ -80,7 +80,7 @@ class TestParallelSearch:
             return "Wiki: works fine"
 
         with patch("src.tools.parallel_tool.web_search", side_effect=mock_web_search), \
-             patch("src.tools.parallel_tool.search_wikipedia", side_effect=mock_wiki_search):
+             patch("src.tools.parallel_tool.wikipedia", side_effect=mock_wiki_search):
             input_data = json.dumps({
                 "searches": [
                     {"type": "web", "query": "test"},

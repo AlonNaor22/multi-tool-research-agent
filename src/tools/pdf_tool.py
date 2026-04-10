@@ -4,7 +4,8 @@ import io
 import re
 from typing import Optional
 
-from src.utils import async_retry_on_error, async_fetch, create_tool, safe_tool_call, require_input
+from langchain_core.tools import tool
+from src.utils import async_retry_on_error, async_fetch, safe_tool_call, require_input
 from src.constants import DEFAULT_USER_AGENT, PDF_MAX_PAGES
 
 # Try pdfplumber first (better quality), fall back to pypdf
@@ -144,8 +145,21 @@ def clean_text(text: str, max_length: int = 15000) -> str:
 
 
 @safe_tool_call("reading PDF")
-async def read_pdf(input_str: str) -> str:
-    """Fetch and read a PDF from a URL."""
+async def pdf_reader(input_str: str) -> str:
+    """Specialized PDF reader using pdfplumber — handles complex layouts, multi-column papers, and tables better than fetch_url. Use for academic papers and detailed reports.
+
+    USE FOR:
+    - Research papers with complex formatting (multi-column, equations)
+    - Long PDFs where you need page control: '5 pages: URL'
+    - Quick overviews: 'summary: URL'
+
+    DO NOT USE FOR:
+    - Simple PDFs or quick reads (use fetch_url — it also handles PDFs)
+    - HTML web pages (use fetch_url or web_scraper)
+
+    FORMAT: 'URL', '5 pages: URL', 'summary: URL'
+
+    RULE: Complex/long PDF? -> pdf_reader. Simple PDF or web page? -> fetch_url."""
     err = require_input(input_str, "URL")
     if err:
         return err
@@ -216,21 +230,4 @@ TIPS:
 PDF library: {PDF_LIBRARY or 'NOT INSTALLED (pip install pdfplumber)'}"""
 
 
-# Create the LangChain Tool wrapper
-pdf_tool = create_tool(
-    "pdf_reader",
-    read_pdf,
-    description=(
-        "Specialized PDF reader using pdfplumber — handles complex layouts, multi-column "
-        "papers, and tables better than fetch_url. Use for academic papers and detailed reports."
-        "\n\nUSE FOR:"
-        "\n- Research papers with complex formatting (multi-column, equations)"
-        "\n- Long PDFs where you need page control: '5 pages: URL'"
-        "\n- Quick overviews: 'summary: URL'"
-        "\n\nDO NOT USE FOR:"
-        "\n- Simple PDFs or quick reads (use fetch_url — it also handles PDFs)"
-        "\n- HTML web pages (use fetch_url or web_scraper)"
-        "\n\nFORMAT: 'URL', '5 pages: URL', 'summary: URL'"
-        "\n\nRULE: Complex/long PDF? -> pdf_reader. Simple PDF or web page? -> fetch_url."
-    )
-)
+pdf_tool = tool(pdf_reader)

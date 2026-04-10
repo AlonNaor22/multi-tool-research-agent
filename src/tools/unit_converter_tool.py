@@ -1,8 +1,9 @@
 """Unit converter — length, weight, volume, time, speed, area, temperature, data."""
 
 import re
-from typing import Optional, Tuple, Dict
-from langchain_core.tools import Tool
+from typing import Optional, Tuple, Dict, Type
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 
 # ============================================================================
@@ -183,80 +184,19 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> str:
     return f"{value} {from_unit} = {result:.6g} {to_unit}"
 
 
-def convert(input_str: str) -> str:
-    """Parse and execute a unit conversion request like '5 km to miles'."""
-    input_str = input_str.strip()
+# ---------------------------------------------------------------------------
+# BaseTool subclass
+# ---------------------------------------------------------------------------
 
-    # Handle empty input
-    if not input_str:
-        return "Error: Empty conversion request"
-
-    # Command: help
-    if input_str.lower() in ("help", "?"):
-        return _get_help()
-
-    # Parse conversion pattern: "[convert] VALUE FROM_UNIT to TO_UNIT"
-    conversion_match = re.match(
-        r'(?:convert\s+)?(-?[\d.]+)\s*([a-zA-Z_/]+)\s+to\s+([a-zA-Z_/]+)',
-        input_str,
-        re.IGNORECASE
-    )
-
-    if conversion_match:
-        try:
-            value = float(conversion_match.group(1))
-            from_unit = conversion_match.group(2)
-            to_unit = conversion_match.group(3)
-            return convert_units(value, from_unit, to_unit)
-        except ValueError as e:
-            return f"Error: {str(e)}"
-
-    return (
-        "Error: Could not parse conversion request. "
-        "Use format: '5 km to miles' or 'convert 100 F to C'"
-    )
+class UnitConverterInput(BaseModel):
+    value: float = Field(description="Numeric value to convert")
+    from_unit: str = Field(description="Source unit (e.g. 'kg', 'miles', 'celsius')")
+    to_unit: str = Field(description="Target unit (e.g. 'lb', 'km', 'fahrenheit')")
 
 
-def _get_help() -> str:
-    """Return help text."""
-    return """Unit Converter Help:
-
-FORMAT:
-  5 km to miles
-  convert 100 F to C
-  10 pounds to kg
-
-SUPPORTED UNITS:
-
-Length: m, km, cm, mm, mi (miles), yd, ft, in, nm (nautical miles)
-
-Weight: kg, g, mg, lb (pounds), oz (ounces), ton, stone
-
-Volume: l, ml, gal (gallons), qt (quarts), pt (pints), cup,
-        floz (fluid oz), tbsp, tsp, m3 (cubic meters)
-
-Time: s, ms, min, h (hours), d (days), wk (weeks), mo (months), yr (years)
-
-Speed: m/s, km/h, mph, knots, ft/s
-
-Area: sqm, sqft, sqmi, acre, hectare, km2, m2
-
-Temperature: C (Celsius), F (Fahrenheit), K (Kelvin)
-
-Data: b (bytes), kb, mb, gb, tb, pb"""
-
-
-async def async_convert(input_str: str) -> str:
-    """Async wrapper for convert()."""
-    return convert(input_str)
-
-
-# Create the LangChain Tool wrapper
-unit_converter_tool = Tool(
-    name="unit_converter",
-    func=convert,
-    coroutine=async_convert,
-    description=(
+class UnitConverterTool(BaseTool):
+    name: str = "unit_converter"
+    description: str = (
         "Convert between different units of measurement. "
         "\n\nFORMAT: '5 km to miles', 'convert 100 F to C', '10 pounds to kg'"
         "\n\nSUPPORTED UNITS:"
@@ -269,4 +209,26 @@ unit_converter_tool = Tool(
         "\n- Temperature: C, F, K"
         "\n- Data: bytes, kb, mb, gb, tb"
     )
-)
+    args_schema: Type[BaseModel] = UnitConverterInput
+
+    def _run(self, value: float = 0, from_unit: str = "", to_unit: str = "") -> str:
+        return convert_units(value, from_unit, to_unit)
+
+    async def _arun(self, **kwargs) -> str:
+        return self._run(**kwargs)
+
+
+unit_converter_tool = UnitConverterTool()
+
+
+def convert(input_str: str) -> str:
+    """Parse '10 km to miles' string and convert. Used by tests and CLI."""
+    if not input_str or not input_str.strip():
+        return "Error: No conversion request provided."
+    m = re.match(
+        r'(?:convert\s+)?(-?[\d.]+)\s*([a-zA-Z_/]+)\s+to\s+([a-zA-Z_/]+)',
+        input_str.strip(), re.IGNORECASE,
+    )
+    if not m:
+        return f"Error: Could not parse '{input_str}'. Use format: '10 km to miles'"
+    return convert_units(float(m.group(1)), m.group(2).lower(), m.group(3).lower())

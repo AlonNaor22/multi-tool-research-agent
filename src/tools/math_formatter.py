@@ -2,7 +2,7 @@
 
 import json
 from typing import Optional
-from langchain_core.tools import Tool
+from langchain_core.tools import tool
 
 
 # ---------------------------------------------------------------------------
@@ -124,23 +124,15 @@ def format_math(input_str: str) -> str:
     return "\n".join(lines)
 
 
-async def async_format_math(input_str: str) -> str:
-    """Async wrapper for format_math()."""
+async def math_formatter(input_str: str) -> str:
+    """Format mathematical results with properly rendered equations and matrices.
+
+    Input: A string from calculator tool that starts with 'MATH_STRUCTURED:' followed by JSON data.
+
+    Output: Clean formatted text with LaTeX equations and matrix tables.
+
+    ALWAYS use this tool to format calculator output that starts with 'MATH_STRUCTURED:' before presenting results to the user. Pass the ENTIRE calculator output (including the 'MATH_STRUCTURED:' prefix) as input to this tool."""
     return format_math(input_str)
 
 
-# LangChain Tool wrapper
-math_formatter_tool = Tool(
-    name="math_formatter",
-    func=format_math,
-    coroutine=async_format_math,
-    description=(
-        "Format mathematical results with properly rendered equations and matrices. "
-        "\n\nInput: A string from calculator tool that starts with 'MATH_STRUCTURED:' "
-        "followed by JSON data."
-        "\n\nOutput: Clean formatted text with LaTeX equations and matrix tables."
-        "\n\nALWAYS use this tool to format calculator output that starts with 'MATH_STRUCTURED:' "
-        "before presenting results to the user. Pass the ENTIRE calculator output "
-        "(including the 'MATH_STRUCTURED:' prefix) as input to this tool."
-    ),
-)
+math_formatter_tool = tool(math_formatter)

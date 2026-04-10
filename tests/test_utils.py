@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch
 from src.utils import (
     async_retry_on_error, async_run_with_timeout,
-    safe_execute, TTLCache, _is_rate_limit_error, make_sync,
+    safe_execute, TTLCache, _is_rate_limit_error,
 )
 
 
@@ -110,24 +110,6 @@ class TestSafeExecute:
             raise ValueError("boom")
         result = await safe_execute(fail)
         assert result is None
-
-
-class TestMakeSync:
-    """Tests for the make_sync bridge."""
-
-    def test_wraps_async_function(self):
-        async def async_add(a, b):
-            return a + b
-
-        sync_add = make_sync(async_add)
-        assert sync_add(2, 3) == 5
-
-    def test_preserves_name(self):
-        async def my_func():
-            return True
-
-        wrapped = make_sync(my_func)
-        assert wrapped.__name__ == "my_func"
 
 
 class TestTTLCache:

@@ -2,8 +2,11 @@
 
 import os
 import asyncio
+from typing import Type, Literal, Optional
 import aiohttp
-from src.utils import async_retry_on_error, parse_tool_input, get_aiohttp_session, create_tool, safe_tool_call
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+from src.utils import async_retry_on_error, parse_tool_input, get_aiohttp_session, safe_tool_call
 
 
 # API endpoints
@@ -94,8 +97,9 @@ def _format_forecast(data: dict, units: str, days: int = 3) -> str:
     delay=1.0,
     exceptions=(aiohttp.ClientError, asyncio.TimeoutError)
 )
-async def get_weather(query: str) -> str:
-    """Get current weather or forecast for a location."""
+async def _get_weather(location: str = "", lat: float = None, lon: float = None,
+                       units: str = "metric", forecast: bool = False, days: int = 3) -> str:
+    """Core async weather logic."""
     api_key = os.getenv("OPENWEATHER_API_KEY")
 
     if not api_key:
@@ -105,21 +109,10 @@ async def get_weather(query: str) -> str:
             "Get a free key at: https://openweathermap.org/api"
         )
 
-    # Parse input
-    location_str, options = parse_tool_input(query, {
-        "units": "metric", "forecast": False, "days": 3,
-    })
-    if location_str and location_str.strip().startswith("{"):
-        location_str = ""
-    location = options.get("location", location_str or None)
-    lat = options.get("lat")
-    lon = options.get("lon")
-    units = options.get("units", "metric")
-    forecast = options.get("forecast", False)
-    forecast_days = min(options.get("days", 3), 5)
-
     if units not in ("metric", "imperial"):
         units = "metric"
+
+    forecast_days = min(days, 5)
 
     params = {
         "appid": api_key,
@@ -149,11 +142,22 @@ async def get_weather(query: str) -> str:
         return _format_current_weather(data, units)
 
 
-# Create the LangChain Tool wrapper
-weather_tool = create_tool(
-    "weather",
-    get_weather,
-    description=(
+# ---------------------------------------------------------------------------
+# BaseTool subclass
+# ---------------------------------------------------------------------------
+
+class WeatherInput(BaseModel):
+    location: str = Field(default="", description="City name (e.g. 'London', 'New York')")
+    lat: Optional[float] = Field(default=None, description="Latitude for coordinate-based lookup")
+    lon: Optional[float] = Field(default=None, description="Longitude for coordinate-based lookup")
+    units: Literal["metric", "imperial"] = Field(default="metric", description="Temperature units")
+    forecast: bool = Field(default=False, description="If true, return multi-day forecast")
+    days: int = Field(default=3, ge=1, le=5, description="Number of forecast days (1-5)")
+
+
+class WeatherTool(BaseTool):
+    name: str = "weather"
+    description: str = (
         "Get current weather or forecast for a location. "
         "\n\nSIMPLE USAGE: Just provide a city name: 'London', 'New York', 'Tokyo'"
         "\n\nADVANCED USAGE: Provide JSON with options:"
@@ -169,4 +173,31 @@ weather_tool = create_tool(
         '\n- {"location": "Tokyo", "forecast": true}'
         '\n- {"lat": 40.7, "lon": -74.0, "units": "imperial"}'
     )
-)
+    args_schema: Type[BaseModel] = WeatherInput
+
+    async def _arun(self, location: str = "", lat: float = None, lon: float = None,
+                    units: str = "metric", forecast: bool = False, days: int = 3) -> str:
+        return await _get_weather(location, lat, lon, units, forecast, days)
+
+    def _run(self, **kwargs) -> str:
+        import asyncio
+        return asyncio.run(self._arun(**kwargs))
+
+
+weather_tool = WeatherTool()
+
+
+async def get_weather(query: str) -> str:
+    """Parse a location string/JSON and fetch weather. Used by tests and CLI."""
+    location_str, opts = parse_tool_input(query, {
+        "units": "metric", "forecast": False, "days": 3,
+    })
+    if location_str and location_str.strip().startswith("{"):
+        location_str = ""
+    return await _get_weather(
+        location=opts.get("location", location_str or ""),
+        lat=opts.get("lat"), lon=opts.get("lon"),
+        units=opts.get("units", "metric"),
+        forecast=opts.get("forecast", False),
+        days=min(opts.get("days", 3), 5),
+    )

@@ -10,7 +10,7 @@ if "duckduckgo_search" not in sys.modules:
 
 mock_ddgs = sys.modules["duckduckgo_search"]
 
-from src.tools.news_tool import search_news
+from src.tools.news_tool import news_search
 
 
 class TestNewsSearch:
@@ -38,7 +38,7 @@ class TestNewsSearch:
         mock_instance.news.return_value = mock_results
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = await search_news("AI news")
+        result = await news_search("AI news")
 
         assert "AI Breakthrough" in result
         assert "Market Update" in result
@@ -48,7 +48,7 @@ class TestNewsSearch:
         mock_instance.news.return_value = []
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = await search_news("obscure topic no results")
+        result = await news_search("obscure topic no results")
 
         assert "No news" in result or "no" in result.lower()
 
@@ -65,12 +65,12 @@ class TestNewsSearch:
         mock_instance.news.return_value = mock_results
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = await search_news('{"query": "tech", "timelimit": "d"}')
+        result = await news_search('{"query": "tech", "timelimit": "d"}')
 
         assert "Recent News" in result
 
     async def test_empty_query(self):
-        result = await search_news("")
+        result = await news_search("")
         assert len(result) > 0
 
     async def test_handles_api_error(self):
@@ -78,6 +78,6 @@ class TestNewsSearch:
         mock_instance.news.side_effect = Exception("API error")
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = await search_news("test")
+        result = await news_search("test")
 
         assert "Error" in result or "error" in result.lower()

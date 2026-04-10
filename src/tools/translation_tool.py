@@ -3,7 +3,8 @@
 import re
 import asyncio
 
-from src.utils import async_retry_on_error, create_tool, safe_tool_call, require_input
+from langchain_core.tools import tool
+from src.utils import async_retry_on_error, safe_tool_call, require_input
 
 
 # Common language name -> code mapping for user-friendly input
@@ -49,8 +50,16 @@ async def _async_do_translate(text: str, source: str, target: str) -> str:
 
 
 @safe_tool_call("translating text")
-async def translate_text(input_str: str) -> str:
-    """Translate text between languages using pipe-delimited or natural format."""
+async def translate(input_str: str) -> str:
+    """Translate text between 100+ languages using Google Translate.
+
+    FORMAT: 'text | source | target', 'text | to language', 'text to language'
+
+    EXAMPLES: 'Hello | en | es', 'Bonjour to english', 'text | to japanese'
+
+    RETURNS: Translated text with source/target language info.
+
+    USE FOR: Translating non-English sources, research in other languages."""
     err = require_input(input_str, "translation request")
     if err:
         return err
@@ -127,15 +136,4 @@ EXAMPLES:
   "The weather is nice today | to german" """
 
 
-# Create the LangChain Tool wrapper
-translation_tool = create_tool(
-    "translate",
-    translate_text,
-    description=(
-        "Translate text between 100+ languages using Google Translate. "
-        "\n\nFORMAT: 'text | source | target', 'text | to language', 'text to language'"
-        "\n\nEXAMPLES: 'Hello | en | es', 'Bonjour to english', 'text | to japanese'"
-        "\n\nRETURNS: Translated text with source/target language info."
-        "\n\nUSE FOR: Translating non-English sources, research in other languages."
-    )
-)
+translation_tool = tool(translate)

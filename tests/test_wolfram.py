@@ -15,15 +15,15 @@ class TestWolframAlpha:
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
-            from src.tools.wolfram_tool import query_wolfram_alpha
-            result = await query_wolfram_alpha("distance from earth to sun")
+            from src.tools.wolfram_tool import wolfram_alpha
+            result = await wolfram_alpha("distance from earth to sun")
 
             assert "149,600,000" in result
 
     async def test_missing_api_key(self):
         with patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", None):
-            from src.tools.wolfram_tool import query_wolfram_alpha
-            result = await query_wolfram_alpha("test query")
+            from src.tools.wolfram_tool import wolfram_alpha
+            result = await wolfram_alpha("test query")
 
             assert "API" in result or "not configured" in result.lower() or "key" in result.lower()
 
@@ -37,8 +37,8 @@ class TestWolframAlpha:
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
-            from src.tools.wolfram_tool import query_wolfram_alpha
-            result = await query_wolfram_alpha("asdfghjkl gibberish")
+            from src.tools.wolfram_tool import wolfram_alpha
+            result = await wolfram_alpha("asdfghjkl gibberish")
 
             assert "did not understand" in result.lower() or len(result) > 0
 
@@ -49,8 +49,8 @@ class TestWolframAlpha:
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
-            from src.tools.wolfram_tool import query_wolfram_alpha
-            result = await query_wolfram_alpha("test")
+            from src.tools.wolfram_tool import wolfram_alpha
+            result = await wolfram_alpha("test")
 
             assert len(result) > 0  # Should return error info, not crash
 
@@ -61,7 +61,7 @@ class TestWolframAlpha:
 
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.wolfram_tool.WOLFRAM_ALPHA_APP_ID", "test_key"):
-            from src.tools.wolfram_tool import query_wolfram_alpha
-            result = await query_wolfram_alpha("test")
+            from src.tools.wolfram_tool import wolfram_alpha
+            result = await wolfram_alpha("test")
 
             assert "Error" in result or "timeout" in result.lower() or "failed" in result.lower()
