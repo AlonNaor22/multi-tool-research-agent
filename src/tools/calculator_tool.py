@@ -1,11 +1,4 @@
-"""Calculator tool for the research agent.
-
-A focused calculator with support for:
-- Basic arithmetic and math functions
-- Variables (store and reuse values)
-
-Uses a safe evaluation approach to prevent code injection attacks.
-"""
+"""Calculator tool — safe math evaluation with variables and step-by-step solutions."""
 
 import json
 import math
@@ -75,21 +68,14 @@ SAFE_MATH_FUNCTIONS = {
 
 
 class AdvancedCalculator:
-    """
-    A calculator with variable storage and safe expression evaluation.
-
-    Features:
-    - Store and recall variables
-    - Math functions (sqrt, sin, cos, factorial, etc.)
-    - Safe evaluation (no code injection)
-    """
+    """Calculator with variable storage and safe expression evaluation."""
 
     def __init__(self):
-        """Initialize calculator with empty variable storage."""
+        """Initialize with empty variable storage."""
         self.variables: Dict[str, float] = {}
 
     def set_variable(self, name: str, value: float) -> str:
-        """Store a variable."""
+        """Store a named variable for later use in expressions."""
         # Validate variable name (alphanumeric, starts with letter)
         if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
             return f"Error: Invalid variable name '{name}'. Use letters, numbers, underscore (start with letter)."
@@ -102,7 +88,7 @@ class AdvancedCalculator:
         return f"Stored: {name} = {value}"
 
     def get_variable(self, name: str) -> Optional[float]:
-        """Retrieve a variable value."""
+        """Retrieve a stored variable value, or None."""
         return self.variables.get(name)
 
     def list_variables(self) -> str:
@@ -120,12 +106,7 @@ class AdvancedCalculator:
         return "All variables cleared."
 
     def safe_eval(self, expression: str) -> float:
-        """
-        Safely evaluate a mathematical expression.
-
-        This uses Python's eval() but with a restricted namespace
-        containing only safe math functions and stored variables.
-        """
+        """Evaluate a math expression in a restricted namespace (no builtins)."""
         # Build the safe namespace
         safe_namespace = {}
 
@@ -161,23 +142,7 @@ class AdvancedCalculator:
         return float(result)
 
     def calculate(self, input_str: str) -> str:
-        """
-        Process a calculation request.
-
-        Supports:
-        - Simple expressions: "2 + 2"
-        - Math functions: "sqrt(16)", "sin(pi/2)", "factorial(5)"
-        - Variable assignment: "x = 10" or "set x = 10"
-        - Variable usage: "x * 2" (after setting x)
-        - List variables: "variables" or "vars"
-        - Clear variables: "clear" or "clear variables"
-
-        Args:
-            input_str: The calculation request
-
-        Returns:
-            Result string or error message
-        """
+        """Process a calculation, variable assignment, or step-by-step request."""
         input_str = input_str.strip()
 
         # Handle empty input
@@ -287,16 +252,12 @@ _calculator = AdvancedCalculator()
 
 
 def calculate(expression: str) -> str:
-    """
-    Entry point for the calculator tool.
-
-    This function is called by the LangChain agent.
-    """
+    """Entry point for the calculator tool, called by the LangChain agent."""
     return _calculator.calculate(expression)
 
 
 async def async_calculate(expression: str) -> str:
-    """Async wrapper for the calculator tool."""
+    """Async wrapper for calculate()."""
     return calculate(expression)
 
 

@@ -1,10 +1,4 @@
-"""Observability module for the research agent.
-
-Tracks per-query metrics (token usage, costs, tool success/failure rates)
-and persists them to JSONL files for historical analysis.
-
-No external dependencies — uses LangChain callback hooks and local JSON storage.
-"""
+"""Per-query metrics tracking (tokens, costs, tool stats) with JSONL storage."""
 
 import os
 import json
@@ -18,10 +12,6 @@ from collections import Counter
 from langchain_core.callbacks import BaseCallbackHandler
 
 
-# ---------------------------------------------------------------------------
-# Cost tables — price per 1M tokens (as of 2025)
-# ---------------------------------------------------------------------------
-
 MODEL_PRICING = {
     # Sonnet
     "claude-sonnet-4-5-20250929": {"input": 3.00, "output": 15.00},
@@ -34,38 +24,30 @@ MODEL_PRICING = {
     "claude-3-opus-20240229": {"input": 15.00, "output": 75.00},
 }
 
-# Fallback pricing if model not in table
 DEFAULT_PRICING = {"input": 3.00, "output": 15.00}
 
 OBSERVABILITY_DIR = "observability"
 METRICS_FILE = os.path.join(OBSERVABILITY_DIR, "metrics.jsonl")
 
 
-# ---------------------------------------------------------------------------
-# QueryMetrics — per-query data
-# ---------------------------------------------------------------------------
-
 @dataclass
 class QueryMetrics:
-    """Metrics collected for a single agent query."""
+    """Token usage, cost, timing, and tool stats for a single query."""
 
     query_id: str = ""
     timestamp: str = ""
     question: str = ""
     model_name: str = ""
 
-    # Token usage
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
     estimated_cost_usd: float = 0.0
 
-    # Timing
     total_duration_s: float = 0.0
     thinking_duration_s: float = 0.0
     tool_duration_s: float = 0.0
 
-    # Tool metrics
     tools_called: List[Dict] = field(default_factory=list)
     tool_success_count: int = 0
     tool_failure_count: int = 0
@@ -75,19 +57,12 @@ class QueryMetrics:
 
     @classmethod
     def from_dict(cls, data: Dict) -> "QueryMetrics":
+        """Construct from a dict, ignoring unknown keys."""
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
-# ---------------------------------------------------------------------------
-# ObservabilityCallbackHandler
-# ---------------------------------------------------------------------------
-
 class ObservabilityCallbackHandler(BaseCallbackHandler):
-    """Captures token usage, tool metrics, and timing for each query.
-
-    Designed to run alongside TimingCallbackHandler and StreamingCallbackHandler.
-    After the query completes, call get_metrics() to retrieve a QueryMetrics object.
-    """
+    """Captures token usage, tool metrics, and timing per query."""
 
     def __init__(self, model_name: str = ""):
         super().__init__()
@@ -113,30 +88,24 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         self._question: str = ""
 
     def reset(self, question: str = ""):
-        """Reset for a new query."""
         self._reset_state()
         self._query_start = time.time()
         self._question = question[:200]
-
-    # --- LLM events ---
 
     def on_llm_start(self, serialized: Dict[str, Any], prompts: Any, **kwargs) -> None:
         self._llm_start = time.time()
 
     def on_llm_end(self, response: Any, **kwargs) -> None:
-        # Track thinking time
         if self._llm_start is not None:
             self._thinking_time += time.time() - self._llm_start
             self._llm_start = None
 
-        # Extract token usage from the LLM response
-        # LangChain Anthropic provider puts usage in llm_output or generations
         if hasattr(response, "llm_output") and response.llm_output:
             usage = response.llm_output.get("usage", {})
             self._input_tokens += usage.get("input_tokens", 0)
             self._output_tokens += usage.get("output_tokens", 0)
 
-        # Also check generations for usage_metadata (newer LangChain)
+        # Newer LangChain puts usage_metadata on generation messages
         if hasattr(response, "generations"):
             for gen_list in response.generations:
                 for gen in gen_list:
@@ -145,8 +114,6 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                         if metadata:
                             self._input_tokens += getattr(metadata, "input_tokens", 0)
                             self._output_tokens += getattr(metadata, "output_tokens", 0)
-
-    # --- Tool events ---
 
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         self._current_tool_name = serialized.get("name", "unknown")
@@ -180,14 +147,10 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             self._tool_failures += 1
             self._current_tool_start = None
 
-    # --- Metrics compilation ---
-
     def get_metrics(self) -> QueryMetrics:
-        """Compile all captured data into a QueryMetrics object."""
+        """Compile captured token/tool/timing data into a QueryMetrics object."""
         total_duration = time.time() - self._query_start if self._query_start else 0.0
         total_tokens = self._input_tokens + self._output_tokens
-
-        # Calculate cost
         pricing = MODEL_PRICING.get(self.model_name, DEFAULT_PRICING)
         cost = (
             self._input_tokens * pricing["input"] / 1_000_000
@@ -212,10 +175,6 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         )
 
 
-# ---------------------------------------------------------------------------
-# MetricsStore — persistent storage
-# ---------------------------------------------------------------------------
-
 class MetricsStore:
     """Append-only JSONL store for query metrics."""
 
@@ -229,12 +188,11 @@ class MetricsStore:
             os.makedirs(dirpath)
 
     def save(self, metrics: QueryMetrics) -> None:
-        """Append a single query's metrics to the JSONL file."""
         with open(self.filepath, "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics.to_dict(), ensure_ascii=False) + "\n")
 
     def load(self, limit: int = 100) -> List[QueryMetrics]:
-        """Load the most recent metrics entries."""
+        """Load the most recent `limit` metrics entries from the JSONL file."""
         if not os.path.exists(self.filepath):
             return []
 
@@ -251,7 +209,7 @@ class MetricsStore:
         return entries[-limit:]
 
     def get_summary_stats(self) -> Dict:
-        """Aggregate stats across all stored metrics."""
+        """Aggregate token, cost, duration, and tool stats across stored metrics."""
         entries = self.load(limit=500)
         if not entries:
             return {
@@ -272,7 +230,6 @@ class MetricsStore:
         total_failures = sum(e.tool_failure_count for e in entries)
         total_tool_calls = total_successes + total_failures
 
-        # Tool usage distribution
         tool_counter: Counter = Counter()
         for entry in entries:
             for tool in entry.tools_called:
@@ -291,7 +248,7 @@ class MetricsStore:
         }
 
     def format_summary(self) -> str:
-        """Format summary stats as a readable string for CLI."""
+        """Format aggregate stats as a readable multi-line string."""
         stats = self.get_summary_stats()
 
         if stats["total_queries"] == 0:
@@ -319,7 +276,7 @@ class MetricsStore:
 
 
 def format_query_metrics(metrics: QueryMetrics) -> str:
-    """Format a single query's metrics for CLI display."""
+    """Format a single QueryMetrics as a multi-line CLI summary."""
     lines = [
         f"\n📈 Query Metrics:",
         f"  Tokens: {metrics.input_tokens:,} in + {metrics.output_tokens:,} out = {metrics.total_tokens:,} total",

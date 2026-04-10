@@ -1,19 +1,7 @@
-"""Data visualization tool for the research agent.
-
-Generates charts and graphs from data using matplotlib.
-Charts are saved as PNG images in the output/ directory.
-
-Supported chart types:
-- bar, stacked_bar, line, area, pie, scatter, histogram
-- box, violin, heatmap, function
-
-Features: color palettes, multiple series, grid, legend, error bars,
-annotations, function plotting with numpy.
-"""
+"""Visualization tool — matplotlib chart generation (bar, line, pie, scatter, etc.)."""
 
 import os
 import json
-import math
 from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
@@ -63,11 +51,7 @@ def get_colors(palette: str, count: int) -> list:
 
 
 def generate_chart(input_str: str) -> str:
-    """
-    Generate a chart from a JSON specification.
-
-    See help text or tool description for full format documentation.
-    """
+    """Generate a chart from a JSON specification and save as PNG."""
     try:
         spec = json.loads(input_str)
     except json.JSONDecodeError as e:
@@ -172,7 +156,7 @@ def generate_chart(input_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _validate_data(chart_type: str, data: dict) -> str | None:
-    """Return an error message if data is invalid for the chart type, else None."""
+    """Return an error string if data is invalid for chart_type, else None."""
     if chart_type in ("bar", "stacked_bar", "line", "area"):
         if "series" not in data and ("labels" not in data or "values" not in data):
             return f"Error: {chart_type} charts need 'labels' and 'values' in data, or a 'series' array."

@@ -1,24 +1,4 @@
-"""Python REPL tool for the research agent.
-
-This tool allows the agent to execute Python code for complex calculations,
-data manipulation, and other programmatic tasks.
-
-SECURITY CONSIDERATIONS:
------------------------
-Executing arbitrary code is inherently risky. We implement several safeguards:
-
-1. TIMEOUT: Code execution is limited to 5 seconds
-2. PROCESS ISOLATION: Code runs in a separate process that can be killed on timeout
-3. RESTRICTED GLOBALS: We limit what built-in functions are available
-4. OUTPUT CAPTURE: We capture stdout/stderr instead of printing directly
-5. OUTPUT SIZE LIMIT: Maximum 10,000 characters returned
-6. NO PERSISTENT STATE: Each execution is independent (no shared variables)
-
-NOTE: This is NOT a fully sandboxed environment. For production use, consider:
-- Docker containers
-- RestrictedPython library
-- Separate subprocess with resource limits
-"""
+"""Python REPL tool — process-isolated code execution with timeout and restricted builtins."""
 
 import multiprocessing
 from langchain_core.tools import Tool
@@ -32,16 +12,7 @@ EXECUTION_TIMEOUT = 5  # seconds
 
 
 def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
-    """
-    Execute code in a child process.
-
-    Runs in a separate process so it can be killed on timeout --
-    unlike threads, processes CAN be forcefully terminated.
-
-    Args:
-        code: Python code to execute
-        result_queue: Queue to send the result back to the parent
-    """
+    """Run code in a child process with restricted builtins; results via queue."""
     import sys
     from io import StringIO
     from contextlib import redirect_stdout, redirect_stderr
@@ -148,22 +119,7 @@ def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
 
 
 def execute_python(code: str) -> str:
-    """
-    Execute Python code and return the output.
-
-    HOW THIS WORKS:
-    ---------------
-    1. We spawn a child process to run the code
-    2. The child captures stdout/stderr and sends results via a Queue
-    3. If the process exceeds the timeout, we kill it (unlike threads, this works!)
-    4. We return whatever was printed + the result of the last expression
-
-    Args:
-        code: Python code to execute (can be multi-line)
-
-    Returns:
-        The output of the code execution, or error message.
-    """
+    """Spawn a child process to run code, kill on timeout, return captured output."""
     result_queue = multiprocessing.Queue()
     process = multiprocessing.Process(
         target=_execute_code_in_process,
@@ -195,7 +151,7 @@ def execute_python(code: str) -> str:
 
 
 async def async_execute_python(code: str) -> str:
-    """Async wrapper for the Python REPL tool."""
+    """Async wrapper for execute_python()."""
     return execute_python(code)
 
 

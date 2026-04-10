@@ -1,20 +1,8 @@
-"""Date/Time calculator tool for the research agent.
-
-Performs date arithmetic, timezone conversions, business day calculations,
-and relative date computations. No external API required.
-
-Features:
-- Date arithmetic (add/subtract days, weeks, months, years)
-- Timezone conversion
-- Business days calculation (excludes weekends)
-- Day of week, week number, quarter
-- Duration between two dates
-- Relative dates (next Friday, last Monday, etc.)
-"""
+"""Date/Time calculator — arithmetic, timezone conversion, business days."""
 
 import json
 from datetime import datetime, timedelta, timezone
-from src.utils import create_tool
+from src.utils import create_tool, safe_tool_call
 
 # Common timezone offsets (no pytz dependency needed)
 TIMEZONE_OFFSETS = {
@@ -31,7 +19,7 @@ DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 
 
 def _parse_date(date_str: str) -> datetime:
-    """Parse a date string in common formats."""
+    """Parse a date string in common formats (YYYY-MM-DD, MM/DD/YYYY, etc.)."""
     formats = [
         "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y",
         "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
@@ -47,7 +35,7 @@ def _parse_date(date_str: str) -> datetime:
 
 
 def _get_tz(name: str) -> timezone:
-    """Get a timezone by name."""
+    """Get a fixed-offset timezone by abbreviation."""
     name = name.upper().strip()
     if name not in TIMEZONE_OFFSETS:
         raise ValueError(
@@ -58,7 +46,7 @@ def _get_tz(name: str) -> timezone:
 
 
 def _add_months(dt: datetime, months: int) -> datetime:
-    """Add months to a date, handling month-end edge cases."""
+    """Add months to a date, clamping day to month-end when needed."""
     import calendar
     month = dt.month - 1 + months
     year = dt.year + month // 12
@@ -68,7 +56,7 @@ def _add_months(dt: datetime, months: int) -> datetime:
 
 
 def _business_days_between(start: datetime, end: datetime) -> int:
-    """Count business days (Mon-Fri) between two dates, excluding both endpoints."""
+    """Count business days (Mon-Fri) between two dates, excluding endpoints."""
     if start > end:
         start, end = end, start
     count = 0
@@ -93,20 +81,9 @@ def _add_business_days(start: datetime, days: int) -> datetime:
     return current
 
 
+@safe_tool_call("calculating date/time")
 async def datetime_calculate(query: str) -> str:
-    """Perform date/time calculations.
-
-    Input is a JSON object specifying the operation:
-
-    Operations:
-    - now: Get current date/time: {"operation": "now", "timezone": "EST"}
-    - add: Add time to a date: {"operation": "add", "date": "2024-01-15", "days": 30}
-      Supports: days, weeks, months, years, business_days
-    - diff: Difference between dates: {"operation": "diff", "from": "2024-01-01", "to": "2024-12-31"}
-    - convert: Timezone conversion: {"operation": "convert", "datetime": "2024-01-15 14:00", "from_tz": "EST", "to_tz": "JST"}
-    - info: Date info: {"operation": "info", "date": "2024-07-04"}
-    - business_days: Count business days: {"operation": "business_days", "from": "2024-01-01", "to": "2024-01-31"}
-    """
+    """Perform date/time calculations from a JSON spec (now, add, diff, convert, info, business_days)."""
     try:
         if query.strip().startswith("{"):
             params = json.loads(query)

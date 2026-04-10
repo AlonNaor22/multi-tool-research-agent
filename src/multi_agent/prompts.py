@@ -1,13 +1,4 @@
-"""System prompts for the multi-agent orchestration system.
-
-Each specialist agent gets a focused prompt that defines its role,
-available tools, and how to approach tasks. The supervisor gets
-prompts for delegation planning and result synthesis.
-"""
-
-# ---------------------------------------------------------------------------
-# Supervisor prompts
-# ---------------------------------------------------------------------------
+"""System prompts for the supervisor and specialist agents."""
 
 SUPERVISOR_PLAN_PROMPT = """\
 You are a research supervisor. Your job is to analyze a user query and delegate
@@ -66,10 +57,6 @@ Rules:
   include them VERBATIM in your synthesis. Do NOT paraphrase or reformat HTML content.
 - If a specialist's output contains CHART_FILE: paths, include them verbatim.
 """
-
-# ---------------------------------------------------------------------------
-# Specialist prompts
-# ---------------------------------------------------------------------------
 
 RESEARCH_AGENT_PROMPT = """\
 You are a specialist research agent focused on information gathering.

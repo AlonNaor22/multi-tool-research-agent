@@ -1,37 +1,7 @@
-"""Wolfram Alpha tool for the research agent.
+"""Wolfram Alpha tool — queries the Short Answers API for precise, quantitative data."""
 
-Wolfram Alpha is a "computational knowledge engine" for PRECISE, QUANTITATIVE DATA.
-Use this when you need exact numbers, measurements, or scientific values.
-
-WHEN TO USE THIS TOOL (precise/quantitative answers):
-----------------------------------------------------
-- Nutritional data: "calories in a banana", "protein in 100g chicken"
-- Scientific constants: "speed of light in m/s", "atomic mass of gold"
-- Physical measurements: "height of Mount Everest", "depth of Pacific Ocean"
-- Astronomical data: "distance from Earth to Mars", "diameter of Jupiter"
-- Chemical properties: "boiling point of ethanol", "density of iron"
-- Precise statistics: "population of Tokyo", "GDP of Germany in USD"
-
-WHEN NOT TO USE THIS TOOL:
--------------------------
-- General knowledge/history/context -> use 'wikipedia'
-- Current events/news -> use 'web_search' or 'news_search'
-- Math calculations -> use 'calculator'
-- Unit conversions -> use 'unit_converter'
-- Solving equations -> use 'equation_solver'
-
-RULE OF THUMB:
-- Need a specific NUMBER or MEASUREMENT? -> Wolfram Alpha
-- Need an EXPLANATION or CONTEXT? -> Wikipedia
-- Need CURRENT or RECENT info? -> Web Search
-
-This tool queries Wolfram Alpha's Short Answers API for concise responses.
-Requires WOLFRAM_ALPHA_APP_ID in your .env file.
-"""
-
-import asyncio
 import aiohttp
-from src.utils import async_retry_on_error, async_fetch, create_tool
+from src.utils import async_retry_on_error, async_fetch, create_tool, safe_tool_call
 from config import WOLFRAM_ALPHA_APP_ID
 
 
@@ -39,24 +9,10 @@ from config import WOLFRAM_ALPHA_APP_ID
 WOLFRAM_API_URL = "https://api.wolframalpha.com/v1/result"
 
 
+@safe_tool_call("querying Wolfram Alpha")
 @async_retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
 async def query_wolfram_alpha(query: str) -> str:
-    """
-    Query Wolfram Alpha for factual/computational knowledge.
-
-    This is best used for real-world data that requires Wolfram's
-    curated knowledge base - things like nutritional info, scientific
-    constants, geographic data, economic statistics, etc.
-
-    Args:
-        query: Natural language question or lookup
-               Examples: "calories in an avocado", "height of Mount Fuji",
-                        "GDP of Japan", "boiling point of ethanol"
-
-    Returns:
-        The answer as text, or an error message.
-    """
-    # Check if API key is configured
+    """Query Wolfram Alpha for factual/computational knowledge."""
     if not WOLFRAM_ALPHA_APP_ID:
         return (
             "Error: Wolfram Alpha API key not configured. "
@@ -64,44 +20,29 @@ async def query_wolfram_alpha(query: str) -> str:
             "Get a free key at: https://developer.wolframalpha.com/"
         )
 
-    try:
-        # Build the API request
-        params = {
-            "appid": WOLFRAM_ALPHA_APP_ID,
-            "i": query
-        }
+    params = {
+        "appid": WOLFRAM_ALPHA_APP_ID,
+        "i": query
+    }
 
-        answer = await async_fetch(
-            WOLFRAM_API_URL, params=params, headers={}, timeout=10,
-            response_type="text",
+    answer = await async_fetch(
+        WOLFRAM_API_URL, params=params, headers={}, timeout=10,
+        response_type="text",
+    )
+    answer = answer.strip()
+
+    if answer == "Wolfram|Alpha did not understand your input":
+        return (
+            f"Wolfram Alpha couldn't understand: '{query}'. "
+            "Try rephrasing as a simple factual question."
         )
-        answer = answer.strip()
-
-        # Wolfram returns specific messages for issues
-        if answer == "Wolfram|Alpha did not understand your input":
-            return (
-                f"Wolfram Alpha couldn't understand: '{query}'. "
-                "Try rephrasing as a simple factual question."
-            )
-        elif answer == "No short answer available":
-            return (
-                f"Wolfram Alpha has data on this but no short answer available. "
-                f"Query: '{query}'. Try being more specific."
-            )
-        else:
-            return f"Wolfram Alpha: {answer}"
-
-    except aiohttp.ClientResponseError as e:
-        if e.status == 403:
-            return "Error: Invalid Wolfram Alpha API key."
-        elif e.status == 501:
-            return f"Wolfram Alpha couldn't process: '{query}'. Try a different phrasing."
-        else:
-            return f"Wolfram Alpha API error (status {e.status})"
-    except asyncio.TimeoutError:
-        return "Error: Wolfram Alpha request timed out. Try again."
-    except aiohttp.ClientError as e:
-        return f"Error connecting to Wolfram Alpha: {str(e)}"
+    elif answer == "No short answer available":
+        return (
+            f"Wolfram Alpha has data on this but no short answer available. "
+            f"Query: '{query}'. Try being more specific."
+        )
+    else:
+        return f"Wolfram Alpha: {answer}"
 
 
 # Create the LangChain Tool wrapper

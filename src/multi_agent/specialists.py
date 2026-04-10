@@ -1,9 +1,4 @@
-"""Specialist agents for the multi-agent orchestration system.
-
-Each specialist wraps a LangGraph tool-calling agent with a focused
-tool subset and system prompt. The supervisor delegates tasks to these
-specialists, which run independently (and potentially in parallel).
-"""
+"""Specialist agents wrapping focused tool subsets for multi-agent dispatch."""
 
 import asyncio
 from typing import Dict, List, Optional
@@ -31,15 +26,6 @@ DEFAULT_RECURSION_LIMIT = 20
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
 
-# Per-specialist configuration.
-#
-# ``recursion_limit`` caps how many tool-call loops the inner LangGraph
-# agent may take before raising. Research-heavy roles get more headroom;
-# narrow roles (translation, fact_checker) get less so they fail fast.
-#
-# ``timeout_seconds`` bounds wall-clock time per specialist invocation.
-# On timeout, the specialist returns a degraded string and the phase
-# continues — one stuck role no longer blocks the whole phase.
 SPECIALIST_DEFINITIONS = {
     SPECIALIST_RESEARCH: {
         "tools": [
@@ -92,12 +78,7 @@ SPECIALIST_DEFINITIONS = {
 
 
 class SpecialistAgent:
-    """A specialist agent with a focused tool subset and system prompt.
-
-    Each specialist wraps a LangGraph-based tool-calling agent (same
-    ``create_agent`` used by the main ResearchAgent) but with only the
-    tools relevant to its domain.
-    """
+    """Domain-focused agent with a tool subset, recursion limit, and timeout."""
 
     def __init__(
         self,
@@ -116,7 +97,6 @@ class SpecialistAgent:
         self.tools, self.disabled_tools = get_available_tools(tools, tool_health)
 
         if not self.tools:
-            # All tools disabled — agent can still answer from knowledge
             self.agent = None
         else:
             self.agent = create_agent(
@@ -127,21 +107,7 @@ class SpecialistAgent:
             )
 
     async def run(self, task: str, callbacks: Optional[list] = None) -> str:
-        """Run a task and return the result as a string.
-
-        Bounds the inner agent call by ``self.timeout_seconds`` via
-        ``asyncio.wait_for``. On timeout, returns a degraded string
-        so the orchestrator's ``asyncio.gather`` keeps the phase alive
-        instead of propagating the cancellation.
-
-        Args:
-            task: The specific task description for this specialist.
-            callbacks: Optional LangChain callback handlers.
-
-        Returns:
-            The specialist's answer text, or a degraded message on
-            timeout / error.
-        """
+        """Execute task with timeout; return answer string or degraded message."""
         if self.agent is None:
             return f"[{self.name}] No tools available for this task."
 
@@ -170,19 +136,7 @@ def build_specialists(
     llm: ChatAnthropic,
     tool_health: dict,
 ) -> Dict[str, SpecialistAgent]:
-    """Build all specialist agents from the master tool list.
-
-    Each specialist gets only the tools defined in SPECIALIST_DEFINITIONS,
-    filtered through the existing health-check system.
-
-    Args:
-        all_tools: The full list of LangChain Tool objects.
-        llm: The ChatAnthropic LLM instance.
-        tool_health: Output from check_tool_health().
-
-    Returns:
-        Dict mapping specialist names to SpecialistAgent instances.
-    """
+    """Build all specialists from SPECIALIST_DEFINITIONS with health-filtered tools."""
     tool_by_name = {t.name: t for t in all_tools}
 
     specialists = {}

@@ -1,17 +1,4 @@
-"""Unit converter tool for the research agent.
-
-A dedicated tool for converting between different units of measurement.
-
-Supported categories:
-- Length (m, km, mi, ft, in, etc.)
-- Weight/Mass (kg, lb, oz, etc.)
-- Volume (l, gal, cup, etc.)
-- Time (s, min, h, day, etc.)
-- Speed (m/s, km/h, mph, etc.)
-- Area (sqm, sqft, acre, etc.)
-- Temperature (C, F, K)
-- Data (bytes, KB, MB, GB, etc.)
-"""
+"""Unit converter — length, weight, volume, time, speed, area, temperature, data."""
 
 import re
 from typing import Optional, Tuple, Dict
@@ -116,7 +103,7 @@ UNIT_CATEGORIES = {
 
 
 def find_unit_category(unit: str) -> Optional[Tuple[str, Dict]]:
-    """Find which category a unit belongs to and return (category_name, conversion_dict)."""
+    """Return (category_name, conversion_dict) for a unit, or None."""
     unit_lower = unit.lower().replace(" ", "_")
     for category, conversions in UNIT_CATEGORIES.items():
         if unit_lower in conversions:
@@ -125,7 +112,7 @@ def find_unit_category(unit: str) -> Optional[Tuple[str, Dict]]:
 
 
 def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
-    """Handle temperature conversions separately (not linear scaling)."""
+    """Convert between Celsius, Fahrenheit, and Kelvin."""
     from_unit = from_unit.lower()
     to_unit = to_unit.lower()
 
@@ -164,17 +151,7 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
 
 
 def convert_units(value: float, from_unit: str, to_unit: str) -> str:
-    """
-    Convert a value from one unit to another.
-
-    Args:
-        value: The numeric value to convert
-        from_unit: Source unit (e.g., 'km', 'miles', 'kg')
-        to_unit: Target unit (e.g., 'm', 'feet', 'pounds')
-
-    Returns:
-        Formatted string with the conversion result
-    """
+    """Convert a numeric value between compatible units."""
     from_unit_clean = from_unit.lower().replace(" ", "_")
     to_unit_clean = to_unit.lower().replace(" ", "_")
 
@@ -207,21 +184,7 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> str:
 
 
 def convert(input_str: str) -> str:
-    """
-    Parse and execute a unit conversion request.
-
-    Supports formats:
-    - "5 km to miles"
-    - "convert 5 km to miles"
-    - "100 fahrenheit to celsius"
-    - "10 pounds to kg"
-
-    Args:
-        input_str: The conversion request
-
-    Returns:
-        Result string or error message
-    """
+    """Parse and execute a unit conversion request like '5 km to miles'."""
     input_str = input_str.strip()
 
     # Handle empty input
@@ -284,7 +247,7 @@ Data: b (bytes), kb, mb, gb, tb, pb"""
 
 
 async def async_convert(input_str: str) -> str:
-    """Async wrapper for the unit converter tool."""
+    """Async wrapper for convert()."""
     return convert(input_str)
 
 

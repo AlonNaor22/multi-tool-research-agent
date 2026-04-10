@@ -1,13 +1,9 @@
-"""Translation tool for the research agent.
-
-Translates text between languages using Google Translate via deep-translator.
-Free, no API key required, supports 100+ languages.
-"""
+"""Translation tool — Google Translate via deep-translator, 100+ languages."""
 
 import re
 import asyncio
 
-from src.utils import async_retry_on_error, create_tool
+from src.utils import async_retry_on_error, create_tool, safe_tool_call, require_input
 
 
 # Common language name -> code mapping for user-friendly input
@@ -33,7 +29,7 @@ LANGUAGE_ALIASES = {
 
 
 def _normalize_language(lang: str) -> str:
-    """Convert a language name or code to a code accepted by GoogleTranslator."""
+    """Convert a language name or code to a GoogleTranslator-compatible code."""
     lang = lang.strip().lower()
     if lang == "auto":
         return "auto"
@@ -52,25 +48,13 @@ async def _async_do_translate(text: str, source: str, target: str) -> str:
     return await asyncio.to_thread(_translate)
 
 
+@safe_tool_call("translating text")
 async def translate_text(input_str: str) -> str:
-    """
-    Translate text between languages.
-
-    Supports formats:
-    - "Hello world | en | es"           (text | source | target)
-    - "Hello world | to spanish"        (auto-detect source)
-    - "Hello world to french"           (auto-detect source, natural format)
-
-    Args:
-        input_str: Text with language specification
-
-    Returns:
-        Translated text or error message
-    """
+    """Translate text between languages using pipe-delimited or natural format."""
+    err = require_input(input_str, "translation request")
+    if err:
+        return err
     input_str = input_str.strip()
-
-    if not input_str:
-        return "Error: Empty translation request"
 
     if input_str.lower() in ("help", "?"):
         return _get_help()

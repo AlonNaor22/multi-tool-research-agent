@@ -1,22 +1,4 @@
-"""Main research agent using Claude's native async tool calling.
-
-The agent uses Claude's structured tool-use API to decide which tools to call
-and in what order. All I/O is async — the agent uses ainvoke()/astream() for
-non-blocking execution, the same pattern used in production agents.
-
-Includes conversation memory for follow-up questions.
-
-Plan-and-Execute mode (Item 12)
---------------------------------
-A LangGraph StateGraph with three nodes drives complex research:
-  create_plan  → generate a multi-step ResearchPlan
-  execute_step → run one step using the existing tool-calling agent
-                 and advance the step pointer in the same node
-  synthesize   → combine all step findings into a final answer
-
-Simple queries are detected by a complexity heuristic and bypass planning
-entirely, falling back to direct-mode streaming (same as before).
-"""
+"""LangGraph research agent with memory, plan-and-execute, and multi-agent orchestration."""
 
 import sys
 from typing import Annotated, Generator, List, Optional
@@ -124,12 +106,7 @@ TOOL_CATEGORIES = {
 
 
 def _build_system_prompt(disabled_tools: list = None) -> str:
-    """Build the system prompt with tool selection guidance.
-
-    Args:
-        disabled_tools: List of tool names that are unavailable (missing API keys, etc.).
-                        These are removed from the category listings so the LLM doesn't try them.
-    """
+    """Build system prompt with tool categories, excluding disabled_tools from listings."""
     disabled = set(disabled_tools or [])
 
     lines = [
@@ -187,29 +164,17 @@ SYSTEM_PROMPT = _build_system_prompt()
 
 
 class SimpleMemory:
-    """
-    A simple conversation memory implementation.
-
-    Stores ALL conversation exchanges for saving, but only uses the last k
-    exchanges for the prompt (to avoid context overflow).
-    """
+    """Conversation memory storing all exchanges but prompting with only the last k."""
 
     def __init__(self, k: int = 5):
-        """
-        Initialize the memory.
-
-        Args:
-            k: Number of recent exchanges to include in prompt (default: 5)
-        """
         self.k = k
-        self.history = []  # List of ALL (input, output) tuples
+        self.history = []
 
     def add_exchange(self, user_input: str, agent_output: str):
-        """Add a conversation exchange to memory."""
         self.history.append((user_input, agent_output))
 
     def get_messages(self) -> list:
-        """Get the recent conversation history as LangChain messages (last k exchanges)."""
+        """Return last k exchanges as HumanMessage/AIMessage pairs."""
         if not self.history:
             return []
 
@@ -221,7 +186,7 @@ class SimpleMemory:
         return messages
 
     def get_history_string(self) -> str:
-        """Get the recent conversation history as a string (for display/compatibility)."""
+        """Return last k exchanges as a formatted 'Human:/Assistant:' string."""
         if not self.history:
             return "No previous conversation."
 
@@ -233,29 +198,17 @@ class SimpleMemory:
         return "\n".join(lines)
 
     def clear(self):
-        """Clear all conversation history."""
         self.history = []
 
     @property
     def buffer(self) -> str:
-        """Get the memory buffer (for compatibility)."""
         return self.get_history_string()
 
 
 class ResearchAgent:
-    """
-    A research agent using Claude's native tool calling.
-
-    Uses LangChain's create_agent (LangGraph-based) which leverages Claude's
-    structured tool-use API instead of text-based ReAct parsing. This means:
-    - Tool calls are structured JSON, not fragile text parsing
-    - The LLM natively understands tool schemas
-    - More reliable tool selection and argument passing
-    """
+    """LangGraph-based research agent with tool calling, memory, and multi-agent modes."""
 
     def __init__(self):
-        """Initialize the agent with memory and health-checked tools."""
-        # Initialize Claude as the LLM
         self.llm = ChatAnthropic(
             model=MODEL_NAME,
             temperature=TEMPERATURE,
@@ -264,71 +217,30 @@ class ResearchAgent:
             streaming=True,
         )
 
-        # Collect all our tools
         all_tools = [
-            # Math & Computation
-            calculator_tool,
-            unit_converter_tool,
-            equation_solver_tool,
-            currency_tool,
-            wolfram_tool,
-            math_formatter_tool,
-            # Information Retrieval
-            wikipedia_tool,
-            search_tool,
-            news_tool,
-            arxiv_tool,
-            youtube_tool,
-            google_scholar_tool,
-            # Web Content
-            url_tool,
-            pdf_tool,
-            # Social & Discussion
-            reddit_tool,
-            # Knowledge Base
-            wikidata_tool,
-            # Translation
-            translation_tool,
-            # Code Execution
-            python_repl_tool,
-            # Visualization
-            visualization_tool,
-            # Multi-Source
-            parallel_tool,
-            # Weather
-            weather_tool,
-            # GitHub
-            github_tool,
-            # Web Scraping
-            scraper_tool,
-            # Data Files
-            csv_tool,
-            # Date/Time
-            datetime_tool,
+            calculator_tool, unit_converter_tool, equation_solver_tool,
+            currency_tool, wolfram_tool, math_formatter_tool,
+            wikipedia_tool, search_tool, news_tool, arxiv_tool,
+            youtube_tool, google_scholar_tool,
+            url_tool, pdf_tool, reddit_tool, wikidata_tool,
+            translation_tool, python_repl_tool, visualization_tool,
+            parallel_tool, weather_tool, github_tool, scraper_tool,
+            csv_tool, datetime_tool,
         ]
 
-        # Run health check and filter out tools with missing dependencies.
-        # Disabled tools are removed so the agent never wastes a turn calling them.
+        # Disabled tools are removed so the agent never wastes a turn calling them
         self.tool_health = check_tool_health()
         self.tools, self.disabled_tools = get_available_tools(all_tools, self.tool_health)
 
-        # Create our simple conversation memory
         self.memory = SimpleMemory(k=5)
-
-        # Track current session ID (for saving to the same file)
         self.current_session_id = None
-
-        # Create callback handlers
         self.timing_callback = TimingCallbackHandler()
         self.streaming_callback = StreamingCallbackHandler()
         self.observability_callback = ObservabilityCallbackHandler(model_name=MODEL_NAME)
         self.metrics_store = MetricsStore()
         self.rate_limiter = RateLimiter()
 
-        # Build system prompt with disabled tools removed from categories
         system_prompt = _build_system_prompt(disabled_tools=self.disabled_tools)
-
-        # Create the agent using native tool calling (LangGraph-based)
         self.agent = create_agent(
             model=self.llm,
             tools=self.tools,
@@ -337,48 +249,27 @@ class ResearchAgent:
         )
 
     async def query(self, question: str, show_timing: bool = True) -> str:
-        """
-        Run a research query asynchronously and return the answer.
-        Memory is automatically updated.
-
-        Args:
-            question: The research question to answer.
-            show_timing: Whether to print timing summary (default: True)
-
-        Returns:
-            The agent's final answer as a string.
-        """
+        """Run a research query async, update memory, and return the answer string."""
         try:
-            # Check rate limit before starting
             self.rate_limiter.check_budget()
-
-            # Reset callbacks for new query
             self.timing_callback.reset()
             self.observability_callback.reset(question=question)
 
-            # Build messages: conversation history + new question
             messages = self.memory.get_messages()
             messages.append(HumanMessage(content=question))
-
-            # Run the agent with native async tool calling
             result = await self.agent.ainvoke(
                 {"messages": messages},
                 {"callbacks": [self.timing_callback, self.observability_callback],
                  "recursion_limit": MAX_ITERATIONS * 2},
             )
 
-            # Extract the final answer from the last AI message
             answer = extract_ai_answer(result)
-
-            # Save this exchange to memory
             self.memory.add_exchange(question, answer)
 
-            # Persist observability metrics and update rate limiter
             metrics = self.observability_callback.get_metrics()
             self.metrics_store.save(metrics)
             self.rate_limiter.record_tokens(metrics.total_tokens)
 
-            # Print timing summary if requested
             if show_timing:
                 print(self.timing_callback.get_summary())
                 print(format_query_metrics(metrics))
@@ -388,34 +279,16 @@ class ResearchAgent:
             return f"Error running research query: {str(e)}"
 
     async def stream_query(self, question: str, show_timing: bool = True) -> str:
-        """
-        Run a research query with real-time async streaming output.
-
-        Instead of blocking until the full answer is ready, this streams
-        intermediate steps (thinking, tool calls) and the final answer
-        token-by-token so the user sees progress in real-time.
-
-        Args:
-            question: The research question to answer.
-            show_timing: Whether to print timing summary (default: True)
-
-        Returns:
-            The agent's final answer as a string.
-        """
+        """Stream a research query with real-time output and return the final answer."""
         try:
-            # Check rate limit before starting
             self.rate_limiter.check_budget()
-
-            # Reset state from previous query
             self.timing_callback.reset()
             self.streaming_callback.reset()
             self.observability_callback.reset(question=question)
 
-            # Build messages: conversation history + new question
             messages = self.memory.get_messages()
             messages.append(HumanMessage(content=question))
 
-            # Stream the agent execution asynchronously
             final_result = None
             async for chunk in self.agent.astream(
                 {"messages": messages},
@@ -426,18 +299,13 @@ class ResearchAgent:
             ):
                 final_result = chunk
 
-            # Extract the final answer
             answer = extract_ai_answer(final_result) if final_result else "No answer was generated."
-
-            # Save this exchange to memory
             self.memory.add_exchange(question, answer)
 
-            # Persist observability metrics and update rate limiter
             metrics = self.observability_callback.get_metrics()
             self.metrics_store.save(metrics)
             self.rate_limiter.record_tokens(metrics.total_tokens)
 
-            # Print timing summary if requested
             if show_timing:
                 print(self.timing_callback.get_summary())
                 print(format_query_metrics(metrics))
@@ -447,49 +315,31 @@ class ResearchAgent:
             return f"Error running research query: {str(e)}"
 
     def get_last_timing(self) -> str:
-        """Get the timing summary from the last query."""
         return self.timing_callback.get_summary()
 
     def get_last_metrics(self):
-        """Get the observability metrics from the last query."""
         return self.observability_callback.get_metrics()
 
     def clear_memory(self):
-        """Clear the conversation history, reset rate limiter, and start a new session."""
+        """Clear conversation history, reset rate limiter, and start a new session."""
         self.memory.clear()
         self.rate_limiter.reset()
-        self.current_session_id = None  # Next save will create a new file
+        self.current_session_id = None
         print("Conversation memory cleared.")
 
     def get_memory(self) -> str:
-        """Get the current conversation history."""
         return self.memory.buffer
 
     def save_session(self, session_id: str = None, description: str = None) -> str:
-        """
-        Save the current session to a file.
-
-        Uses the same session file throughout a session. Only creates
-        a new file on the first save or if explicitly given a new ID.
-
-        Args:
-            session_id: Optional session ID. If None, reuses current or generates new.
-            description: Short description for new sessions (3 words max).
-
-        Returns:
-            Path to the saved session file.
-        """
+        """Save session history to JSON, reusing current session ID if set."""
         from src.session_manager import save_session
 
-        # Reuse current session ID if we have one and none was provided
         if session_id is None and self.current_session_id is not None:
             session_id = self.current_session_id
 
         filepath = save_session(self.memory.history, session_id, description)
 
-        # Store the session ID for future saves (extract from filepath if new)
         if self.current_session_id is None:
-            # Extract session ID from the filepath
             import os
             filename = os.path.basename(filepath)
             self.current_session_id = filename.replace('.json', '')
@@ -497,36 +347,21 @@ class ResearchAgent:
         return filepath
 
     def load_session(self, session_id: str) -> bool:
-        """
-        Load a previously saved session.
-
-        Args:
-            session_id: The session ID to load.
-
-        Returns:
-            True if loaded successfully, False otherwise.
-        """
+        """Load a saved session into memory by session_id; return True on success."""
         from src.session_manager import load_session
         history = load_session(session_id)
 
         if history is None:
             return False
 
-        # Restore the history to memory
         self.memory.history = list(history)
-
-        # Track this as the current session (so future saves go to same file)
         self.current_session_id = session_id
 
         return True
 
 
-    # ------------------------------------------------------------------
-    # Multi-Agent Orchestration
-    # ------------------------------------------------------------------
-
     def _get_orchestrator(self):
-        """Lazily build the multi-agent orchestrator on first use."""
+        """Lazily build and cache the multi-agent orchestrator."""
         if not hasattr(self, '_multi_agent_orchestrator') or self._multi_agent_orchestrator is None:
             from src.multi_agent.orchestrator import MultiAgentOrchestrator
             self._multi_agent_orchestrator = MultiAgentOrchestrator(
@@ -538,19 +373,7 @@ class ResearchAgent:
         return self._multi_agent_orchestrator
 
     async def multi_agent_query(self, query: str, verbose: bool = True) -> str:
-        """Run a query using multi-agent orchestration (for CLI).
-
-        The supervisor delegates sub-tasks to specialist agents, which
-        run in parallel when independent.  Results are synthesized into
-        a final answer.
-
-        Args:
-            query:   The research question.
-            verbose: Whether to print progress to stdout.
-
-        Returns:
-            The final synthesized answer.
-        """
+        """Run query via multi-agent orchestration; return synthesized answer."""
         orchestrator = self._get_orchestrator()
         if verbose:
             answer = await orchestrator.run_verbose(query)
@@ -560,11 +383,7 @@ class ResearchAgent:
         return answer
 
     def multi_agent_stream(self, query: str):
-        """Sync generator for Streamlit — yields typed multi-agent events.
-
-        Event types: plan_created, phase_started, specialist_started,
-        specialist_done, phase_done, synthesis_token, done.
-        """
+        """Yield typed multi-agent events (sync generator) for Streamlit UI."""
         orchestrator = self._get_orchestrator()
         final_answer = ""
         for event in orchestrator.stream(query):
@@ -574,31 +393,10 @@ class ResearchAgent:
         if final_answer:
             self.memory.add_exchange(query, final_answer)
 
-    # ------------------------------------------------------------------
-    # Plan-and-Execute: LangGraph StateGraph
-    # ------------------------------------------------------------------
-
     def _build_plan_execute_graph(self):
-        """Build the plan-and-execute LangGraph StateGraph.
-
-        The graph has three nodes:
-          create_plan  — call the planner to generate a ResearchPlan
-          execute_step — run one pending step via the inner agent AND
-                         advance the step pointer in the same return dict
-          synthesize   — combine all findings into a final answer
-
-        Conditional edge after *execute_step*:
-          more steps remaining → execute_step (self-loop)
-          all steps done       → synthesize
-
-        Previously a separate ``replan`` node existed that only incremented
-        the step counter. It was a pure no-op hop and has been folded into
-        ``execute_step``. Real replanning (revising remaining steps based on
-        findings) would live here if/when implemented.
-        """
+        """Build a StateGraph with create_plan, execute_step, and synthesize nodes."""
         from src.planner import generate_plan, ResearchPlan
 
-        # ---- State schema -----------------------------------------------
         class PlanExecuteState(TypedDict):
             query: str
             plan_data: dict                              # ResearchPlan.model_dump()
@@ -606,7 +404,6 @@ class ResearchAgent:
             all_findings: Annotated[List[str], operator.add]
             final_answer: str
 
-        # ---- Node: create_plan ------------------------------------------
         async def create_plan_node(state: PlanExecuteState) -> dict:
             plan = generate_plan(state["query"], self.llm)
             return {
@@ -616,21 +413,12 @@ class ResearchAgent:
                 "final_answer": "",
             }
 
-        # ---- Node: execute_step -----------------------------------------
         async def execute_step_node(state: PlanExecuteState) -> dict:
-            """Run the current step and advance the step pointer.
-
-            Returns a delta containing the updated plan, an appended finding,
-            and ``current_step + 1``. The self-loop condition in
-            ``should_continue`` inspects the already-incremented pointer to
-            decide whether to re-enter this node or route to synthesize.
-            """
+            """Run current step via inner agent and advance the step pointer."""
             plan = ResearchPlan(**state["plan_data"])
             idx = state["current_step"]
 
             if idx >= len(plan.steps):
-                # Defensive: should never happen because should_continue
-                # routes to synthesize once idx == len(steps).
                 return {"plan_data": plan.model_dump()}
 
             step = plan.steps[idx]
@@ -660,13 +448,11 @@ class ResearchAgent:
                 "current_step": idx + 1,
             }
 
-        # ---- Node: synthesize -------------------------------------------
         async def synthesize_node(state: PlanExecuteState) -> dict:
             plan = ResearchPlan(**state["plan_data"])
             findings = state.get("all_findings", [])
 
             if not findings:
-                # Simple / direct mode — answer from scratch
                 prompt = state["query"]
             else:
                 steps_text = "\n\n".join(findings)
@@ -679,26 +465,18 @@ class ResearchAgent:
             response = await self.llm.ainvoke([HumanMessage(content=prompt)])
             return {"final_answer": flatten_content(response.content)}
 
-        # ---- Conditional edge after execute_step ------------------------
         def should_continue(state: PlanExecuteState) -> str:
-            """Decide whether to loop back for another step or synthesize.
-
-            Inspects the already-incremented ``current_step`` that
-            ``execute_step_node`` just returned.
-            """
             plan = ResearchPlan(**state["plan_data"])
             if state["current_step"] >= len(plan.steps):
                 return "synthesize"
             return "execute_step"
 
-        # ---- Conditional edge after create_plan -------------------------
         def after_create_plan(state: PlanExecuteState) -> str:
             plan = ResearchPlan(**state["plan_data"])
             if plan.is_simple or not plan.steps:
                 return "synthesize"
             return "execute_step"
 
-        # ---- Wire the graph ---------------------------------------------
         workflow = StateGraph(PlanExecuteState)
         workflow.add_node("create_plan", create_plan_node)
         workflow.add_node("execute_step", execute_step_node)
@@ -711,28 +489,8 @@ class ResearchAgent:
 
         return workflow.compile()
 
-    # ------------------------------------------------------------------
-    # Plan-and-Execute: async method (for CLI / tests)
-    # ------------------------------------------------------------------
-
     async def plan_and_execute(self, query: str, verbose: bool = True) -> str:
-        """Run a query using the plan-and-execute strategy.
-
-        1. Generates a structured research plan.
-        2. Executes each step sequentially with the inner tool-calling agent.
-        3. Synthesizes all findings into a final answer (streamed to stdout
-           if *verbose* is True).
-
-        Simple queries (detected by the complexity heuristic) fall back to
-        ``stream_query()`` automatically.
-
-        Args:
-            query:   The research question.
-            verbose: Whether to print plan and synthesis progress.
-
-        Returns:
-            The final synthesized answer as a string.
-        """
+        """Generate a plan, execute each step, and synthesize findings into an answer."""
         from src.planner import generate_plan
 
         if verbose:
@@ -753,8 +511,7 @@ class ResearchAgent:
                     print(f"     Tools: {', '.join(step.expected_tools)}")
             print()
 
-        all_findings: List[str] = []
-
+        all_findings = []
         for i, step in enumerate(plan.steps):
             if verbose:
                 print(f"\n{'=' * 60}")
@@ -783,7 +540,6 @@ class ResearchAgent:
             if verbose:
                 print(f"\u2705 Step {step.step_number} complete")
 
-        # ------ Synthesis (streamed) ------------------------------------
         steps_text = "\n\n".join(all_findings)
         synthesis_prompt = (
             f"Synthesize these research findings into a comprehensive answer.\n\n"
@@ -806,33 +562,18 @@ class ResearchAgent:
                     sys.stdout.flush()
 
         if verbose:
-            print()  # newline after streaming
+            print()
 
         self.memory.add_exchange(query, final_answer)
         return final_answer
 
-    # ------------------------------------------------------------------
-    # Plan-and-Execute: sync streaming generator (for Streamlit)
-    # ------------------------------------------------------------------
-
     def plan_and_execute_stream(self, query: str) -> Generator[dict, None, None]:
-        """Sync generator that drives plan-and-execute and yields typed events.
-
-        Designed for the Streamlit UI.  Each yielded dict has a ``"type"`` key:
-
-        * ``plan_created``   — plan is ready; contains ``"plan"``
-        * ``step_started``   — step N began; contains ``"step_idx"``, ``"plan"``
-        * ``step_tool``      — a tool was called; contains ``"step_idx"``, ``"tool_name"``
-        * ``step_done``      — step N finished; contains ``"step_idx"``, ``"plan"``
-        * ``synthesis_token``— one text chunk of the synthesis; contains ``"token"``
-        * ``done``           — final; contains ``"answer"``, ``"plan"``
-        """
+        """Yield typed plan-and-execute events (sync generator) for Streamlit UI."""
         from src.planner import generate_plan
 
         plan = generate_plan(query, self.llm)
         yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
-        # ---- Simple / direct mode -----------------------------------
         if plan.is_simple:
             messages_in = [HumanMessage(content=query)]
             final_answer = ""
@@ -853,7 +594,6 @@ class ResearchAgent:
             yield {"type": EVENT_DONE, "answer": final_answer, "plan": plan}
             return
 
-        # ---- Multi-step execution ------------------------------------
         for i, step in enumerate(plan.steps):
             plan.steps[i] = step.model_copy(update={"status": STATUS_IN_PROGRESS})
             yield {"type": EVENT_STEP_STARTED, "step_idx": i, "plan": plan}
@@ -867,7 +607,6 @@ class ResearchAgent:
                 )
             ]
 
-            # Stream the inner agent to capture tool calls as they happen
             inner_result = None
             for update in self.agent.stream(
                 {"messages": step_messages},
@@ -875,7 +614,6 @@ class ResearchAgent:
                 stream_mode="updates",
             ):
                 inner_result = update
-                # Yield tool call events from the tools node
                 for node_name, node_output in update.items():
                     if node_name == "tools":
                         msgs = node_output.get("messages", [])
@@ -888,10 +626,8 @@ class ResearchAgent:
                                     "tool_output": msg.content or "",
                                 }
 
-            # Extract findings from the final state
             findings = ""
             if inner_result:
-                # stream_mode="updates" yields {node_name: state_update}
                 for node_name, node_output in inner_result.items():
                     msgs = node_output.get("messages", [])
                     for msg in reversed(msgs):
@@ -907,7 +643,6 @@ class ResearchAgent:
             )
             yield {"type": EVENT_STEP_DONE, "step_idx": i, "plan": plan}
 
-        # ---- Synthesis (streamed token-by-token) ---------------------
         steps_text = "\n\n".join(
             f"Step {s.step_number} \u2014 {s.description}:\n{s.findings}"
             for s in plan.steps
@@ -929,17 +664,16 @@ class ResearchAgent:
         yield {"type": EVENT_DONE, "answer": final_answer, "plan": plan}
 
 def create_research_agent():
-    """Create and return a research agent. Kept for backward compatibility."""
+    """Create and return a ResearchAgent instance."""
     return ResearchAgent()
 
 
 async def run_research_query(query: str) -> str:
-    """Run a single research query (without memory)."""
+    """Run a single stateless research query; return the answer string."""
     agent = ResearchAgent()
     return await agent.query(query)
 
 
-# For testing
 if __name__ == "__main__":
     import asyncio
 

@@ -1,10 +1,4 @@
-"""Supervisor agent for multi-agent orchestration.
-
-The supervisor has NO tools. It uses the LLM to:
-1. Analyze a query and produce a DelegationPlan (which specialists to invoke,
-   in which phases, with what tasks).
-2. Synthesize all specialist outputs into a final answer.
-"""
+"""Supervisor that produces delegation plans and synthesizes specialist outputs."""
 
 import json
 import logging
@@ -23,18 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class DelegationPlan(BaseModel):
-    """A structured delegation plan produced by the supervisor.
-
-    ``execution_phases`` is a list of lists — each inner list contains
-    specialist names that can run in parallel.  Phases execute sequentially
-    so later phases can depend on earlier outputs.
-
-    Example::
-
-        execution_phases = [["research", "math"], ["analysis"]]
-        # Phase 1: research + math run concurrently
-        # Phase 2: analysis runs after (may use Phase 1 outputs)
-    """
+    """Phased specialist delegation plan with parallel execution per phase."""
     query: str
     execution_phases: List[List[str]] = Field(default_factory=list)
     specialist_tasks: Dict[str, str] = Field(default_factory=dict)
@@ -43,14 +26,13 @@ class DelegationPlan(BaseModel):
 
 
 class Supervisor:
-    """LLM-only supervisor that delegates tasks and synthesizes results."""
+    """LLM-only supervisor for task delegation and result synthesis."""
 
     def __init__(self, llm: ChatAnthropic):
         self.llm = llm
 
     @staticmethod
     def _plan_messages(query: str) -> List[BaseMessage]:
-        """Build the prompt messages for a delegation-plan request."""
         return [
             SystemMessage(content=SUPERVISOR_PLAN_PROMPT),
             HumanMessage(content=f"Create a delegation plan for: {query}"),
@@ -58,11 +40,7 @@ class Supervisor:
 
     @staticmethod
     def _parse_plan_response(content: str, query: str) -> DelegationPlan:
-        """Parse LLM JSON output into a validated DelegationPlan.
-
-        Raises on malformed output so callers can decide whether to fall
-        back to the single-research-agent default.
-        """
+        """Parse LLM JSON into a DelegationPlan; raises ValueError on malformed output."""
         data = json.loads(content)
 
         execution_phases = data.get("execution_phases", [])
@@ -104,7 +82,6 @@ class Supervisor:
 
     @staticmethod
     def _fallback_plan(query: str) -> DelegationPlan:
-        """Single-research-agent fallback when parsing fails."""
         return DelegationPlan(
             query=query,
             execution_phases=[[SPECIALIST_RESEARCH]],
@@ -114,15 +91,7 @@ class Supervisor:
         )
 
     def create_delegation_plan(self, query: str) -> DelegationPlan:
-        """Analyze *query* and produce a DelegationPlan (sync).
-
-        Prefer ``acreate_delegation_plan`` when calling from an async
-        context so the event loop isn't blocked on the LLM round-trip.
-
-        Falls back to a single-phase ``["research"]`` plan if LLM output
-        cannot be parsed (same resilience pattern as ``generate_plan`` in
-        ``src/planner.py``).
-        """
+        """Produce a DelegationPlan synchronously; falls back on parse failure."""
         try:
             response = self.llm.invoke(self._plan_messages(query))
             content = flatten_content(response.content)
@@ -137,12 +106,7 @@ class Supervisor:
             return self._fallback_plan(query)
 
     async def acreate_delegation_plan(self, query: str) -> DelegationPlan:
-        """Async version of :meth:`create_delegation_plan`.
-
-        Uses ``await self.llm.ainvoke(...)`` so the event loop stays free
-        during the planner LLM round-trip. Use this from inside any
-        ``async def`` node or generator.
-        """
+        """Async version of create_delegation_plan; falls back on parse failure."""
         try:
             response = await self.llm.ainvoke(self._plan_messages(query))
             content = flatten_content(response.content)
@@ -162,16 +126,7 @@ class Supervisor:
         specialist_results: Dict[str, str],
         fact_check_report: str = "",
     ) -> str:
-        """Combine all specialist outputs into a single answer.
-
-        Args:
-            query: The original user query.
-            specialist_results: Dict mapping specialist name to its output.
-            fact_check_report: Optional fact-checker output.
-
-        Returns:
-            The synthesized final answer.
-        """
+        """Combine specialist outputs and optional fact-check into one answer."""
         parts = [f"Original question: {query}\n"]
 
         for name, result in specialist_results.items():

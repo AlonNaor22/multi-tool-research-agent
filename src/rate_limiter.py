@@ -1,9 +1,4 @@
-"""Rate limiter for the research agent.
-
-Tracks cumulative token usage per session and optionally enforces a budget.
-Disabled by default — users can enable and configure the budget in real-time
-from the Streamlit UI.
-"""
+"""Per-session token budget enforcer."""
 
 
 class RateLimitExceeded(Exception):
@@ -19,19 +14,7 @@ class RateLimitExceeded(Exception):
 
 
 class RateLimiter:
-    """Per-session token budget enforcer.
-
-    Off by default. When enabled, tracks cumulative tokens across queries
-    and blocks new queries once the budget is reached.
-
-    Usage:
-        limiter = RateLimiter()
-        limiter.set_config(enabled=True, budget=50_000)
-
-        limiter.check_budget()        # raises RateLimitExceeded if over budget
-        # ... run query ...
-        limiter.record_tokens(1500)   # update after query completes
-    """
+    """Per-session token budget enforcer with usage tracking."""
 
     def __init__(self):
         self.enabled: bool = False
@@ -39,36 +22,29 @@ class RateLimiter:
         self.tokens_spent: int = 0
 
     def set_config(self, enabled: bool, budget: int) -> None:
-        """Update rate limiter settings in real-time (e.g., from UI)."""
         self.enabled = enabled
         self.budget = max(0, budget)
 
     def check_budget(self) -> None:
-        """Raise RateLimitExceeded if the budget is exhausted.
-
-        Call this before starting a new query.
-        """
         if self.enabled and self.tokens_spent >= self.budget:
             raise RateLimitExceeded(self.tokens_spent, self.budget)
 
     def record_tokens(self, tokens: int) -> None:
-        """Add tokens from a completed query to the running total."""
         self.tokens_spent += tokens
 
     def reset(self) -> None:
-        """Reset the token counter (e.g., on session clear)."""
         self.tokens_spent = 0
 
     @property
     def tokens_remaining(self) -> int:
-        """Tokens left before the budget is hit. Infinite when disabled."""
+        """Return tokens left before budget; -1 when disabled."""
         if not self.enabled:
-            return -1  # Sentinel for "unlimited"
+            return -1
         return max(0, self.budget - self.tokens_spent)
 
     @property
     def usage_fraction(self) -> float:
-        """Fraction of budget used (0.0–1.0). 0 when disabled."""
+        """Return fraction of budget used (0.0 to 1.0); 0.0 when disabled."""
         if not self.enabled or self.budget <= 0:
             return 0.0
         return min(1.0, self.tokens_spent / self.budget)

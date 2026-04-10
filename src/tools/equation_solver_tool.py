@@ -1,12 +1,4 @@
-"""Equation solver and symbolic math tool for the research agent.
-
-A comprehensive math tool powered by SymPy for:
-- Single-variable equations: x + 2 = 5
-- Systems of equations: x + y = 5, 2x - y = 1
-- Matrix operations: multiply, inverse, determinant, eigenvalues, transpose
-- Symbolic algebra: simplify, expand, factor
-- Calculus: derivatives and integrals
-"""
+"""Equation solver — SymPy-powered equations, systems, matrices, and symbolic algebra."""
 
 import re
 import json
@@ -17,7 +9,7 @@ try:
     from sympy import (
         symbols, Eq, solve, sympify, SympifyError, Matrix,
         simplify as sym_simplify, expand as sym_expand, factor as sym_factor,
-        diff as sym_diff, integrate as sym_integrate, pretty,
+        diff as sym_diff, integrate as sym_integrate,
     )
     from sympy.parsing.sympy_parser import (
         parse_expr, standard_transformations, implicit_multiplication_application,
@@ -36,7 +28,7 @@ _KNOWN_FUNCTIONS = {'sin', 'cos', 'tan', 'log', 'exp', 'sqrt', 'abs',
 
 
 def _preprocess_equation(equation_str: str) -> str:
-    """Make an equation string SymPy-compatible (^ → **, implicit multiplication)."""
+    """Convert ^ to ** and insert implicit multiplication for SymPy."""
     equation_str = equation_str.replace("^", "**")
     # 2x → 2*x
     equation_str = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', equation_str)
@@ -52,7 +44,7 @@ def _preprocess_equation(equation_str: str) -> str:
 
 
 def _is_function_prefix(s: str, pos: int) -> bool:
-    """Check if the letter at pos is the end of a known function name."""
+    """Check if position is the trailing char of a known function name."""
     for func in _KNOWN_FUNCTIONS:
         start = pos - len(func) + 1
         if start >= 0 and s[start:pos + 1] == func:
@@ -63,7 +55,7 @@ def _is_function_prefix(s: str, pos: int) -> bool:
 
 
 def _extract_variables(expression_str: str) -> List[str]:
-    """Extract variable names from an expression string."""
+    """Extract single-letter variable names, excluding reserved math names."""
     reserved = {'sin', 'cos', 'tan', 'log', 'exp', 'sqrt', 'abs', 'pi', 'e'}
     potential_vars = re.findall(r'\b([a-zA-Z])\b', expression_str)
     variables = []
@@ -76,13 +68,13 @@ def _extract_variables(expression_str: str) -> List[str]:
 
 
 def _parse_sympy_expr(expr_str: str, local_dict: dict):
-    """Parse a string into a SymPy expression with standard transformations."""
+    """Parse a string into a SymPy expression with implicit multiplication."""
     transformations = standard_transformations + (implicit_multiplication_application,)
     return parse_expr(expr_str, local_dict=local_dict, transformations=transformations)
 
 
 def _format_number(val) -> str:
-    """Format a SymPy numeric value for display."""
+    """Format a SymPy value as a clean numeric string."""
     if val.is_number:
         numeric = complex(val.evalf())
         if numeric.imag == 0:
@@ -99,7 +91,7 @@ def _format_number(val) -> str:
 # ---------------------------------------------------------------------------
 
 def _solve_single_equation(input_str: str, target_var: Optional[str] = None) -> str:
-    """Solve a single equation for one variable."""
+    """Solve a single equation for one variable (defaults to x)."""
     if "=" not in input_str:
         input_str = input_str + " = 0"
 
@@ -145,10 +137,7 @@ def _solve_single_equation(input_str: str, target_var: Optional[str] = None) -> 
 # ---------------------------------------------------------------------------
 
 def _solve_system(input_str: str) -> str:
-    """Solve a system of equations with multiple variables.
-
-    Input: "x + y = 5, 2x - y = 1"
-    """
+    """Solve a comma-separated system of equations for all variables."""
     equations_str = [eq.strip() for eq in input_str.split(",")]
     if len(equations_str) < 2:
         return "Error: System needs at least 2 equations separated by commas."
@@ -215,7 +204,7 @@ def _solve_system(input_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _parse_matrix(matrix_str: str) -> "Matrix":
-    """Parse a matrix from string like '[[1,2],[3,4]]'."""
+    """Parse a string like '[[1,2],[3,4]]' into a SymPy Matrix."""
     matrix_str = matrix_str.strip()
     try:
         data = json.loads(matrix_str)
@@ -233,7 +222,7 @@ def _parse_matrix(matrix_str: str) -> "Matrix":
 
 
 def _format_matrix(m: "Matrix") -> str:
-    """Format a matrix for readable display."""
+    """Format a SymPy Matrix as a readable nested-bracket string."""
     rows = m.tolist()
     # Format each element
     formatted_rows = []
@@ -246,7 +235,7 @@ def _format_matrix(m: "Matrix") -> str:
 
 
 def _handle_matrix_operation(op: str, input_str: str) -> str:
-    """Handle matrix operations: multiply, inverse, determinant, eigenvalues, transpose."""
+    """Dispatch matrix operations (multiply, inverse, det, eigenvalues, etc.)."""
     try:
         if op == "multiply":
             # Parse two matrices separated by *
@@ -306,7 +295,7 @@ def _handle_matrix_operation(op: str, input_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _handle_symbolic(op: str, input_str: str) -> str:
-    """Handle symbolic algebra: simplify, expand, factor, derivative, integrate."""
+    """Handle symbolic algebra (simplify, expand, factor, derivative, integrate)."""
     try:
         preprocessed = _preprocess_equation(input_str.strip())
         all_vars = _extract_variables(preprocessed)
@@ -360,12 +349,7 @@ def _handle_symbolic(op: str, input_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 def solve_equation(input_str: str) -> str:
-    """
-    Solve equations, systems, matrix operations, and symbolic algebra.
-
-    Detects the operation from a prefix and dispatches to the right handler.
-    Default (no prefix): solves a single equation.
-    """
+    """Solve equations, systems, matrix ops, or symbolic algebra via prefix dispatch."""
     if not SYMPY_AVAILABLE:
         return "Error: SymPy library is not installed. Run: pip install sympy"
 
@@ -459,7 +443,7 @@ CALCULUS:
 
 
 async def async_solve_equation(input_str: str) -> str:
-    """Async wrapper for the equation solver tool."""
+    """Async wrapper for solve_equation()."""
     return solve_equation(input_str)
 
 

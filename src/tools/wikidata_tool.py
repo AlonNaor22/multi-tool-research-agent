@@ -1,23 +1,13 @@
-"""Wikidata knowledge base tool for the research agent.
+"""Wikidata knowledge base tool — queries structured facts via SPARQL."""
 
-Queries structured facts from Wikidata using the SPARQL endpoint.
-Returns precise, structured data (dates, populations, coordinates,
-relationships) that complements unstructured search results.
-
-Free, no API key required.
-"""
-
-import re
-import json
 import asyncio
 import aiohttp
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-from src.utils import async_retry_on_error, async_fetch, create_tool, truncate, cached_tool
+from src.utils import async_retry_on_error, async_fetch, create_tool, cached_tool, safe_tool_call, require_input
 from src.constants import (
     WIKIDATA_SPARQL_URL,
     DEFAULT_HTTP_TIMEOUT,
-    WIKIDATA_HEADING_MAX_CHARS,
 )
 
 @async_retry_on_error(max_retries=2, delay=2.0)
@@ -37,7 +27,6 @@ async def _run_sparql(sparql_query: str) -> List[Dict]:
 
     bindings = data.get("results", {}).get("bindings", [])
 
-    # Simplify bindings: extract just the values
     results = []
     for binding in bindings:
         row = {}
@@ -95,13 +84,11 @@ def format_entity_facts(results: List[Dict], entity: str) -> str:
         if not prop or not val:
             continue
 
-        # Skip duplicates and internal/technical properties
         key = f"{prop}:{val}"
         if key in seen:
             continue
         seen.add(key)
 
-        # Clean up Wikidata URLs to just show labels
         if val.startswith("http"):
             continue
 
@@ -134,35 +121,17 @@ def format_search_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+@safe_tool_call("querying Wikidata")
 async def wikidata_query(input_str: str) -> str:
-    """
-    Query Wikidata for structured facts about entities.
+    """Query Wikidata for structured facts about entities."""
+    err = require_input(input_str, "query")
+    if err:
+        return err
 
-    Supports formats:
-    - "Albert Einstein"        -> look up facts about an entity
-    - "search: quantum physics" -> search for matching entities
-    - "sparql: SELECT ..."     -> run a raw SPARQL query
-
-    Args:
-        input_str: Entity name, search term, or SPARQL query
-
-    Returns:
-        Formatted facts or search results
-    """
-    input_str = input_str.strip()
-
-    if not input_str:
-        return "Error: Empty query"
-
-    if input_str.lower() in ("help", "?"):
+    if input_str.strip().lower() in ("help", "?"):
         return _get_help()
 
-    try:
-        return await _wikidata_cached_fetch(input_str)
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        return f"Error querying Wikidata: {str(e)}"
-    except Exception as e:
-        return f"Error: {str(e)}"
+    return await _wikidata_cached_fetch(input_str.strip())
 
 
 @cached_tool("wikidata")
@@ -174,7 +143,6 @@ async def _wikidata_cached_fetch(input_str: str) -> str:
         results = await _run_sparql(sparql)
         if not results:
             return "SPARQL query returned no results."
-        # Format as a simple table
         lines = [f"SPARQL Results ({len(results)} rows):", ""]
         for i, row in enumerate(results[:20], 1):
             parts = [f"{k}: {v}" for k, v in row.items()]
@@ -196,7 +164,6 @@ async def _wikidata_cached_fetch(input_str: str) -> str:
     results = await _run_sparql(sparql)
 
     if not results:
-        # Try searching instead of exact match
         sparql = _search_entities_sparql(entity)
         results = await _run_sparql(sparql)
         return format_search_results(results, entity)

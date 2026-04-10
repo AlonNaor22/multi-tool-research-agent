@@ -1,19 +1,4 @@
-"""Multi-agent orchestrator.
-
-Drives the supervisor + specialist pipeline through a single async event
-generator that is the source of truth for all three public entry points:
-
-  * ``run(query)``          — async, returns final answer
-  * ``run_verbose(query)``  — async, prints CLI progress while streaming
-  * ``stream(query)``       — sync generator for Streamlit
-
-Pipeline:
-
-  supervisor_plan  →  dispatch_phases  →  synthesize
-
-Within each phase, independent specialists run concurrently via
-``asyncio.gather()``.
-"""
+"""Multi-agent orchestrator: supervisor planning, parallel specialist dispatch, synthesis."""
 
 import asyncio
 import queue
@@ -37,15 +22,7 @@ from src.multi_agent.specialists import SpecialistAgent, build_specialists
 
 
 class MultiAgentOrchestrator:
-    """Orchestrates multiple specialist agents via a supervisor.
-
-    The orchestrator:
-    1. Asks the supervisor to create a DelegationPlan.
-    2. Dispatches specialists in phases — each phase runs its agents
-       concurrently via ``asyncio.gather()``.
-    3. Optionally runs the fact-checker on prior findings.
-    4. Asks the supervisor to synthesize all outputs into a final answer.
-    """
+    """Phased parallel specialist orchestrator driven by a supervisor plan."""
 
     def __init__(
         self,
@@ -59,28 +36,11 @@ class MultiAgentOrchestrator:
         self.supervisor = Supervisor(llm)
         self.specialists = build_specialists(all_tools, llm, tool_health)
 
-    # ------------------------------------------------------------------
-    # Single source of truth: async event generator
-    # ------------------------------------------------------------------
-
     async def _astream_events(self, query: str) -> AsyncGenerator[dict, None]:
-        """Yield typed events driving the whole multi-agent pipeline.
-
-        Event types:
-
-        * ``plan_created``       — delegation plan ready
-        * ``phase_started``      — a new phase begins
-        * ``specialist_started`` — a specialist is running
-        * ``specialist_done``    — a specialist finished
-        * ``phase_done``         — a phase completed
-        * ``synthesis_token``    — one chunk of the final answer
-        * ``done``               — final answer ready
-        """
-        # ---- Step 1: supervisor plan ------------------------------------
+        """Yield typed events (plan, phase, specialist, synthesis, done) for the pipeline."""
         plan = await self.supervisor.acreate_delegation_plan(query)
         yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
-        # ---- Step 2: dispatch phases ------------------------------------
         all_results: Dict[str, str] = {}
 
         for phase_idx, phase in enumerate(plan.execution_phases):
@@ -90,8 +50,7 @@ class MultiAgentOrchestrator:
                 "specialists": phase,
             }
 
-            # Announce every specialist in this phase before launching,
-            # so the UI can render them all at once.
+            # Announce all specialists before launching so the UI renders them at once
             for name in phase:
                 yield {
                     "type": EVENT_SPECIALIST_STARTED,
@@ -99,7 +58,6 @@ class MultiAgentOrchestrator:
                     "phase_idx": phase_idx,
                 }
 
-            # Build context string from prior phase results
             prior_context = ""
             if all_results:
                 parts = [
@@ -135,7 +93,6 @@ class MultiAgentOrchestrator:
                 result = await specialist.run(task, callbacks=self.callbacks)
                 return name, result
 
-            # Run all specialists in this phase concurrently.
             phase_results = await asyncio.gather(
                 *[_run_specialist(name) for name in phase]
             )
@@ -151,7 +108,6 @@ class MultiAgentOrchestrator:
 
             yield {"type": EVENT_PHASE_DONE, "phase_idx": phase_idx}
 
-        # ---- Step 3: synthesize (token-streamed) ------------------------
         fact_check_report = all_results.pop(SPECIALIST_FACT_CHECKER, "")
 
         synthesis_input = (
@@ -183,12 +139,8 @@ class MultiAgentOrchestrator:
             "plan": plan,
         }
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     async def run(self, query: str) -> str:
-        """Run the multi-agent pipeline and return the final answer."""
+        """Run the full pipeline and return the final synthesized answer."""
         final_answer = ""
         async for event in self._astream_events(query):
             if event.get("type") == EVENT_DONE:
@@ -196,7 +148,7 @@ class MultiAgentOrchestrator:
         return final_answer
 
     async def run_verbose(self, query: str) -> str:
-        """Run with verbose CLI output showing each phase and specialist."""
+        """Run with verbose CLI output for each phase and specialist."""
         print(f"\n{'=' * 60}")
         print("Multi-Agent Orchestration")
         print(f"{'=' * 60}")
@@ -252,12 +204,7 @@ class MultiAgentOrchestrator:
         return final_answer
 
     def stream(self, query: str) -> Generator[dict, None, None]:
-        """Sync generator that yields typed events for the Streamlit UI.
-
-        Thin thread+queue bridge around :meth:`_astream_events` — the async
-        generator runs on a dedicated worker thread so HTTP clients inside
-        tools keep their connection pools across phases.
-        """
+        """Sync generator bridging async events via a thread+queue for Streamlit."""
         _SENTINEL = object()
         q: "queue.Queue" = queue.Queue()
 

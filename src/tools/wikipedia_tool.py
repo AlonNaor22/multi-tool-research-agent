@@ -1,17 +1,10 @@
-"""Wikipedia tool for the research agent.
-
-Uses the wikipedia Python library to fetch encyclopedic information.
-Great for background knowledge, definitions, and historical facts.
-
-Features:
-- Configurable result count
-- Disambiguation handling
-- Summary or full article options
-- Search suggestions when exact match not found
-"""
+"""Wikipedia lookup tool."""
 
 import wikipedia
-from src.utils import async_run_with_timeout, create_tool, parse_tool_input, truncate
+from src.utils import (
+    async_run_with_timeout, create_tool, parse_tool_input, truncate,
+    safe_tool_call, require_input,
+)
 from src.constants import DEFAULT_SEARCH_TIMEOUT, WIKI_MAX_CHARS
 
 
@@ -19,20 +12,9 @@ from src.constants import DEFAULT_SEARCH_TIMEOUT, WIKI_MAX_CHARS
 DEFAULT_SENTENCES = 5  # Number of sentences in summary
 
 
+@safe_tool_call("searching Wikipedia")
 async def search_wikipedia(query: str) -> str:
-    """
-    Search Wikipedia for information about a topic.
-
-    Input can be:
-    - Simple topic string: "Python programming"
-    - JSON with options: {"query": "Python", "sentences": 10, "suggestion": true}
-
-    Args:
-        query: Topic string or JSON with options
-
-    Returns:
-        Wikipedia article summary or error message.
-    """
+    """Takes a topic string, looks it up on Wikipedia, returns the article summary."""
     # Parse input
     search_query, opts = parse_tool_input(query, {
         "sentences": DEFAULT_SENTENCES,
@@ -43,101 +25,97 @@ async def search_wikipedia(query: str) -> str:
     auto_suggest = opts.get("suggestion", True)
     search_results_count = min(int(opts.get("results", 1)), 5)
 
-    if not search_query:
-        return "Error: No search query provided."
+    err = require_input(search_query, "search query")
+    if err: return err
 
-    try:
-        if search_results_count > 1:
-            # Return multiple search results (titles only, for disambiguation).
-            # The wikipedia library has no timeout parameter, so we wrap the call.
-            search_results = await async_run_with_timeout(
-                lambda: wikipedia.search(search_query, results=search_results_count),
+    if search_results_count > 1:
+        # Return multiple search results (titles only, for disambiguation).
+        # The wikipedia library has no timeout parameter, so we wrap the call.
+        search_results = await async_run_with_timeout(
+            lambda: wikipedia.search(search_query, results=search_results_count),
+            timeout=DEFAULT_SEARCH_TIMEOUT,
+        )
+
+        if not search_results:
+            return f"No Wikipedia articles found for '{search_query}'"
+
+        result_parts = [f"Found {len(search_results)} Wikipedia articles for '{search_query}':\n"]
+
+        for i, title in enumerate(search_results, 1):
+            try:
+                # Get a brief summary of each (with timeout protection)
+                page = await async_run_with_timeout(
+                    lambda t=title: wikipedia.page(t, auto_suggest=False),
+                    timeout=DEFAULT_SEARCH_TIMEOUT,
+                )
+                summary = await async_run_with_timeout(
+                    lambda t=title: wikipedia.summary(t, sentences=2, auto_suggest=False),
+                    timeout=DEFAULT_SEARCH_TIMEOUT,
+                )
+                summary = truncate(summary, 200)
+                result_parts.append(f"{i}. **{page.title}**\n   {summary}")
+            except wikipedia.exceptions.DisambiguationError as e:
+                result_parts.append(f"{i}. **{title}** (disambiguation page with {len(e.options)} options)")
+            except wikipedia.exceptions.PageError:
+                result_parts.append(f"{i}. **{title}** (page not found)")
+            except Exception as e:
+                # Catch unexpected errors (network, parsing) so one failed
+                # result doesn't abort the entire multi-result search.
+                result_parts.append(f"{i}. **{title}** (error: {str(e)[:80]})")
+
+        return "\n\n".join(result_parts)
+
+    else:
+        # Get single article summary
+        try:
+            # Wrap calls with timeout -- wikipedia library has no timeout parameter
+            summary = await async_run_with_timeout(
+                lambda: wikipedia.summary(search_query, sentences=sentences, auto_suggest=auto_suggest),
                 timeout=DEFAULT_SEARCH_TIMEOUT,
             )
 
-            if not search_results:
-                return f"No Wikipedia articles found for '{search_query}'"
+            # Get the actual page to retrieve the title and URL
+            page = await async_run_with_timeout(
+                lambda: wikipedia.page(search_query, auto_suggest=auto_suggest),
+                timeout=DEFAULT_SEARCH_TIMEOUT,
+            )
 
-            result_parts = [f"Found {len(search_results)} Wikipedia articles for '{search_query}':\n"]
+            # Truncate if too long
+            summary = truncate(summary, WIKI_MAX_CHARS)
 
-            for i, title in enumerate(search_results, 1):
-                try:
-                    # Get a brief summary of each (with timeout protection)
-                    page = await async_run_with_timeout(
-                        lambda t=title: wikipedia.page(t, auto_suggest=False),
-                        timeout=DEFAULT_SEARCH_TIMEOUT,
-                    )
-                    summary = await async_run_with_timeout(
-                        lambda t=title: wikipedia.summary(t, sentences=2, auto_suggest=False),
-                        timeout=DEFAULT_SEARCH_TIMEOUT,
-                    )
-                    summary = truncate(summary, 200)
-                    result_parts.append(f"{i}. **{page.title}**\n   {summary}")
-                except wikipedia.exceptions.DisambiguationError as e:
-                    result_parts.append(f"{i}. **{title}** (disambiguation page with {len(e.options)} options)")
-                except wikipedia.exceptions.PageError:
-                    result_parts.append(f"{i}. **{title}** (page not found)")
-                except Exception as e:
-                    # Catch unexpected errors (network, parsing) so one failed
-                    # result doesn't abort the entire multi-result search.
-                    result_parts.append(f"{i}. **{title}** (error: {str(e)[:80]})")
+            return (
+                f"**{page.title}**\n"
+                f"URL: {page.url}\n\n"
+                f"{summary}"
+            )
 
-            return "\n\n".join(result_parts)
+        except wikipedia.exceptions.DisambiguationError as e:
+            # Handle disambiguation pages
+            options = e.options[:10]  # Limit to first 10 options
+            options_list = "\n".join(f"  - {opt}" for opt in options)
 
-        else:
-            # Get single article summary
-            try:
-                # Wrap calls with timeout -- wikipedia library has no timeout parameter
-                summary = await async_run_with_timeout(
-                    lambda: wikipedia.summary(search_query, sentences=sentences, auto_suggest=auto_suggest),
-                    timeout=DEFAULT_SEARCH_TIMEOUT,
-                )
+            return (
+                f"'{search_query}' is ambiguous. Did you mean one of these?\n\n"
+                f"{options_list}\n\n"
+                f"Try searching with a more specific term, or use:\n"
+                f'{{"query": "specific term", "results": 3}} to see multiple results.'
+            )
 
-                # Get the actual page to retrieve the title and URL
-                page = await async_run_with_timeout(
-                    lambda: wikipedia.page(search_query, auto_suggest=auto_suggest),
-                    timeout=DEFAULT_SEARCH_TIMEOUT,
-                )
+        except wikipedia.exceptions.PageError:
+            # Page not found -- try to suggest alternatives
+            suggestions = await async_run_with_timeout(
+                lambda: wikipedia.search(search_query, results=5),
+                timeout=DEFAULT_SEARCH_TIMEOUT,
+            )
 
-                # Truncate if too long
-                summary = truncate(summary, WIKI_MAX_CHARS)
-
+            if suggestions:
+                suggestions_list = "\n".join(f"  - {s}" for s in suggestions)
                 return (
-                    f"**{page.title}**\n"
-                    f"URL: {page.url}\n\n"
-                    f"{summary}"
+                    f"No Wikipedia article found for '{search_query}'.\n\n"
+                    f"Did you mean:\n{suggestions_list}"
                 )
-
-            except wikipedia.exceptions.DisambiguationError as e:
-                # Handle disambiguation pages
-                options = e.options[:10]  # Limit to first 10 options
-                options_list = "\n".join(f"  - {opt}" for opt in options)
-
-                return (
-                    f"'{search_query}' is ambiguous. Did you mean one of these?\n\n"
-                    f"{options_list}\n\n"
-                    f"Try searching with a more specific term, or use:\n"
-                    f'{{"query": "specific term", "results": 3}} to see multiple results.'
-                )
-
-            except wikipedia.exceptions.PageError:
-                # Page not found -- try to suggest alternatives
-                suggestions = await async_run_with_timeout(
-                    lambda: wikipedia.search(search_query, results=5),
-                    timeout=DEFAULT_SEARCH_TIMEOUT,
-                )
-
-                if suggestions:
-                    suggestions_list = "\n".join(f"  - {s}" for s in suggestions)
-                    return (
-                        f"No Wikipedia article found for '{search_query}'.\n\n"
-                        f"Did you mean:\n{suggestions_list}"
-                    )
-                else:
-                    return f"No Wikipedia article found for '{search_query}'. Try different search terms."
-
-    except Exception as e:
-        return f"Error searching Wikipedia: {str(e)}"
+            else:
+                return f"No Wikipedia article found for '{search_query}'. Try different search terms."
 
 
 # Create the LangChain Tool wrapper

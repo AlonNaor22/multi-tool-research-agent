@@ -80,7 +80,7 @@ class TestUrlFetch:
             from src.tools.url_tool import fetch_url_content
             result = await fetch_url_content("https://example.com")
 
-            assert "timed out" in result.lower()
+            assert "timeout" in result.lower()
 
     async def test_truncates_long_content(self):
         long_html = f"<html><body>{'A' * 10000}</body></html>"

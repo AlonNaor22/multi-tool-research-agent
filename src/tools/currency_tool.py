@@ -1,16 +1,11 @@
-"""Currency converter tool for the research agent.
-
-Converts between currencies using real-time exchange rates from a free API.
-
-Uses the free exchangerate-api.com or falls back to frankfurter.app API.
-"""
+"""Currency converter tool — real-time exchange rates via frankfurter.app."""
 
 import re
 import asyncio
 import aiohttp
 from typing import Optional, Dict
 
-from src.utils import async_retry_on_error, async_fetch, create_tool
+from src.utils import async_retry_on_error, async_fetch, create_tool, safe_tool_call, require_input
 from src.constants import DEFAULT_HTTP_TIMEOUT
 
 
@@ -77,11 +72,7 @@ def normalize_currency(currency: str) -> Optional[str]:
 
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
-    """
-    Fetch exchange rate from API.
-
-    Uses frankfurter.app (free, no API key required).
-    """
+    """Fetch exchange rate from frankfurter.app API."""
     base_url = "https://api.frankfurter.app/latest"
 
     params = {
@@ -93,17 +84,7 @@ async def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
 
 
 async def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
-    """
-    Convert an amount from one currency to another.
-
-    Args:
-        amount: The amount to convert
-        from_currency: Source currency code
-        to_currency: Target currency code
-
-    Returns:
-        Formatted string with conversion result
-    """
+    """Convert an amount from one currency to another."""
     # Normalize currency codes
     from_code = normalize_currency(from_currency)
     to_code = normalize_currency(to_currency)
@@ -145,26 +126,13 @@ async def convert_currency(amount: float, from_currency: str, to_currency: str) 
         return f"Error converting currency: {str(e)}"
 
 
+@safe_tool_call("converting currency")
 async def currency_convert(input_str: str) -> str:
-    """
-    Parse and execute a currency conversion request.
-
-    Supports formats:
-    - "100 USD to EUR"
-    - "convert 50 dollars to euros"
-    - "500 yen to dollars"
-    - "rate USD EUR" (just get the rate)
-
-    Args:
-        input_str: The conversion request
-
-    Returns:
-        Result string or error message
-    """
+    """Parse and execute a currency conversion request."""
+    err = require_input(input_str, "conversion request")
+    if err:
+        return err
     input_str = input_str.strip()
-
-    if not input_str:
-        return "Error: Empty conversion request"
 
     # Command: help
     if input_str.lower() in ("help", "?", "list"):

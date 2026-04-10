@@ -1,37 +1,13 @@
-"""CSV/Spreadsheet reader tool for the research agent.
-
-Reads and analyzes CSV and Excel files, returning structured summaries
-with statistics, column info, and sample data. Uses pandas for parsing.
-
-Features:
-- CSV and Excel (.xlsx, .xls) file support
-- Column type detection and statistics
-- Sample data preview
-- Basic filtering and aggregation
-- Missing value analysis
-"""
+"""CSV/Spreadsheet reader — reads CSV/Excel files with stats and previews."""
 
 import os
-from src.utils import parse_tool_input, truncate, create_tool
+from src.utils import parse_tool_input, truncate, create_tool, safe_tool_call, require_input
 from src.constants import CSV_MAX_OUTPUT_CHARS
 
 
+@safe_tool_call("reading file")
 async def read_spreadsheet(query: str) -> str:
-    """Read and analyze a CSV or Excel file.
-
-    Input can be a file path or JSON with options:
-    - Simple: "data/sales.csv"
-    - Advanced: {"path": "data/sales.csv", "head": 10, "describe": true}
-    - Filter: {"path": "data.csv", "filter": {"column": "country", "value": "USA"}}
-    - Aggregate: {"path": "data.csv", "groupby": "category", "agg": "sum", "column": "revenue"}
-
-    Options:
-    - head: number of rows to preview (default: 5)
-    - describe: include statistical summary (default: true)
-    - columns: list of specific columns to show
-    - filter: {"column": "...", "value": "..."} to filter rows
-    - groupby/agg/column: for simple aggregations
-    """
+    """Read and analyze a CSV or Excel file with optional filtering and aggregation."""
     try:
         import pandas as pd
     except ImportError:
@@ -42,6 +18,9 @@ async def read_spreadsheet(query: str) -> str:
         "head": 5, "describe": True,
     })
     file_path = options.get("path", raw_path)
+    err = require_input(file_path or "", "file_path")
+    if err:
+        return err
     head_rows = options.get("head", 5)
     show_describe = options.get("describe", True)
     selected_columns = options.get("columns")
@@ -49,9 +28,6 @@ async def read_spreadsheet(query: str) -> str:
     groupby_spec = options.get("groupby")
     agg_func = options.get("agg", "sum")
     agg_column = options.get("column")
-
-    if not file_path:
-        return "Error: No file path provided."
 
     if not os.path.exists(file_path):
         return f"Error: File not found: {file_path}"

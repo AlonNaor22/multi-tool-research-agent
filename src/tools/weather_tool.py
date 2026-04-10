@@ -1,19 +1,9 @@
-"""Weather tool for the research agent.
-
-Uses OpenWeatherMap API to get current weather and forecasts.
-Requires an API key from https://openweathermap.org/api
-
-Features:
-- Current weather conditions
-- 5-day forecast (3-hour intervals)
-- Support for city names or coordinates
-- Configurable units (metric/imperial)
-"""
+"""Weather tool — uses OpenWeatherMap API for current weather and forecasts."""
 
 import os
 import asyncio
 import aiohttp
-from src.utils import async_retry_on_error, parse_tool_input, get_aiohttp_session, create_tool
+from src.utils import async_retry_on_error, parse_tool_input, get_aiohttp_session, create_tool, safe_tool_call
 
 
 # API endpoints
@@ -22,11 +12,7 @@ FORECAST_URL = "http://api.openweathermap.org/data/2.5/forecast"
 
 
 def _format_current_weather(data: dict, units: str) -> str:
-    """Format current weather API response into a readable string.
-
-    Uses .get() with defaults throughout to handle unexpected API responses
-    gracefully instead of crashing with KeyError.
-    """
+    """Format current weather API response into a readable string."""
     temp_unit = "\u00b0C" if units == "metric" else "\u00b0F"
     speed_unit = "m/s" if units == "metric" else "mph"
 
@@ -50,7 +36,7 @@ def _format_current_weather(data: dict, units: str) -> str:
 
 
 def _extract_hour(dt_txt: str) -> int:
-    """Extract the hour from an OpenWeatherMap dt_txt string like '2024-01-15 12:00:00'."""
+    """Extract the hour from an OpenWeatherMap dt_txt string."""
     try:
         return int(dt_txt.split(" ")[1].split(":")[0])
     except (IndexError, ValueError):
@@ -58,28 +44,18 @@ def _extract_hour(dt_txt: str) -> int:
 
 
 def _is_closer_to_noon(candidate_hour: int, current_best_hour: int) -> bool:
-    """Return True if candidate_hour is closer to 12:00 than current_best_hour.
-
-    The 5-day forecast API returns 3-hour intervals (00:00, 03:00, ..., 21:00).
-    We pick the reading closest to noon to represent each day's weather,
-    giving the most representative daytime conditions.
-    """
+    """Return True if candidate_hour is closer to 12:00 than current_best_hour."""
     return abs(candidate_hour - 12) < abs(current_best_hour - 12)
 
 
 def _format_forecast(data: dict, units: str, days: int = 3) -> str:
-    """Format forecast API response into a readable multi-day summary.
-
-    Groups the 3-hour interval forecasts by date and picks the reading
-    closest to noon for each day. Uses .get() to handle unexpected formats.
-    """
+    """Format forecast API response into a readable multi-day summary."""
     temp_unit = "\u00b0C" if units == "metric" else "\u00b0F"
 
     city = data.get("city", {})
     city_name = city.get("name", "Unknown")
     country = city.get("country", "")
 
-    # Group forecasts by day, keeping only the reading closest to noon
     daily_forecasts = {}
     for item in data.get("list", []):
         dt_txt = item.get("dt_txt", "")
@@ -89,7 +65,6 @@ def _format_forecast(data: dict, units: str, days: int = 3) -> str:
         if date not in daily_forecasts or _is_closer_to_noon(hour, _extract_hour(daily_forecasts[date].get("dt_txt", ""))):
             daily_forecasts[date] = item
 
-    # Format output
     result_parts = [f"**{days}-day forecast for {city_name}, {country}:**\n"]
 
     count = 0
@@ -113,26 +88,14 @@ def _format_forecast(data: dict, units: str, days: int = 3) -> str:
     return "\n".join(result_parts)
 
 
+@safe_tool_call("getting weather")
 @async_retry_on_error(
     max_retries=2,
     delay=1.0,
     exceptions=(aiohttp.ClientError, asyncio.TimeoutError)
 )
 async def get_weather(query: str) -> str:
-    """
-    Get weather information for a location.
-
-    Input can be:
-    - Simple city name: "London"
-    - JSON with options: {"location": "London", "units": "imperial", "forecast": true}
-    - Coordinates: {"lat": 51.5, "lon": -0.1}
-
-    Args:
-        query: City name string or JSON with options
-
-    Returns:
-        Weather information as formatted string, or error message.
-    """
+    """Get current weather or forecast for a location."""
     api_key = os.getenv("OPENWEATHER_API_KEY")
 
     if not api_key:
@@ -146,8 +109,6 @@ async def get_weather(query: str) -> str:
     location_str, options = parse_tool_input(query, {
         "units": "metric", "forecast": False, "days": 3,
     })
-    # If the input was JSON without a "query" key, location_str will be the
-    # raw JSON — ignore it in favour of the explicit "location" option.
     if location_str and location_str.strip().startswith("{"):
         location_str = ""
     location = options.get("location", location_str or None)
@@ -155,13 +116,11 @@ async def get_weather(query: str) -> str:
     lon = options.get("lon")
     units = options.get("units", "metric")
     forecast = options.get("forecast", False)
-    forecast_days = min(options.get("days", 3), 5)  # Max 5 days
+    forecast_days = min(options.get("days", 3), 5)
 
-    # Validate units
     if units not in ("metric", "imperial"):
         units = "metric"
 
-    # Build API parameters
     params = {
         "appid": api_key,
         "units": units
@@ -175,27 +134,19 @@ async def get_weather(query: str) -> str:
     else:
         return "Error: Provide a location (city name) or coordinates (lat/lon)."
 
-    try:
-        session = await get_aiohttp_session()
-        url = FORECAST_URL if forecast else CURRENT_WEATHER_URL
-        async with session.get(
-            url, params=params,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            data = await resp.json()
-            if resp.status != 200:
-                return f"Weather API error: {data.get('message', 'Unknown error')}"
+    session = await get_aiohttp_session()
+    url = FORECAST_URL if forecast else CURRENT_WEATHER_URL
+    async with session.get(
+        url, params=params,
+        timeout=aiohttp.ClientTimeout(total=10),
+    ) as resp:
+        data = await resp.json()
+        if resp.status != 200:
+            return f"Weather API error: {data.get('message', 'Unknown error')}"
 
-            if forecast:
-                return _format_forecast(data, units, forecast_days)
-            return _format_current_weather(data, units)
-
-    except asyncio.TimeoutError:
-        return "Weather request timed out. Please try again."
-    except aiohttp.ClientError as e:
-        return f"Weather request failed: {str(e)}"
-    except KeyError as e:
-        return f"Unexpected weather data format: missing {str(e)}"
+        if forecast:
+            return _format_forecast(data, units, forecast_days)
+        return _format_current_weather(data, units)
 
 
 # Create the LangChain Tool wrapper

@@ -1,8 +1,4 @@
-"""Reddit search tool for the research agent.
-
-Searches Reddit posts and discussions using Reddit's public JSON API.
-No authentication required — appends .json to search URLs.
-"""
+"""Reddit search tool using Reddit's public JSON API."""
 
 import re
 import json
@@ -13,6 +9,7 @@ from typing import List, Dict
 from src.utils import (
     async_retry_on_error, async_fetch, create_tool,
     parse_result_count, truncate, cached_tool,
+    safe_tool_call, require_input,
 )
 from src.constants import (
     DEFAULT_USER_AGENT,
@@ -30,19 +27,7 @@ async def search_reddit(
     sort: str = "relevance",
     time_filter: str = "all",
 ) -> List[Dict]:
-    """
-    Search Reddit for posts matching a query.
-
-    Args:
-        query: Search query
-        max_results: Maximum results to return (max 10)
-        subreddit: Optional subreddit to restrict search to
-        sort: Sort order — relevance, new, top, comments
-        time_filter: Time filter — all, year, month, week, day
-
-    Returns:
-        List of post dictionaries.
-    """
+    """Search Reddit for posts matching a query and return a list of post dicts."""
     # Build the search URL
     if subreddit:
         url = f"https://www.reddit.com/r/{subreddit}/search.json"
@@ -79,14 +64,14 @@ async def search_reddit(
 
 
 def _format_score(score: int) -> str:
-    """Format a Reddit score for display."""
+    """Format a Reddit score for display (e.g. 1500 -> '1.5k')."""
     if score >= 1000:
         return f"{score / 1000:.1f}k"
     return str(score)
 
 
 def format_results(results: List[Dict], query: str) -> str:
-    """Format Reddit search results for display."""
+    """Format Reddit search results into a display string."""
     if not results:
         return f"No Reddit posts found for '{query}'. Try different search terms or a specific subreddit."
 
@@ -106,26 +91,13 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+@safe_tool_call("searching Reddit")
 async def reddit_search(input_str: str) -> str:
-    """
-    Search Reddit for posts and discussions.
-
-    Supports formats:
-    - "python best practices"
-    - "r/machinelearning: transformers"
-    - "5 results: climate change"
-    - "top week: artificial intelligence"
-
-    Args:
-        input_str: Search query with optional filters
-
-    Returns:
-        Formatted search results
-    """
+    """Takes a query string with optional filters, searches Reddit, returns formatted post results."""
     input_str = input_str.strip()
 
-    if not input_str:
-        return "Error: Empty search query"
+    err = require_input(input_str, "search query")
+    if err: return err
 
     if input_str.lower() in ("help", "?"):
         return _get_help()
@@ -167,17 +139,12 @@ async def reddit_search(input_str: str) -> str:
         sort = query[:query.index(":")].lower()
         query = query[query.index(":") + 1:].strip()
 
-    try:
-        results = await search_reddit(query, max_results, subreddit, sort, time_filter)
-        return format_results(results, query)
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        return f"Error searching Reddit: {str(e)}"
-    except Exception as e:
-        return f"Error: {str(e)}"
+    results = await search_reddit(query, max_results, subreddit, sort, time_filter)
+    return format_results(results, query)
 
 
 def _get_help() -> str:
-    """Return help text."""
+    """Return help text for the Reddit search tool."""
     return """Reddit Search Help:
 
 FORMAT:

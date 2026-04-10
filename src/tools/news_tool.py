@@ -1,19 +1,9 @@
-"""News search tool for the research agent.
-
-Uses DuckDuckGo News search to find recent news articles.
-No API key required - completely free to use.
-
-Features:
-- Configurable time range (day, week, month)
-- Configurable result count
-- Region filtering
-- Structured output with title, source, date, and snippet
-"""
+"""News search tool using DuckDuckGo News."""
 
 from duckduckgo_search import DDGS
 from src.utils import (
     async_retry_on_error, async_run_with_timeout, create_tool,
-    parse_tool_input, truncate,
+    parse_tool_input, truncate, safe_tool_call, require_input,
 )
 from src.constants import (
     DEFAULT_SEARCH_TIMEOUT, DEFAULT_MAX_RESULTS, MAX_SEARCH_RESULTS,
@@ -28,18 +18,7 @@ DEFAULT_TIMELIMIT = "w"  # Past week
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
                             timelimit: str = DEFAULT_TIMELIMIT, region: str = None):
-    """
-    Perform a DuckDuckGo news search asynchronously.
-
-    Args:
-        query: Search query string
-        max_results: Maximum number of results
-        timelimit: Time range ('d', 'w', 'm')
-        region: Optional region filter
-
-    Returns:
-        List of news result dicts.
-    """
+    """Perform a DuckDuckGo news search asynchronously and return a list of result dicts."""
     ddgs = DDGS()
 
     search_kwargs = {
@@ -60,20 +39,9 @@ async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
     return results
 
 
+@safe_tool_call("searching news")
 async def search_news(query: str) -> str:
-    """
-    Search for recent news articles using DuckDuckGo News.
-
-    Input can be:
-    - Simple topic string: "AI developments"
-    - JSON with options: {"query": "AI", "timelimit": "d", "max_results": 10}
-
-    Args:
-        query: News topic string or JSON with options
-
-    Returns:
-        Formatted news results with titles, sources, and snippets.
-    """
+    """Takes a query string, searches DuckDuckGo News, returns formatted news articles."""
     # Parse input
     search_query, opts = parse_tool_input(query, {
         "max_results": DEFAULT_MAX_RESULTS,
@@ -83,45 +51,41 @@ async def search_news(query: str) -> str:
     timelimit = opts.get("timelimit", DEFAULT_TIMELIMIT)
     region = opts.get("region")
 
-    if not search_query:
-        return "Error: No search query provided."
+    err = require_input(search_query, "search query")
+    if err: return err
 
     # Validate timelimit
     if timelimit not in ("d", "w", "m"):
         timelimit = DEFAULT_TIMELIMIT
 
-    try:
-        results = await async_search_news(search_query, max_results, timelimit, region)
+    results = await async_search_news(search_query, max_results, timelimit, region)
 
-        if not results:
-            time_desc = {"d": "past day", "w": "past week", "m": "past month"}[timelimit]
-            return f"No news found for '{search_query}' in the {time_desc}. Try broader terms or a longer time range."
+    if not results:
+        time_desc = {"d": "past day", "w": "past week", "m": "past month"}[timelimit]
+        return f"No news found for '{search_query}' in the {time_desc}. Try broader terms or a longer time range."
 
-        # Format the results
-        time_desc = {"d": "day", "w": "week", "m": "month"}[timelimit]
-        formatted_results = [f"Found {len(results)} news articles for '{search_query}' (past {time_desc}):\n"]
+    # Format the results
+    time_desc = {"d": "day", "w": "week", "m": "month"}[timelimit]
+    formatted_results = [f"Found {len(results)} news articles for '{search_query}' (past {time_desc}):\n"]
 
-        for i, article in enumerate(results, 1):
-            title = article.get('title', 'No title')
-            source = article.get('source', 'Unknown source')
-            date = article.get('date', 'Unknown date')
-            body = article.get('body', 'No description')
-            url = article.get('url', '')
+    for i, article in enumerate(results, 1):
+        title = article.get('title', 'No title')
+        source = article.get('source', 'Unknown source')
+        date = article.get('date', 'Unknown date')
+        body = article.get('body', 'No description')
+        url = article.get('url', '')
 
-            # Truncate body if too long
-            body = truncate(body, ARTICLE_BODY_MAX_CHARS)
+        # Truncate body if too long
+        body = truncate(body, ARTICLE_BODY_MAX_CHARS)
 
-            formatted_results.append(
-                f"{i}. **{title}**\n"
-                f"   Source: {source} | Date: {date}\n"
-                f"   {body}\n"
-                f"   URL: {url}"
-            )
+        formatted_results.append(
+            f"{i}. **{title}**\n"
+            f"   Source: {source} | Date: {date}\n"
+            f"   {body}\n"
+            f"   URL: {url}"
+        )
 
-        return "\n\n".join(formatted_results)
-
-    except Exception as e:
-        return f"Error searching news: {str(e)}"
+    return "\n\n".join(formatted_results)
 
 
 # Create the LangChain Tool wrapper

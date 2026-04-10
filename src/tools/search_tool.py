@@ -1,19 +1,9 @@
-"""Web search tool for the research agent.
-
-Uses DuckDuckGo for free web searches without requiring an API key.
-This gives the agent access to current information from the internet.
-
-Features:
-- Structured results with title, URL, and snippet
-- Configurable result count
-- Region filtering support
-- Retry logic for reliability
-"""
+"""Web search tool using DuckDuckGo."""
 
 from duckduckgo_search import DDGS
 from src.utils import (
     async_retry_on_error, async_run_with_timeout, create_tool,
-    parse_tool_input, truncate,
+    parse_tool_input, truncate, safe_tool_call, require_input,
 )
 from src.constants import (
     DEFAULT_SEARCH_TIMEOUT, DEFAULT_MAX_RESULTS, MAX_SEARCH_RESULTS,
@@ -23,17 +13,7 @@ from src.constants import (
 
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def async_web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS, region: str = None):
-    """
-    Perform a DuckDuckGo web search asynchronously.
-
-    Args:
-        query: Search query string
-        max_results: Maximum number of results
-        region: Optional region filter (e.g., "us-en")
-
-    Returns:
-        List of search result dicts.
-    """
+    """Perform a DuckDuckGo web search asynchronously and return a list of result dicts."""
     ddgs = DDGS()
 
     search_kwargs = {
@@ -53,55 +33,40 @@ async def async_web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS, r
     return results
 
 
+@safe_tool_call("performing web search")
 async def web_search(query: str) -> str:
-    """
-    Search the web using DuckDuckGo.
-
-    The query can be a simple search string, or a JSON object with options:
-    - Simple: "latest AI news"
-    - With options: {"query": "latest AI news", "max_results": 5, "region": "us-en"}
-
-    Args:
-        query: Search query string or JSON with options
-
-    Returns:
-        Formatted search results with title, URL, and snippet.
-    """
+    """Takes a search query string, searches DuckDuckGo, returns formatted results."""
     # Parse input - could be simple string or JSON with options
     search_query, opts = parse_tool_input(query, {"max_results": DEFAULT_MAX_RESULTS})
     max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
     region = opts.get("region")  # e.g., "us-en", "uk-en", "de-de"
 
-    if not search_query:
-        return "Error: No search query provided."
+    err = require_input(search_query, "search query")
+    if err: return err
 
-    try:
-        results = await async_web_search(search_query, max_results, region)
+    results = await async_web_search(search_query, max_results, region)
 
-        if not results:
-            return f"No search results found for '{search_query}'"
+    if not results:
+        return f"No search results found for '{search_query}'"
 
-        # Format results in a structured way
-        formatted_results = []
-        for i, result in enumerate(results, 1):
-            title = result.get("title", "No title")
-            url = result.get("href", result.get("link", "No URL"))
-            snippet = result.get("body", result.get("snippet", "No description"))
+    # Format results in a structured way
+    formatted_results = []
+    for i, result in enumerate(results, 1):
+        title = result.get("title", "No title")
+        url = result.get("href", result.get("link", "No URL"))
+        snippet = result.get("body", result.get("snippet", "No description"))
 
-            # Truncate snippet if too long
-            snippet = truncate(snippet, SNIPPET_MAX_CHARS)
+        # Truncate snippet if too long
+        snippet = truncate(snippet, SNIPPET_MAX_CHARS)
 
-            formatted_results.append(
-                f"{i}. **{title}**\n"
-                f"   URL: {url}\n"
-                f"   {snippet}"
-            )
+        formatted_results.append(
+            f"{i}. **{title}**\n"
+            f"   URL: {url}\n"
+            f"   {snippet}"
+        )
 
-        header = f"Found {len(results)} results for '{search_query}':\n"
-        return header + "\n\n".join(formatted_results)
-
-    except Exception as e:
-        return f"Error performing web search: {str(e)}"
+    header = f"Found {len(results)} results for '{search_query}':\n"
+    return header + "\n\n".join(formatted_results)
 
 
 # Create the LangChain Tool wrapper

@@ -1,14 +1,4 @@
-"""Math formatter tool — converts structured math data to Streamlit markdown.
-
-Takes MATH_STRUCTURED: JSON from the calculator tool and produces
-clean markdown with:
-- KaTeX-rendered LaTeX equations ($...$ inline, $$...$$ block)
-- Markdown tables for matrices
-- Numbered step-by-step breakdowns
-- Highlighted final results
-
-Uses Streamlit-native KaTeX (works in st.markdown) instead of MathJax/HTML.
-"""
+"""Math formatter — renders MATH_STRUCTURED JSON as Streamlit-compatible KaTeX markdown."""
 
 import json
 from typing import Optional
@@ -20,7 +10,7 @@ from langchain_core.tools import Tool
 # ---------------------------------------------------------------------------
 
 def _matrix_to_markdown(data: list, caption: Optional[str] = None) -> str:
-    """Render a 2D list as a markdown table."""
+    """Render a 2D list as a centered markdown table."""
     if not data:
         return ""
     cols = len(data[0])
@@ -39,7 +29,7 @@ def _matrix_to_markdown(data: list, caption: Optional[str] = None) -> str:
 
 
 def _fmt_num(v) -> str:
-    """Format a number for display."""
+    """Format a numeric value as a clean string."""
     if isinstance(v, float):
         if v == int(v):
             return str(int(v))
@@ -48,14 +38,14 @@ def _fmt_num(v) -> str:
 
 
 def _latex_inline(expr: str) -> str:
-    """Wrap in KaTeX inline delimiters for Streamlit."""
+    """Wrap expr in KaTeX inline delimiters ($...$)."""
     if not expr:
         return ""
     return f"${expr}$"
 
 
 def _latex_block(expr: str) -> str:
-    """Wrap in KaTeX block delimiters for Streamlit."""
+    """Wrap expr in KaTeX block delimiters ($$...$$)."""
     if not expr:
         return ""
     return f"\n\n$${expr}$$\n\n"
@@ -66,14 +56,7 @@ def _latex_block(expr: str) -> str:
 # ---------------------------------------------------------------------------
 
 def format_math(input_str: str) -> str:
-    """Format a MATH_STRUCTURED: JSON string into Streamlit-compatible markdown.
-
-    Args:
-        input_str: Either a raw JSON string or prefixed with "MATH_STRUCTURED:"
-
-    Returns:
-        Markdown string with KaTeX equations and markdown tables.
-    """
+    """Convert a MATH_STRUCTURED JSON string into Streamlit-compatible KaTeX markdown."""
     # Strip the prefix if present
     if input_str.startswith("MATH_STRUCTURED:"):
         json_str = input_str[len("MATH_STRUCTURED:"):]
@@ -142,7 +125,7 @@ def format_math(input_str: str) -> str:
 
 
 async def async_format_math(input_str: str) -> str:
-    """Async wrapper for the math formatter."""
+    """Async wrapper for format_math()."""
     return format_math(input_str)
 
 

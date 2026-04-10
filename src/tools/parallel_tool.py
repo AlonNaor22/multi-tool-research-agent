@@ -1,19 +1,8 @@
-"""Parallel execution tool for the research agent.
-
-This is a "meta-tool" that runs multiple searches concurrently using
-asyncio.gather(). Instead of the agent making 3 sequential searches,
-it can use this tool to run all 3 at once, significantly speeding up research.
-
-Features:
-- Supports web, wikipedia, news, and arxiv searches
-- Runs searches concurrently using asyncio.gather
-- Smart result truncation based on content type
-- Maximum 10 parallel searches
-"""
+"""Parallel search meta-tool — runs multiple searches concurrently via asyncio.gather."""
 
 import json
 import asyncio
-from typing import Dict, List
+from typing import Dict
 from src.constants import TRUNCATION_PRESERVE_RATIO
 from src.utils import create_tool
 
@@ -38,7 +27,7 @@ TRUNCATION_LIMITS = {
 
 
 def get_search_function(search_type: str):
-    """Get the appropriate async search function based on type."""
+    """Return the async search function for a given type, or None."""
     search_functions = {
         "web": web_search,
         "wikipedia": search_wikipedia,
@@ -49,7 +38,7 @@ def get_search_function(search_type: str):
 
 
 def truncate_result(result: str, search_type: str) -> str:
-    """Intelligently truncate result based on type."""
+    """Truncate a search result to a type-specific character limit."""
     limit = TRUNCATION_LIMITS.get(search_type, TRUNCATION_LIMITS["default"])
 
     if len(result) <= limit:
@@ -74,15 +63,7 @@ def truncate_result(result: str, search_type: str) -> str:
 
 
 async def execute_single_search(search_spec: Dict) -> Dict:
-    """
-    Execute a single search asynchronously and return the result with metadata.
-
-    Args:
-        search_spec: Dict with 'type' and 'query' keys
-
-    Returns:
-        Dict with 'type', 'query', 'result', and 'success' keys
-    """
+    """Run one search and return a dict with type, query, result, and success."""
     search_type = search_spec.get("type", "web")
     query = search_spec.get("query", "")
 
@@ -114,25 +95,7 @@ async def execute_single_search(search_spec: Dict) -> Dict:
 
 
 async def parallel_search(input_str: str) -> str:
-    """
-    Execute multiple searches concurrently using asyncio.gather.
-
-    INPUT FORMAT:
-    {
-        "searches": [
-            {"type": "web", "query": "Tesla stock price"},
-            {"type": "wikipedia", "query": "Tesla company"},
-            {"type": "news", "query": "Tesla"},
-            {"type": "arxiv", "query": "electric vehicles battery"}
-        ]
-    }
-
-    Args:
-        input_str: JSON string with "searches" array
-
-    Returns:
-        Formatted string with all search results
-    """
+    """Execute multiple searches concurrently from a JSON spec with a 'searches' array."""
     # Parse input
     try:
         spec = json.loads(input_str)

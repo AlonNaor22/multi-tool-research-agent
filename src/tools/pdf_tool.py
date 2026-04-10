@@ -1,17 +1,10 @@
-"""PDF reader tool for the research agent.
-
-Fetches and extracts text content from PDF files at URLs.
-Uses pdfplumber for high-quality extraction (multi-column, tables),
-with pypdf as a fallback.
-"""
+"""PDF reader tool — fetches and extracts text from PDF files at URLs."""
 
 import io
 import re
-import asyncio
-import aiohttp
 from typing import Optional
 
-from src.utils import async_retry_on_error, async_fetch, create_tool
+from src.utils import async_retry_on_error, async_fetch, create_tool, safe_tool_call, require_input
 from src.constants import DEFAULT_USER_AGENT, PDF_MAX_PAGES
 
 # Try pdfplumber first (better quality), fall back to pypdf
@@ -34,16 +27,7 @@ except ImportError:
 
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def fetch_pdf(url: str, timeout: int = 30) -> bytes:
-    """
-    Fetch PDF content from a URL.
-
-    Args:
-        url: URL to the PDF file
-        timeout: Request timeout in seconds
-
-    Returns:
-        PDF file content as bytes
-    """
+    """Fetch PDF content from a URL as bytes."""
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "application/pdf,*/*",
@@ -51,7 +35,6 @@ async def fetch_pdf(url: str, timeout: int = 30) -> bytes:
 
     content_bytes = await async_fetch(url, headers=headers, timeout=timeout, response_type="bytes")
 
-    # Verify it's actually a PDF
     if not content_bytes[:4] == b'%PDF':
         raise ValueError("URL does not point to a PDF file")
 
@@ -59,16 +42,7 @@ async def fetch_pdf(url: str, timeout: int = 30) -> bytes:
 
 
 def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
-    """
-    Extract text from PDF content using the best available library.
-
-    Args:
-        pdf_content: PDF file content as bytes
-        max_pages: Maximum number of pages to extract (None = all)
-
-    Returns:
-        Extracted text content
-    """
+    """Extract text from PDF content using the best available library."""
     if PDF_LIBRARY == "pdfplumber":
         return _extract_with_pdfplumber(pdf_content, max_pages)
     elif PDF_LIBRARY in ("pypdf", "PyPDF2"):
@@ -78,7 +52,7 @@ def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -
 
 
 def _extract_with_pdfplumber(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
-    """Extract text using pdfplumber (better for complex layouts, tables, multi-column)."""
+    """Extract text using pdfplumber (better for complex layouts)."""
     try:
         pdf_file = io.BytesIO(pdf_content)
         text_parts = []
@@ -89,7 +63,6 @@ def _extract_with_pdfplumber(pdf_content: bytes, max_pages: Optional[int] = None
 
             text_parts.append(f"[PDF Document - {total_pages} pages]")
 
-            # Extract metadata if available
             metadata = pdf.metadata or {}
             if metadata.get("Title"):
                 text_parts.append(f"Title: {metadata['Title']}")
@@ -130,7 +103,6 @@ def _extract_with_pypdf(pdf_content: bytes, max_pages: Optional[int] = None) -> 
         text_parts = []
         text_parts.append(f"[PDF Document - {total_pages} pages]")
 
-        # Extract metadata if available
         metadata = reader.metadata
         if metadata:
             if metadata.title:
@@ -141,7 +113,6 @@ def _extract_with_pypdf(pdf_content: bytes, max_pages: Optional[int] = None) -> 
                 text_parts.append(f"Subject: {metadata.subject}")
             text_parts.append("")
 
-        # Extract text from pages
         for i in range(pages_to_read):
             page = reader.pages[i]
             page_text = page.extract_text()
@@ -161,50 +132,25 @@ def _extract_with_pypdf(pdf_content: bytes, max_pages: Optional[int] = None) -> 
 
 
 def clean_text(text: str, max_length: int = 15000) -> str:
-    """
-    Clean and truncate extracted text.
-
-    Args:
-        text: Raw extracted text
-        max_length: Maximum length to return
-
-    Returns:
-        Cleaned text
-    """
-    # Remove excessive whitespace
+    """Clean and truncate extracted text."""
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r' {2,}', ' ', text)
-
-    # Remove common PDF artifacts
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
 
-    # Truncate if needed
     if len(text) > max_length:
         text = text[:max_length] + f"\n\n[... Content truncated at {max_length} characters ...]"
 
     return text.strip()
 
 
+@safe_tool_call("reading PDF")
 async def read_pdf(input_str: str) -> str:
-    """
-    Fetch and read a PDF from a URL.
+    """Fetch and read a PDF from a URL."""
+    err = require_input(input_str, "URL")
+    if err:
+        return err
 
-    Supports formats:
-    - "https://example.com/paper.pdf"
-    - "url: https://example.com/paper.pdf"
-    - "5 pages: https://example.com/paper.pdf" (limit pages)
-    - "summary: https://example.com/paper.pdf" (first 3 pages only)
-
-    Args:
-        input_str: URL to the PDF, optionally with options
-
-    Returns:
-        Extracted text content or error message
-    """
     input_str = input_str.strip()
-
-    if not input_str:
-        return "Error: No URL provided"
 
     # Command: help
     if input_str.lower() in ("help", "?"):
@@ -233,22 +179,14 @@ async def read_pdf(input_str: str) -> str:
     if not url.startswith(("http://", "https://")):
         return f"Error: Invalid URL '{url}'. Must start with http:// or https://"
 
-    try:
-        # Fetch the PDF
-        pdf_content = await fetch_pdf(url)
+    # Fetch the PDF
+    pdf_content = await fetch_pdf(url)
 
-        # Extract text
-        text = extract_text_from_pdf(pdf_content, max_pages)
+    # Extract text
+    text = extract_text_from_pdf(pdf_content, max_pages)
 
-        # Clean and return
-        return clean_text(text)
-
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        return f"Error fetching PDF: {str(e)}"
-    except ValueError as e:
-        return str(e)
-    except Exception as e:
-        return f"Error reading PDF: {str(e)}"
+    # Clean and return
+    return clean_text(text)
 
 
 def _get_help() -> str:

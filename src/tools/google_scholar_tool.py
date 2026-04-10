@@ -1,11 +1,4 @@
-"""Academic paper search tool using the Semantic Scholar API.
-
-Searches for published research across ALL academic fields — STEM,
-humanities, medicine, social sciences, etc. Returns structured data
-(title, authors, year, citations, abstract, URL) without web scraping.
-
-Free API, no key required.
-"""
+"""Academic paper search tool using the Semantic Scholar API."""
 
 import re
 import asyncio
@@ -15,6 +8,7 @@ from typing import List, Dict, Optional
 from src.utils import (
     async_retry_on_error, async_fetch, cached_tool, create_tool,
     parse_tool_input, parse_result_count, truncate,
+    safe_tool_call, require_input,
 )
 from src.constants import (
     SEMANTIC_SCHOLAR_BASE_URL,
@@ -37,18 +31,7 @@ async def search_semantic_scholar(
     year_from: Optional[int] = None,
     year_to: Optional[int] = None,
 ) -> List[Dict]:
-    """
-    Search Semantic Scholar for academic papers.
-
-    Args:
-        query: Search query
-        max_results: Maximum number of results (max 10)
-        year_from: Filter results from this year onwards
-        year_to: Filter results up to this year
-
-    Returns:
-        List of paper dictionaries.
-    """
+    """Search Semantic Scholar and return a list of paper dictionaries."""
     url = f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search"
 
     params = {
@@ -101,7 +84,7 @@ async def search_semantic_scholar(
 
 
 def format_results(results: List[Dict], query: str) -> str:
-    """Format search results for display."""
+    """Format a list of paper dicts into a display string."""
     if not results:
         return f"No academic papers found for '{query}'. Try different search terms or broader keywords."
 
@@ -130,26 +113,13 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+@safe_tool_call("searching academic papers")
 async def scholar_search(input_str: str) -> str:
-    """
-    Search for academic papers across all fields.
-
-    Supports formats:
-    - "climate change effects"
-    - "5 results: machine learning"
-    - "from 2020: neural networks"
-    - "2010-2020: paleoclimate israel"
-
-    Args:
-        input_str: Search query with optional filters
-
-    Returns:
-        Formatted search results
-    """
+    """Takes a query string with optional filters, searches Semantic Scholar, returns formatted results."""
     input_str = input_str.strip()
 
-    if not input_str:
-        return "Error: Empty search query"
+    err = require_input(input_str, "search query")
+    if err: return err
 
     # Command: help
     if input_str.lower() in ("help", "?"):
@@ -185,17 +155,12 @@ async def scholar_search(input_str: str) -> str:
         year_to = int(to_match.group(1))
         query = to_match.group(2)
 
-    try:
-        results = await search_semantic_scholar(query, max_results, year_from, year_to)
-        return format_results(results, query)
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        return f"Error searching academic papers: {str(e)}"
-    except Exception as e:
-        return f"Error: {str(e)}"
+    results = await search_semantic_scholar(query, max_results, year_from, year_to)
+    return format_results(results, query)
 
 
 def _get_help() -> str:
-    """Return help text."""
+    """Return help text for the scholar search tool."""
     return """Academic Paper Search Help (powered by Semantic Scholar):
 
 FORMAT:

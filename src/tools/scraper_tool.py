@@ -1,21 +1,7 @@
-"""Web scraper tool for the research agent.
+"""Web scraper tool — extracts structured data (tables, lists, links, headings) from web pages."""
 
-Extracts structured data (tables, lists, links, headings) from web pages.
-Goes beyond fetch_url by returning structured data instead of raw text.
-Uses BeautifulSoup for parsing. No API key required.
-
-Features:
-- Table extraction as formatted markdown
-- List extraction (ordered and unordered)
-- Link extraction with text and URLs
-- Heading extraction for page structure
-- CSS selector-based custom extraction
-"""
-
-import json
-import aiohttp
 from bs4 import BeautifulSoup
-from src.utils import async_retry_on_error, async_fetch, create_tool, parse_tool_input
+from src.utils import async_retry_on_error, async_fetch, create_tool, parse_tool_input, safe_tool_call, require_input
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT, DEFAULT_MAX_CONTENT_CHARS
 
 
@@ -50,18 +36,14 @@ def _extract_tables(soup: BeautifulSoup, max_tables: int = 5) -> str:
         if not table_data:
             continue
 
-        # Build markdown table
         max_cols = max(len(row) for row in table_data)
-        # Pad rows to same length
         for row in table_data:
             while len(row) < max_cols:
                 row.append("")
 
         lines = []
-        # Header row
         lines.append("| " + " | ".join(table_data[0]) + " |")
         lines.append("| " + " | ".join(["---"] * max_cols) + " |")
-        # Data rows
         for row in table_data[1:]:
             lines.append("| " + " | ".join(row) + " |")
 
@@ -134,16 +116,9 @@ def _extract_headings(soup: BeautifulSoup) -> str:
     return "**Page Structure:**\n" + "\n".join(lines)
 
 
+@safe_tool_call("scraping webpage")
 async def scrape_webpage(query: str) -> str:
-    """Scrape structured data from a web page.
-
-    Input can be a URL string or JSON with options:
-    - Simple: "https://example.com"
-    - Advanced: {"url": "https://example.com", "extract": ["tables", "lists", "links", "headings"]}
-    - CSS selector: {"url": "https://example.com", "selector": "div.main-content"}
-
-    Extract options: tables, lists, links, headings, all (default)
-    """
+    """Scrape structured data (tables, lists, links, headings) from a web page."""
     # Parse input
     extract_types = ["tables", "lists", "links", "headings"]
     css_selector = None
@@ -156,66 +131,63 @@ async def scrape_webpage(query: str) -> str:
     if "all" not in extract:
         extract_types = extract
 
-    if not url:
-        return "Error: No URL provided."
+    err = require_input(url, "URL")
+    if err:
+        return err
 
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    try:
-        html = await _fetch_html(url)
-        soup = BeautifulSoup(html, "html.parser")
+    html = await _fetch_html(url)
+    soup = BeautifulSoup(html, "html.parser")
 
-        # Remove noise
-        for tag in soup(["script", "style", "nav", "footer", "noscript"]):
-            tag.decompose()
+    # Remove noise
+    for tag in soup(["script", "style", "nav", "footer", "noscript"]):
+        tag.decompose()
 
-        # Apply CSS selector if provided
-        if css_selector:
-            target = soup.select_one(css_selector)
-            if target:
-                soup = BeautifulSoup(str(target), "html.parser")
-            else:
-                return f"CSS selector '{css_selector}' not found on {url}"
+    # Apply CSS selector if provided
+    if css_selector:
+        target = soup.select_one(css_selector)
+        if target:
+            soup = BeautifulSoup(str(target), "html.parser")
+        else:
+            return f"CSS selector '{css_selector}' not found on {url}"
 
-        # Get page title
-        title = soup.find("title")
-        title_text = title.get_text(strip=True) if title else url
+    # Get page title
+    title = soup.find("title")
+    title_text = title.get_text(strip=True) if title else url
 
-        sections = [f"**Scraped: {title_text}**\n**URL:** {url}\n"]
+    sections = [f"**Scraped: {title_text}**\n**URL:** {url}\n"]
 
-        if "headings" in extract_types:
-            headings = _extract_headings(soup)
-            if headings:
-                sections.append(headings)
+    if "headings" in extract_types:
+        headings = _extract_headings(soup)
+        if headings:
+            sections.append(headings)
 
-        if "tables" in extract_types:
-            tables = _extract_tables(soup)
-            if tables:
-                sections.append(tables)
+    if "tables" in extract_types:
+        tables = _extract_tables(soup)
+        if tables:
+            sections.append(tables)
 
-        if "lists" in extract_types:
-            lists = _extract_lists(soup)
-            if lists:
-                sections.append(lists)
+    if "lists" in extract_types:
+        lists = _extract_lists(soup)
+        if lists:
+            sections.append(lists)
 
-        if "links" in extract_types:
-            links = _extract_links(soup)
-            if links:
-                sections.append(links)
+    if "links" in extract_types:
+        links = _extract_links(soup)
+        if links:
+            sections.append(links)
 
-        result = "\n\n".join(sections)
+    result = "\n\n".join(sections)
 
-        if len(result) > DEFAULT_MAX_CONTENT_CHARS:
-            result = result[:DEFAULT_MAX_CONTENT_CHARS] + "\n\n[Content truncated]"
+    if len(result) > DEFAULT_MAX_CONTENT_CHARS:
+        result = result[:DEFAULT_MAX_CONTENT_CHARS] + "\n\n[Content truncated]"
 
-        if len(sections) <= 1:
-            return f"No structured data (tables, lists, links) found on {url}. Try fetch_url for raw text content."
+    if len(sections) <= 1:
+        return f"No structured data (tables, lists, links) found on {url}. Try fetch_url for raw text content."
 
-        return result
-
-    except Exception as e:
-        return f"Error scraping {url}: {str(e)}"
+    return result
 
 
 scraper_tool = create_tool(

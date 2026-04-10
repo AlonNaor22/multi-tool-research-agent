@@ -1,17 +1,10 @@
-"""YouTube search tool using yt-dlp for reliable video discovery.
+"""YouTube search tool using yt-dlp for reliable video discovery."""
 
-Replaces the previous fragile web-scraping approach with yt-dlp's
-ytsearch protocol, which is actively maintained and robust against
-YouTube frontend changes.
-"""
-
-import re
-import json
 from typing import List, Dict
 
 from src.utils import (
     async_retry_on_error, async_run_with_timeout, create_tool,
-    parse_result_count, truncate, cached_tool,
+    parse_result_count, truncate, cached_tool, safe_tool_call, require_input,
 )
 from src.constants import DEFAULT_SEARCH_TIMEOUT, DESCRIPTION_MAX_CHARS
 
@@ -43,16 +36,7 @@ def _format_views(count) -> str:
 @cached_tool("youtube")
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def async_search_youtube_ytdlp(query: str, max_results: int = 5) -> List[Dict]:
-    """
-    Search YouTube via yt-dlp's ytsearch protocol asynchronously.
-
-    Args:
-        query: Search query
-        max_results: Maximum number of results to return
-
-    Returns:
-        List of video dictionaries.
-    """
+    """Search YouTube via yt-dlp's ytsearch protocol asynchronously."""
     import yt_dlp
 
     ydl_opts = {
@@ -114,32 +98,20 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+@safe_tool_call("searching YouTube")
 async def youtube_search(input_str: str) -> str:
-    """
-    Search YouTube for videos.
-
-    Supports formats:
-    - "python tutorial"
-    - "5 results: quantum computing"
-
-    Args:
-        input_str: Search query, optionally with result count
-
-    Returns:
-        Formatted search results
-    """
-    input_str = input_str.strip()
-
-    if not input_str:
-        return "Error: Empty search query"
+    """Search YouTube for videos matching a query string."""
+    err = require_input(input_str, "search query")
+    if err:
+        return err
 
     # Command: help
-    if input_str.lower() in ("help", "?"):
+    if input_str.strip().lower() in ("help", "?"):
         return _get_help()
 
     # Parse for custom result count
     max_results = 5
-    query = input_str
+    query = input_str.strip()
 
     # Check for "N results:" prefix
     query, max_results = parse_result_count(query)
@@ -148,11 +120,8 @@ async def youtube_search(input_str: str) -> str:
     if query.lower().startswith("search:"):
         query = query[7:].strip()
 
-    try:
-        results = await async_search_youtube_ytdlp(query, max_results)
-        return format_results(results, query)
-    except Exception as e:
-        return f"Error searching YouTube: {str(e)}"
+    results = await async_search_youtube_ytdlp(query, max_results)
+    return format_results(results, query)
 
 
 def _get_help() -> str:
