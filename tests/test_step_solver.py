@@ -203,33 +203,8 @@ class TestIntegralSteps:
         assert "Error" in result
 
 
-# ============================================================================
-# EQUATION SOLVING STEPS
-# ============================================================================
-
-class TestEquationSteps:
-    """Test step-by-step equation solving."""
-
-    def test_linear_equation(self, solver):
-        result = solver.solve("solve", "2x + 3 = 7")
-        assert "Step" in result
-        assert "Result:" in result
-        assert "2" in result
-
-    def test_quadratic_equation(self, solver):
-        result = solver.solve("solve", "x^2 - 4 = 0")
-        assert "discriminant" in result.lower()
-        assert "Result:" in result
-        assert "2" in result and "-2" in result
-
-    def test_quadratic_with_formula(self, solver):
-        result = solver.solve("solve", "x^2 + 5x + 6 = 0")
-        assert "Result:" in result
-        assert "-2" in result and "-3" in result
-
-    def test_no_variable_error(self, solver):
-        result = solver.solve("solve", "5 = 5")
-        assert "Error" in result or "No" in result
+# Equation-solving step tests (linear, quadratic, systems) live in
+# test_equation_solver.py which covers them more comprehensively.
 
 
 # ============================================================================

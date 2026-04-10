@@ -34,3 +34,4 @@ streamlit>=1.32.0                # Chat-based web interface
 pytest>=7.0                      # Test framework
 pytest-mock>=3.10                # Mock fixtures for pytest
 pytest-asyncio>=0.23.0           # Async test support
+pytest-xdist>=3.0                # Parallel test execution across CPU cores

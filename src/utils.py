@@ -79,6 +79,13 @@ def extract_ai_answer(result: dict, default: str = "No answer was generated.") -
 # Async retry decorator
 # ---------------------------------------------------------------------------
 
+async def _retry_sleep(seconds: float) -> None:
+    """Patchable wrapper around ``asyncio.sleep`` used only by the retry
+    decorator.  Tests can ``patch("src.utils._retry_sleep")`` to zero-out
+    retry delays without affecting ``asyncio.sleep`` globally."""
+    await asyncio.sleep(seconds)
+
+
 def async_retry_on_error(
     max_retries: int = 3,
     delay: float = 1.0,
@@ -128,7 +135,7 @@ def async_retry_on_error(
                     print(f"  🔄 Retry {attempt + 1}/{max_retries} for {func.__name__} "
                           f"after {reason}...")
 
-                    await asyncio.sleep(retry_delay)
+                    await _retry_sleep(retry_delay)
                     current_delay *= backoff
 
             raise last_exception

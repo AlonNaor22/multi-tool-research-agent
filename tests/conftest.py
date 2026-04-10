@@ -5,6 +5,7 @@ import sys
 import json
 import pytest
 import aiohttp
+from unittest.mock import patch, AsyncMock
 
 # Ensure the project root is on the Python path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -67,6 +68,19 @@ class AsyncMockResponse:
 
     async def __aexit__(self, *args):
         pass
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _fast_retries():
+    """Zero-out retry delays so error-handling tests don't waste wall-clock
+    time on backoff sleeps.
+
+    Patches only ``src.utils._retry_sleep`` — the wrapper used exclusively
+    by the retry decorator. ``asyncio.sleep`` itself is unaffected, so
+    timeout tests and other sleep-dependent code work normally.
+    """
+    with patch("src.utils._retry_sleep", new_callable=AsyncMock):
+        yield
 
 
 @pytest.fixture

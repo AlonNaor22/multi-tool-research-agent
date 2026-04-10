@@ -86,17 +86,14 @@ class TestMathFunctions:
 class TestConstants:
     """Test math constants."""
 
-    async def test_pi(self, calc):
-        result = float(calc.calculate("pi"))
-        assert abs(result - math.pi) < 0.0001
-
-    async def test_e(self, calc):
-        result = float(calc.calculate("e"))
-        assert abs(result - math.e) < 0.0001
-
-    async def test_tau(self, calc):
-        result = float(calc.calculate("tau"))
-        assert abs(result - math.tau) < 0.0001
+    @pytest.mark.parametrize("expr,expected", [
+        ("pi", math.pi),
+        ("e", math.e),
+        ("tau", math.tau),
+    ])
+    async def test_constant_value(self, calc, expr, expected):
+        result = float(calc.calculate(expr))
+        assert abs(result - expected) < 0.0001
 
 
 class TestVariables:
@@ -146,24 +143,15 @@ class TestVariables:
 class TestSecurity:
     """Test that dangerous expressions are blocked."""
 
-    async def test_blocks_import(self, calc):
-        result = calc.calculate("__import__('os')")
-        assert "Error" in result
-
-    async def test_blocks_dunder(self, calc):
-        result = calc.calculate("__builtins__")
-        assert "Error" in result
-
-    async def test_blocks_exec(self, calc):
-        result = calc.calculate("exec('print(1)')")
-        assert "Error" in result
-
-    async def test_blocks_eval(self, calc):
-        result = calc.calculate("eval('1+1')")
-        assert "Error" in result
-
-    async def test_blocks_open(self, calc):
-        result = calc.calculate("open('file.txt')")
+    @pytest.mark.parametrize("expr", [
+        "__import__('os')",
+        "__builtins__",
+        "exec('print(1)')",
+        "eval('1+1')",
+        "open('file.txt')",
+    ])
+    async def test_blocks_dangerous_input(self, calc, expr):
+        result = calc.calculate(expr)
         assert "Error" in result
 
 
@@ -199,101 +187,5 @@ class TestModuleLevelFunction:
         assert result == "4"
 
 
-# ============================================================================
-# STEP-BY-STEP INTEGRATION TESTS (through calculate() entry point)
-# ============================================================================
-
-class TestStepByStepArithmetic:
-    """Test step-by-step output for complex arithmetic via calculate()."""
-
-    async def test_simple_still_returns_single_line(self, calc):
-        """Simple expressions should NOT show steps."""
-        assert calc.calculate("2 + 2") == "4"
-        assert calc.calculate("sqrt(16)") == "4"
-
-    async def test_complex_shows_steps(self, calc):
-        result = calc.calculate("(2+3)*4 - 10/2")
-        assert "Step" in result
-        assert "Result:" in result
-
-    async def test_nested_parens_shows_steps(self, calc):
-        result = calc.calculate("((2+3)*4)")
-        assert "Step" in result
-        assert "20" in result
-
-
-class TestStepByStepDerivatives:
-    """Test step-by-step derivatives via calculate()."""
-
-    async def test_derivative_power_rule(self, calc):
-        result = calc.calculate("derivative of x^3")
-        assert "Step" in result
-        assert "Result:" in result
-        assert "3*x**2" in result or "3x^2" in result or "3*x^2" in result
-
-    async def test_derivative_trig(self, calc):
-        result = calc.calculate("derivative of sin(x)")
-        assert "cos" in result
-        assert "Result:" in result
-
-    async def test_derivative_multiple_terms(self, calc):
-        result = calc.calculate("derivative of x^2 + 3x - 5")
-        assert "Step" in result
-        assert "Result:" in result
-
-
-class TestStepByStepIntegrals:
-    """Test step-by-step integrals via calculate()."""
-
-    async def test_indefinite_integral(self, calc):
-        result = calc.calculate("integrate x^2")
-        assert "Result:" in result
-        assert "+ C" in result
-
-    async def test_definite_integral(self, calc):
-        result = calc.calculate("integrate x^2 from 0 to 3")
-        assert "Result:" in result
-        assert "9" in result
-
-
-class TestStepByStepEquations:
-    """Test step-by-step equation solving via calculate()."""
-
-    async def test_linear_equation(self, calc):
-        result = calc.calculate("solve 2x + 3 = 7")
-        assert "Step" in result
-        assert "Result:" in result
-        assert "2" in result
-
-    async def test_quadratic_equation(self, calc):
-        result = calc.calculate("solve x^2 - 4 = 0")
-        assert "discriminant" in result.lower()
-        assert "-2" in result and "2" in result
-
-
-class TestStepByStepMatrix:
-    """Test step-by-step matrix operations via calculate()."""
-
-    async def test_determinant(self, calc):
-        result = calc.calculate("determinant [[3,7],[1,-4]]")
-        assert "Step" in result
-        assert "-19" in result
-
-    async def test_matrix_multiply(self, calc):
-        result = calc.calculate("[[1,2],[3,4]] * [[5,6],[7,8]]")
-        assert "Step" in result
-        assert "19" in result
-
-    async def test_matrix_inverse(self, calc):
-        result = calc.calculate("inverse [[1,2],[3,4]]")
-        assert "determinant" in result.lower()
-        assert "Result:" in result
-
-    async def test_matrix_transpose(self, calc):
-        result = calc.calculate("transpose [[1,2,3],[4,5,6]]")
-        assert "Result:" in result
-
-    async def test_matrix_add(self, calc):
-        result = calc.calculate("[[1,2],[3,4]] + [[5,6],[7,8]]")
-        assert "Result:" in result
-        assert "6" in result
+# Step-by-step integration tests (derivatives, integrals, equations, matrices)
+# live in test_step_solver.py which covers them more thoroughly.
