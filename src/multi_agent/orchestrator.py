@@ -24,6 +24,12 @@ from typing import AsyncGenerator, Dict, Generator, List, Optional
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 
+from src.constants import (
+    SPECIALIST_FACT_CHECKER,
+    EVENT_PLAN_CREATED, EVENT_PHASE_STARTED, EVENT_SPECIALIST_STARTED,
+    EVENT_SPECIALIST_DONE, EVENT_PHASE_DONE, EVENT_SYNTHESIS_TOKEN,
+    EVENT_DONE,
+)
 from src.utils import extract_chunk_text
 
 from src.multi_agent.supervisor import Supervisor, DelegationPlan
@@ -72,14 +78,14 @@ class MultiAgentOrchestrator:
         """
         # ---- Step 1: supervisor plan ------------------------------------
         plan = await self.supervisor.acreate_delegation_plan(query)
-        yield {"type": "plan_created", "plan": plan}
+        yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
         # ---- Step 2: dispatch phases ------------------------------------
         all_results: Dict[str, str] = {}
 
         for phase_idx, phase in enumerate(plan.execution_phases):
             yield {
-                "type": "phase_started",
+                "type": EVENT_PHASE_STARTED,
                 "phase_idx": phase_idx,
                 "specialists": phase,
             }
@@ -88,7 +94,7 @@ class MultiAgentOrchestrator:
             # so the UI can render them all at once.
             for name in phase:
                 yield {
-                    "type": "specialist_started",
+                    "type": EVENT_SPECIALIST_STARTED,
                     "specialist": name,
                     "phase_idx": phase_idx,
                 }
@@ -108,18 +114,18 @@ class MultiAgentOrchestrator:
                 task = plan.specialist_tasks.get(name, query)
 
                 # If this is the fact-checker, include prior findings
-                if name == "fact_checker" and all_results:
+                if name == SPECIALIST_FACT_CHECKER and all_results:
                     findings_text = "\n\n".join(
                         f"[{n}]: {r}"
                         for n, r in all_results.items()
-                        if n != "fact_checker"
+                        if n != SPECIALIST_FACT_CHECKER
                     )
                     task = (
                         f"Verify the key claims from these findings:\n\n"
                         f"{findings_text}\n\n"
                         f"Original question: {query}"
                     )
-                elif prior_context and name != "fact_checker":
+                elif prior_context and name != SPECIALIST_FACT_CHECKER:
                     task = task + prior_context
 
                 specialist = self.specialists.get(name)
@@ -137,16 +143,16 @@ class MultiAgentOrchestrator:
             for name, result in phase_results:
                 all_results[name] = result
                 yield {
-                    "type": "specialist_done",
+                    "type": EVENT_SPECIALIST_DONE,
                     "specialist": name,
                     "phase_idx": phase_idx,
                     "result_preview": result[:300],
                 }
 
-            yield {"type": "phase_done", "phase_idx": phase_idx}
+            yield {"type": EVENT_PHASE_DONE, "phase_idx": phase_idx}
 
         # ---- Step 3: synthesize (token-streamed) ------------------------
-        fact_check_report = all_results.pop("fact_checker", "")
+        fact_check_report = all_results.pop(SPECIALIST_FACT_CHECKER, "")
 
         synthesis_input = (
             f"Synthesize these specialist findings into a comprehensive answer.\n\n"
@@ -169,10 +175,10 @@ class MultiAgentOrchestrator:
             text = extract_chunk_text(chunk)
             if text:
                 final_answer += text
-                yield {"type": "synthesis_token", "token": text}
+                yield {"type": EVENT_SYNTHESIS_TOKEN, "token": text}
 
         yield {
-            "type": "done",
+            "type": EVENT_DONE,
             "answer": final_answer,
             "plan": plan,
         }
@@ -185,7 +191,7 @@ class MultiAgentOrchestrator:
         """Run the multi-agent pipeline and return the final answer."""
         final_answer = ""
         async for event in self._astream_events(query):
-            if event.get("type") == "done":
+            if event.get("type") == EVENT_DONE:
                 final_answer = event.get("answer", "")
         return final_answer
 
@@ -202,7 +208,7 @@ class MultiAgentOrchestrator:
         async for event in self._astream_events(query):
             etype = event.get("type")
 
-            if etype == "plan_created":
+            if etype == EVENT_PLAN_CREATED:
                 plan = event["plan"]
                 print("Supervisor is analyzing the query...")
                 print(f"\nDelegation Plan ({len(plan.execution_phases)} phases):")
@@ -214,7 +220,7 @@ class MultiAgentOrchestrator:
                     print("  Fact-checking: enabled")
                 print()
 
-            elif etype == "phase_started":
+            elif etype == EVENT_PHASE_STARTED:
                 phase = event["specialists"]
                 parallel_note = " (parallel)" if len(phase) > 1 else ""
                 print(f"{'─' * 40}")
@@ -224,13 +230,13 @@ class MultiAgentOrchestrator:
                 )
                 print(f"{'─' * 40}")
 
-            elif etype == "specialist_started":
+            elif etype == EVENT_SPECIALIST_STARTED:
                 print(f"  Starting {event['specialist']}...")
 
-            elif etype == "specialist_done":
+            elif etype == EVENT_SPECIALIST_DONE:
                 print(f"  {event['specialist']} done.")
 
-            elif etype == "synthesis_token":
+            elif etype == EVENT_SYNTHESIS_TOKEN:
                 if not synthesis_started:
                     print(f"\n{'=' * 60}")
                     print("Synthesizing all findings...")
@@ -239,7 +245,7 @@ class MultiAgentOrchestrator:
                 sys.stdout.write(event["token"])
                 sys.stdout.flush()
 
-            elif etype == "done":
+            elif etype == EVENT_DONE:
                 final_answer = event.get("answer", "")
 
         print()  # newline after streaming

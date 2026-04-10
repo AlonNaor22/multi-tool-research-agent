@@ -1,8 +1,11 @@
-"""Shared constants used across multiple tools.
+"""Shared constants used across multiple tools and the orchestration layer.
 
 Centralizes values that were previously duplicated in individual tool files:
-User-Agent strings, HTTP timeouts, content size limits, API URLs, and chart defaults.
+User-Agent strings, HTTP timeouts, content size limits, API URLs, chart
+defaults, specialist names, event types, research modes, and step statuses.
 """
+
+from typing import Literal
 
 # ---------------------------------------------------------------------------
 # HTTP headers — used by tools that make direct HTTP requests
@@ -57,3 +60,53 @@ WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 # Caching
 # ---------------------------------------------------------------------------
 DEFAULT_CACHE_TTL = 300  # Seconds before a cached result expires (5 minutes)
+
+# ---------------------------------------------------------------------------
+# Specialist names (multi-agent orchestration)
+# ---------------------------------------------------------------------------
+SPECIALIST_RESEARCH = "research"
+SPECIALIST_MATH = "math"
+SPECIALIST_ANALYSIS = "analysis"
+SPECIALIST_FACT_CHECKER = "fact_checker"
+SPECIALIST_TRANSLATION = "translation"
+
+ALL_SPECIALIST_NAMES = (
+    SPECIALIST_RESEARCH,
+    SPECIALIST_MATH,
+    SPECIALIST_ANALYSIS,
+    SPECIALIST_FACT_CHECKER,
+    SPECIALIST_TRANSLATION,
+)
+
+# ---------------------------------------------------------------------------
+# Streaming event types
+# ---------------------------------------------------------------------------
+EVENT_PLAN_CREATED = "plan_created"
+EVENT_PHASE_STARTED = "phase_started"
+EVENT_SPECIALIST_STARTED = "specialist_started"
+EVENT_SPECIALIST_DONE = "specialist_done"
+EVENT_PHASE_DONE = "phase_done"
+EVENT_SYNTHESIS_TOKEN = "synthesis_token"
+EVENT_DONE = "done"
+EVENT_STEP_STARTED = "step_started"
+EVENT_STEP_TOOL = "step_tool"
+EVENT_STEP_DONE = "step_done"
+
+# ---------------------------------------------------------------------------
+# Research modes (UI radio selection)
+# ---------------------------------------------------------------------------
+MODE_AUTO = "Auto"
+MODE_DIRECT = "Direct"
+MODE_PLAN_EXECUTE = "Plan-and-Execute"
+MODE_MULTI_AGENT = "Multi-Agent"
+
+RESEARCH_MODES = (MODE_AUTO, MODE_DIRECT, MODE_PLAN_EXECUTE, MODE_MULTI_AGENT)
+
+# ---------------------------------------------------------------------------
+# Step / specialist status (unified vocabulary)
+# ---------------------------------------------------------------------------
+STATUS_PENDING = "pending"
+STATUS_IN_PROGRESS = "in_progress"
+STATUS_DONE = "done"
+
+StepStatus = Literal["pending", "in_progress", "done"]

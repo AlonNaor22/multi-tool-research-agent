@@ -5,12 +5,13 @@ Includes a complexity detector to skip planning for simple queries.
 """
 
 import json
-from typing import List, Literal
+from typing import List
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from src.constants import STATUS_PENDING, StepStatus
 from src.utils import flatten_content
 
 
@@ -52,7 +53,7 @@ class ResearchStep(BaseModel):
     step_number: int
     description: str
     expected_tools: List[str] = Field(default_factory=list)
-    status: Literal["pending", "in_progress", "done"] = "pending"
+    status: StepStatus = STATUS_PENDING
     findings: str = ""
 
 

@@ -29,6 +29,11 @@ from langgraph.graph import StateGraph, END, START
 from typing_extensions import TypedDict
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
+from src.constants import (
+    EVENT_PLAN_CREATED, EVENT_SYNTHESIS_TOKEN, EVENT_DONE,
+    EVENT_STEP_STARTED, EVENT_STEP_TOOL, EVENT_STEP_DONE,
+    STATUS_IN_PROGRESS, STATUS_DONE,
+)
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
 from src.rate_limiter import RateLimiter
 from src.tool_health import check_tool_health, get_available_tools
@@ -564,7 +569,7 @@ class ResearchAgent:
         final_answer = ""
         for event in orchestrator.stream(query):
             yield event
-            if event.get("type") == "done":
+            if event.get("type") == EVENT_DONE:
                 final_answer = event.get("answer", "")
         if final_answer:
             self.memory.add_exchange(query, final_answer)
@@ -629,7 +634,7 @@ class ResearchAgent:
                 return {"plan_data": plan.model_dump()}
 
             step = plan.steps[idx]
-            plan.steps[idx] = step.model_copy(update={"status": "in_progress"})
+            plan.steps[idx] = step.model_copy(update={"status": STATUS_IN_PROGRESS})
 
             step_messages = [
                 HumanMessage(
@@ -645,7 +650,7 @@ class ResearchAgent:
             )
             findings = extract_ai_answer(result)
             plan.steps[idx] = step.model_copy(
-                update={"status": "done", "findings": findings}
+                update={"status": STATUS_DONE, "findings": findings}
             )
             return {
                 "plan_data": plan.model_dump(),
@@ -770,7 +775,7 @@ class ResearchAgent:
             )
             findings = extract_ai_answer(result)
             plan.steps[i] = step.model_copy(
-                update={"status": "done", "findings": findings}
+                update={"status": STATUS_DONE, "findings": findings}
             )
             all_findings.append(
                 f"Step {step.step_number} \u2014 {step.description}:\n{findings}"
@@ -825,7 +830,7 @@ class ResearchAgent:
         from src.planner import generate_plan
 
         plan = generate_plan(query, self.llm)
-        yield {"type": "plan_created", "plan": plan}
+        yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
         # ---- Simple / direct mode -----------------------------------
         if plan.is_simple:
@@ -841,17 +846,17 @@ class ResearchAgent:
                     text = extract_chunk_text(chunk)
                     if text:
                         final_answer += text
-                        yield {"type": "synthesis_token", "token": text}
+                        yield {"type": EVENT_SYNTHESIS_TOKEN, "token": text}
                 elif node == "tools" and isinstance(chunk, ToolMessage):
-                    yield {"type": "step_tool", "step_idx": -1, "tool_name": chunk.name or "tool", "tool_output": chunk.content or ""}
+                    yield {"type": EVENT_STEP_TOOL, "step_idx": -1, "tool_name": chunk.name or "tool", "tool_output": chunk.content or ""}
 
-            yield {"type": "done", "answer": final_answer, "plan": plan}
+            yield {"type": EVENT_DONE, "answer": final_answer, "plan": plan}
             return
 
         # ---- Multi-step execution ------------------------------------
         for i, step in enumerate(plan.steps):
-            plan.steps[i] = step.model_copy(update={"status": "in_progress"})
-            yield {"type": "step_started", "step_idx": i, "plan": plan}
+            plan.steps[i] = step.model_copy(update={"status": STATUS_IN_PROGRESS})
+            yield {"type": EVENT_STEP_STARTED, "step_idx": i, "plan": plan}
 
             step_messages = [
                 HumanMessage(
@@ -877,7 +882,7 @@ class ResearchAgent:
                         for msg in msgs:
                             if isinstance(msg, ToolMessage):
                                 yield {
-                                    "type": "step_tool",
+                                    "type": EVENT_STEP_TOOL,
                                     "step_idx": i,
                                     "tool_name": msg.name or "tool",
                                     "tool_output": msg.content or "",
@@ -898,9 +903,9 @@ class ResearchAgent:
                         break
 
             plan.steps[i] = plan.steps[i].model_copy(
-                update={"status": "done", "findings": findings}
+                update={"status": STATUS_DONE, "findings": findings}
             )
-            yield {"type": "step_done", "step_idx": i, "plan": plan}
+            yield {"type": EVENT_STEP_DONE, "step_idx": i, "plan": plan}
 
         # ---- Synthesis (streamed token-by-token) ---------------------
         steps_text = "\n\n".join(
@@ -918,10 +923,10 @@ class ResearchAgent:
             text = extract_chunk_text(chunk)
             if text:
                 final_answer += text
-                yield {"type": "synthesis_token", "token": text}
+                yield {"type": EVENT_SYNTHESIS_TOKEN, "token": text}
 
         self.memory.add_exchange(query, final_answer)
-        yield {"type": "done", "answer": final_answer, "plan": plan}
+        yield {"type": EVENT_DONE, "answer": final_answer, "plan": plan}
 
 def create_research_agent():
     """Create and return a research agent. Kept for backward compatibility."""

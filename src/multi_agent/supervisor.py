@@ -14,6 +14,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from src.constants import SPECIALIST_FACT_CHECKER, SPECIALIST_RESEARCH
 from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT, SUPERVISOR_SYNTHESIZE_PROMPT
 from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 from src.utils import flatten_content
@@ -81,14 +82,14 @@ class Supervisor:
 
         if needs_fact_check:
             execution_phases = [
-                [s for s in phase if s != "fact_checker"]
+                [s for s in phase if s != SPECIALIST_FACT_CHECKER]
                 for phase in execution_phases
             ]
             execution_phases = [p for p in execution_phases if p]
-            execution_phases.append(["fact_checker"])
+            execution_phases.append([SPECIALIST_FACT_CHECKER])
 
-            if "fact_checker" not in specialist_tasks:
-                specialist_tasks["fact_checker"] = (
+            if SPECIALIST_FACT_CHECKER not in specialist_tasks:
+                specialist_tasks[SPECIALIST_FACT_CHECKER] = (
                     f"Verify the key claims from the research findings "
                     f"about: {query}"
                 )
@@ -106,8 +107,8 @@ class Supervisor:
         """Single-research-agent fallback when parsing fails."""
         return DelegationPlan(
             query=query,
-            execution_phases=[["research"]],
-            specialist_tasks={"research": query},
+            execution_phases=[[SPECIALIST_RESEARCH]],
+            specialist_tasks={SPECIALIST_RESEARCH: query},
             needs_fact_check=False,
             rationale="Fallback — could not parse delegation plan.",
         )
@@ -174,7 +175,7 @@ class Supervisor:
         parts = [f"Original question: {query}\n"]
 
         for name, result in specialist_results.items():
-            if name == "fact_checker":
+            if name == SPECIALIST_FACT_CHECKER:
                 continue  # handled separately
             parts.append(f"--- {name.upper()} AGENT FINDINGS ---\n{result}\n")
 

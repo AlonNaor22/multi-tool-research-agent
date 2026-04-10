@@ -12,6 +12,10 @@ from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 
+from src.constants import (
+    SPECIALIST_RESEARCH, SPECIALIST_MATH, SPECIALIST_ANALYSIS,
+    SPECIALIST_FACT_CHECKER, SPECIALIST_TRANSLATION,
+)
 from src.tool_health import get_available_tools
 from src.utils import extract_ai_answer
 from src.multi_agent.prompts import (
@@ -37,7 +41,7 @@ DEFAULT_TIMEOUT_SECONDS = 120.0
 # On timeout, the specialist returns a degraded string and the phase
 # continues — one stuck role no longer blocks the whole phase.
 SPECIALIST_DEFINITIONS = {
-    "research": {
+    SPECIALIST_RESEARCH: {
         "tools": [
             "web_search", "wikipedia", "news_search", "arxiv_search",
             "google_scholar", "reddit_search", "youtube_search",
@@ -48,7 +52,7 @@ SPECIALIST_DEFINITIONS = {
         "recursion_limit": 25,
         "timeout_seconds": 180.0,
     },
-    "math": {
+    SPECIALIST_MATH: {
         "tools": [
             "calculator", "unit_converter", "equation_solver",
             "currency_converter", "wolfram_alpha", "python_repl",
@@ -58,7 +62,7 @@ SPECIALIST_DEFINITIONS = {
         "recursion_limit": 15,
         "timeout_seconds": 90.0,
     },
-    "analysis": {
+    SPECIALIST_ANALYSIS: {
         "tools": [
             "python_repl", "create_chart", "parallel_search",
             "csv_reader", "web_scraper",
@@ -67,7 +71,7 @@ SPECIALIST_DEFINITIONS = {
         "recursion_limit": 20,
         "timeout_seconds": 150.0,
     },
-    "fact_checker": {
+    SPECIALIST_FACT_CHECKER: {
         "tools": [
             "web_search", "wikipedia", "wikidata",
             "google_scholar", "fetch_url",
@@ -76,7 +80,7 @@ SPECIALIST_DEFINITIONS = {
         "recursion_limit": 15,
         "timeout_seconds": 120.0,
     },
-    "translation": {
+    SPECIALIST_TRANSLATION: {
         "tools": [
             "translate", "fetch_url", "pdf_reader",
         ],
