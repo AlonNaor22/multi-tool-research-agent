@@ -38,45 +38,39 @@ class MultiAgentOrchestrator:
         self.specialists = build_specialists(all_tools, llm, tool_health)
 
     async def _astream_events(self, query: str) -> AsyncGenerator[dict, None]:
-        """Yield typed events (plan, phase, specialist, synthesis, done) for the pipeline."""
+        """Yield typed events as the dependency-driven pipeline executes."""
         plan = await self.supervisor.acreate_delegation_plan(query)
         yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
-        all_results: Dict[str, str] = {}
+        completed: Dict[str, str] = {}
+        pending = set(plan.specialists)
+        wave = 0
 
-        for phase_idx, phase in enumerate(plan.execution_phases):
+        while pending:
+            # Find specialists whose dependencies are all satisfied
+            ready = [
+                s for s in plan.specialists
+                if s in pending and all(d in completed for d in plan.depends_on.get(s, []))
+            ]
+            if not ready:
+                break  # circular dependency safeguard
+
             yield {
                 "type": EVENT_PHASE_STARTED,
-                "phase_idx": phase_idx,
-                "specialists": phase,
+                "phase_idx": wave,
+                "specialists": ready,
             }
-
-            # Announce all specialists before launching so the UI renders them at once
-            for name in phase:
-                yield {
-                    "type": EVENT_SPECIALIST_STARTED,
-                    "specialist": name,
-                    "phase_idx": phase_idx,
-                }
-
-            prior_context = ""
-            if all_results:
-                parts = [
-                    f"[{name}]: {text[:500]}"
-                    for name, text in all_results.items()
-                ]
-                prior_context = (
-                    "\n\nContext from previous agents:\n" + "\n".join(parts)
-                )
+            for name in ready:
+                yield {"type": EVENT_SPECIALIST_STARTED, "specialist": name, "phase_idx": wave}
 
             async def _run_specialist(name: str) -> tuple:
                 task = plan.specialist_tasks.get(name, query)
 
-                # If this is the fact-checker, include prior findings
-                if name == SPECIALIST_FACT_CHECKER and all_results:
+                # Inject context only from declared dependencies
+                deps = plan.depends_on.get(name, [])
+                if name == SPECIALIST_FACT_CHECKER and completed:
                     findings_text = "\n\n".join(
-                        f"[{n}]: {r}"
-                        for n, r in all_results.items()
+                        f"[{n}]: {r}" for n, r in completed.items()
                         if n != SPECIALIST_FACT_CHECKER
                     )
                     task = (
@@ -84,39 +78,41 @@ class MultiAgentOrchestrator:
                         f"{findings_text}\n\n"
                         f"Original question: {query}"
                     )
-                elif prior_context and name != SPECIALIST_FACT_CHECKER:
-                    task = task + prior_context
+                elif deps:
+                    dep_context = "\n".join(
+                        f"[{d}]: {completed[d]}" for d in deps if d in completed
+                    )
+                    task = task + f"\n\nContext from prior agents:\n{dep_context}"
 
                 specialist = self.specialists.get(name)
                 if specialist is None:
                     return name, f"[{name}] Unknown specialist."
-
                 result = await specialist.run(task, callbacks=self.callbacks)
                 return name, result
 
-            phase_results = await asyncio.gather(
-                *[_run_specialist(name) for name in phase]
-            )
+            results = await asyncio.gather(*[_run_specialist(n) for n in ready])
 
-            for name, result in phase_results:
-                all_results[name] = result
+            for name, result in results:
+                completed[name] = result
+                pending.discard(name)
                 yield {
                     "type": EVENT_SPECIALIST_DONE,
                     "specialist": name,
-                    "phase_idx": phase_idx,
+                    "phase_idx": wave,
                     "result_preview": result[:300],
                 }
 
-            yield {"type": EVENT_PHASE_DONE, "phase_idx": phase_idx}
+            yield {"type": EVENT_PHASE_DONE, "phase_idx": wave}
+            wave += 1
 
-        fact_check_report = all_results.pop(SPECIALIST_FACT_CHECKER, "")
+        fact_check_report = completed.pop(SPECIALIST_FACT_CHECKER, "")
 
         synthesis_input = (
             f"Synthesize these specialist findings into a comprehensive answer.\n\n"
             f"Original question: {query}\n\n"
             + "\n\n".join(
                 f"--- {n.upper()} AGENT ---\n{r}"
-                for n, r in all_results.items()
+                for n, r in completed.items()
             )
             + (
                 f"\n\n--- FACT-CHECK REPORT ---\n{fact_check_report}"
@@ -165,11 +161,12 @@ class MultiAgentOrchestrator:
             if etype == EVENT_PLAN_CREATED:
                 plan = event["plan"]
                 print("Supervisor is analyzing the query...")
-                print(f"\nDelegation Plan ({len(plan.execution_phases)} phases):")
+                print(f"\nDelegation Plan ({len(plan.specialists)} specialists):")
                 print(f"  Rationale: {plan.rationale}")
-                for i, phase in enumerate(plan.execution_phases):
-                    parallel_note = " (parallel)" if len(phase) > 1 else ""
-                    print(f"  Phase {i + 1}{parallel_note}: {', '.join(phase)}")
+                for s in plan.specialists:
+                    deps = plan.depends_on.get(s, [])
+                    dep_str = f" (after {', '.join(deps)})" if deps else ""
+                    print(f"  • {s}{dep_str}")
                 if plan.needs_fact_check:
                     print("  Fact-checking: enabled")
                 print()

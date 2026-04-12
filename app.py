@@ -438,15 +438,14 @@ def _render_delegation_plan(plan: DelegationPlan, specialist_status: Dict[str, s
         lines.append(f"*{plan.rationale}*")
         lines.append("")
 
-    for i, phase in enumerate(plan.execution_phases):
-        parallel_note = " (parallel)" if len(phase) > 1 else ""
-        lines.append(f"**Phase {i + 1}**{parallel_note}")
-        for name in phase:
-            icon = STATUS_ICON.get(status.get(name, STATUS_PENDING), "\u23f3")
-            task = plan.specialist_tasks.get(name, "")
-            task_preview = f": {task[:80]}..." if task and len(task) > 80 else f": {task}" if task else ""
-            lines.append(f"  {icon} **{name}**{task_preview}")
-        lines.append("")
+    for name in plan.specialists:
+        icon = STATUS_ICON.get(status.get(name, STATUS_PENDING), "\u23f3")
+        deps = plan.depends_on.get(name, [])
+        dep_str = f" *(after {', '.join(deps)})*" if deps else ""
+        task = plan.specialist_tasks.get(name, "")
+        task_preview = f": {task[:80]}..." if task and len(task) > 80 else f": {task}" if task else ""
+        lines.append(f"  {icon} **{name}**{task_preview}{dep_str}")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -539,23 +538,18 @@ with chat_col:
 
                         if etype == EVENT_PLAN_CREATED:
                             ma_plan = event["plan"]
-                            # Initialize all specialist statuses to pending
-                            for phase in ma_plan.execution_phases:
-                                for name in phase:
-                                    specialist_status[name] = STATUS_PENDING
+                            for name in ma_plan.specialists:
+                                specialist_status[name] = STATUS_PENDING
                             plan_placeholder.markdown(
                                 _render_delegation_plan(ma_plan, specialist_status)
                             )
-                            parallel_count = sum(
-                                1 for p in ma_plan.execution_phases if len(p) > 1
-                            )
                             status_placeholder.markdown(
-                                UI.status.delegation_plan_fmt.format(phase_count=len(ma_plan.execution_phases), specialist_count=len(specialist_status))
+                                UI.status.delegation_plan_fmt.format(phase_count=len(ma_plan.specialists), specialist_count=len(specialist_status))
                             )
                             inbox.append({
                                 "time": datetime.now().strftime("%H:%M:%S"),
                                 "type": "plan",
-                                "message": UI.inbox.plan_fmt.format(phase_count=len(ma_plan.execution_phases), specialist_count=len(specialist_status)),
+                                "message": UI.inbox.plan_fmt.format(phase_count=len(ma_plan.specialists), specialist_count=len(specialist_status)),
                                 "is_error": False,
                             })
 

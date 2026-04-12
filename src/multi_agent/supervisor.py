@@ -17,10 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class DelegationPlan(BaseModel):
-    """Phased specialist delegation plan with parallel execution per phase."""
+    """Dependency-driven specialist delegation plan."""
     query: str
-    execution_phases: List[List[str]] = Field(default_factory=list)
+    specialists: List[str] = Field(default_factory=list)
     specialist_tasks: Dict[str, str] = Field(default_factory=dict)
+    depends_on: Dict[str, List[str]] = Field(default_factory=dict)
     needs_fact_check: bool = False
     rationale: str = ""
 
@@ -43,29 +44,33 @@ class Supervisor:
         """Parse LLM JSON into a DelegationPlan; raises ValueError on malformed output."""
         data = json.loads(content)
 
-        execution_phases = data.get("execution_phases", [])
         specialist_tasks = data.get("specialist_tasks", {})
+        depends_on = data.get("depends_on", {})
         needs_fact_check = data.get("needs_fact_check", False)
         rationale = data.get("rationale", "")
 
         valid_names = set(SPECIALIST_DEFINITIONS.keys())
-        execution_phases = [
-            [s for s in phase if s in valid_names]
-            for phase in execution_phases
-        ]
-        execution_phases = [p for p in execution_phases if p]
+        specialists = [s for s in data.get("specialists", []) if s in valid_names]
 
-        if not execution_phases:
-            raise ValueError("No valid specialists in phases")
+        if not specialists:
+            raise ValueError("No valid specialists")
+
+        # Validate depends_on: remove references to unknown specialists
+        depends_on = {
+            s: [d for d in deps if d in valid_names and d in specialists]
+            for s, deps in depends_on.items()
+            if s in specialists
+        }
+        # Ensure every specialist has a depends_on entry (default: no deps)
+        for s in specialists:
+            depends_on.setdefault(s, [])
 
         if needs_fact_check:
-            execution_phases = [
-                [s for s in phase if s != SPECIALIST_FACT_CHECKER]
-                for phase in execution_phases
-            ]
-            execution_phases = [p for p in execution_phases if p]
-            execution_phases.append([SPECIALIST_FACT_CHECKER])
-
+            if SPECIALIST_FACT_CHECKER not in specialists:
+                specialists.append(SPECIALIST_FACT_CHECKER)
+            # Fact-checker depends on all other specialists
+            others = [s for s in specialists if s != SPECIALIST_FACT_CHECKER]
+            depends_on[SPECIALIST_FACT_CHECKER] = others
             if SPECIALIST_FACT_CHECKER not in specialist_tasks:
                 specialist_tasks[SPECIALIST_FACT_CHECKER] = (
                     f"Verify the key claims from the research findings "
@@ -74,8 +79,9 @@ class Supervisor:
 
         return DelegationPlan(
             query=query,
-            execution_phases=execution_phases,
+            specialists=specialists,
             specialist_tasks=specialist_tasks,
+            depends_on=depends_on,
             needs_fact_check=needs_fact_check,
             rationale=rationale,
         )
@@ -84,9 +90,9 @@ class Supervisor:
     def _fallback_plan(query: str) -> DelegationPlan:
         return DelegationPlan(
             query=query,
-            execution_phases=[[SPECIALIST_RESEARCH]],
+            specialists=[SPECIALIST_RESEARCH],
             specialist_tasks={SPECIALIST_RESEARCH: query},
-            needs_fact_check=False,
+            depends_on={SPECIALIST_RESEARCH: []},
             rationale="Fallback — could not parse delegation plan.",
         )
 

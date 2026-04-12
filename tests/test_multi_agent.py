@@ -25,11 +25,13 @@ class TestDelegationPlan:
 
         plan = DelegationPlan(
             query="test query",
-            execution_phases=[["research"]],
+            specialists=["research"],
             specialist_tasks={"research": "do research"},
+            depends_on={"research": []},
         )
         assert plan.query == "test query"
-        assert plan.execution_phases == [["research"]]
+        assert plan.specialists == ["research"]
+        assert plan.depends_on == {"research": []}
         assert not plan.needs_fact_check
 
     def test_multi_phase_plan(self):
@@ -37,25 +39,26 @@ class TestDelegationPlan:
 
         plan = DelegationPlan(
             query="complex query",
-            execution_phases=[["research", "math"], ["analysis"]],
+            specialists=["research", "math", "analysis"],
             specialist_tasks={
                 "research": "gather data",
                 "math": "calculate",
                 "analysis": "analyze",
             },
+            depends_on={"research": [], "math": [], "analysis": ["research", "math"]},
             needs_fact_check=True,
             rationale="Multi-domain query",
         )
-        assert len(plan.execution_phases) == 2
-        assert len(plan.execution_phases[0]) == 2  # parallel phase
-        assert len(plan.execution_phases[1]) == 1   # sequential phase
+        assert plan.specialists == ["research", "math", "analysis"]
+        assert plan.depends_on == {"research": [], "math": [], "analysis": ["research", "math"]}
         assert plan.needs_fact_check
 
     def test_empty_plan_defaults(self):
         from src.multi_agent.supervisor import DelegationPlan
 
         plan = DelegationPlan(query="q")
-        assert plan.execution_phases == []
+        assert plan.specialists == []
+        assert plan.depends_on == {}
         assert plan.specialist_tasks == {}
         assert plan.needs_fact_check is False
         assert plan.rationale == ""
@@ -65,14 +68,16 @@ class TestDelegationPlan:
 
         plan = DelegationPlan(
             query="test",
-            execution_phases=[["research", "math"]],
+            specialists=["research", "math"],
             specialist_tasks={"research": "r", "math": "m"},
+            depends_on={"research": [], "math": []},
             needs_fact_check=True,
         )
         data = plan.model_dump()
         restored = DelegationPlan(**data)
         assert restored.query == plan.query
-        assert restored.execution_phases == plan.execution_phases
+        assert restored.specialists == plan.specialists
+        assert restored.depends_on == plan.depends_on
         assert restored.needs_fact_check == plan.needs_fact_check
 
 
@@ -148,12 +153,13 @@ class TestSupervisor:
         mock_llm = MagicMock()
         mock_response = MagicMock()
         mock_response.content = json.dumps({
-            "execution_phases": [["research", "math"], ["analysis"]],
+            "specialists": ["research", "math", "analysis"],
             "specialist_tasks": {
                 "research": "find data",
                 "math": "calculate",
                 "analysis": "chart it",
             },
+            "depends_on": {"research": [], "math": [], "analysis": ["research", "math"]},
             "needs_fact_check": False,
             "rationale": "multi-domain query",
         })
@@ -162,9 +168,8 @@ class TestSupervisor:
         supervisor = Supervisor(mock_llm)
         plan = supervisor.create_delegation_plan("test query")
 
-        assert len(plan.execution_phases) == 2
-        assert plan.execution_phases[0] == ["research", "math"]
-        assert plan.execution_phases[1] == ["analysis"]
+        assert plan.specialists == ["research", "math", "analysis"]
+        assert plan.depends_on == {"research": [], "math": [], "analysis": ["research", "math"]}
         assert not plan.needs_fact_check
 
     def test_fact_check_appended_as_final_phase(self):
@@ -174,8 +179,9 @@ class TestSupervisor:
         mock_llm = MagicMock()
         mock_response = MagicMock()
         mock_response.content = json.dumps({
-            "execution_phases": [["research"]],
+            "specialists": ["research"],
             "specialist_tasks": {"research": "find info"},
+            "depends_on": {"research": []},
             "needs_fact_check": True,
             "rationale": "verification needed",
         })
@@ -185,7 +191,8 @@ class TestSupervisor:
         plan = supervisor.create_delegation_plan("verify this claim")
 
         assert plan.needs_fact_check
-        assert plan.execution_phases[-1] == ["fact_checker"]
+        assert "fact_checker" in plan.specialists
+        assert plan.depends_on["fact_checker"] == ["research"]
         assert "fact_checker" in plan.specialist_tasks
 
     def test_fallback_on_invalid_json(self):
@@ -200,7 +207,7 @@ class TestSupervisor:
         supervisor = Supervisor(mock_llm)
         plan = supervisor.create_delegation_plan("some query")
 
-        assert plan.execution_phases == [["research"]]
+        assert plan.specialists == ["research"]
         assert plan.specialist_tasks == {"research": "some query"}
 
     def test_invalid_specialist_names_filtered(self):
@@ -210,12 +217,13 @@ class TestSupervisor:
         mock_llm = MagicMock()
         mock_response = MagicMock()
         mock_response.content = json.dumps({
-            "execution_phases": [["research", "nonexistent_agent"], ["math"]],
+            "specialists": ["research", "nonexistent_agent", "math"],
             "specialist_tasks": {
                 "research": "r",
                 "nonexistent_agent": "n",
                 "math": "m",
             },
+            "depends_on": {"research": [], "nonexistent_agent": [], "math": []},
             "needs_fact_check": False,
         })
         mock_llm.invoke.return_value = mock_response
@@ -224,10 +232,9 @@ class TestSupervisor:
         plan = supervisor.create_delegation_plan("test")
 
         # nonexistent_agent should be filtered out
-        all_specialists = [s for phase in plan.execution_phases for s in phase]
-        assert "nonexistent_agent" not in all_specialists
-        assert "research" in all_specialists
-        assert "math" in all_specialists
+        assert "nonexistent_agent" not in plan.specialists
+        assert "research" in plan.specialists
+        assert "math" in plan.specialists
 
     def test_empty_phases_fallback(self):
         """If all specialist names are invalid, fall back to research."""
@@ -236,8 +243,9 @@ class TestSupervisor:
         mock_llm = MagicMock()
         mock_response = MagicMock()
         mock_response.content = json.dumps({
-            "execution_phases": [["bogus1", "bogus2"]],
+            "specialists": ["bogus1", "bogus2"],
             "specialist_tasks": {},
+            "depends_on": {"bogus1": [], "bogus2": []},
             "needs_fact_check": False,
         })
         mock_llm.invoke.return_value = mock_response
@@ -246,7 +254,7 @@ class TestSupervisor:
         plan = supervisor.create_delegation_plan("test")
 
         # Should fall back
-        assert plan.execution_phases == [["research"]]
+        assert plan.specialists == ["research"]
 
     def test_list_content_handling(self):
         """Test that list-format content blocks are handled correctly."""
@@ -256,8 +264,9 @@ class TestSupervisor:
         mock_response = MagicMock()
         mock_response.content = [
             {"type": "text", "text": json.dumps({
-                "execution_phases": [["research"]],
+                "specialists": ["research"],
                 "specialist_tasks": {"research": "task"},
+                "depends_on": {"research": []},
                 "needs_fact_check": False,
             })}
         ]
@@ -266,7 +275,7 @@ class TestSupervisor:
         supervisor = Supervisor(mock_llm)
         plan = supervisor.create_delegation_plan("test")
 
-        assert plan.execution_phases == [["research"]]
+        assert plan.specialists == ["research"]
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +308,8 @@ class TestPrompts:
     def test_supervisor_plan_prompt_mentions_json(self):
         from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT
         assert "JSON" in SUPERVISOR_PLAN_PROMPT
-        assert "execution_phases" in SUPERVISOR_PLAN_PROMPT
+        assert "specialists" in SUPERVISOR_PLAN_PROMPT
+        assert "depends_on" in SUPERVISOR_PLAN_PROMPT
 
     def test_supervisor_plan_lists_all_specialists(self):
         from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT

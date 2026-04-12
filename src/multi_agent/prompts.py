@@ -24,19 +24,24 @@ foreign-language documents.
 
 RULES:
 1. Choose ONLY the specialists needed for this query — don't over-delegate.
-2. Group independent specialists into the same phase so they run in parallel.
-3. If a specialist needs output from another, put it in a later phase.
-4. The fact_checker (if needed) should always be in the last phase since it \
-verifies findings from earlier specialists.
+2. Use depends_on to declare which specialists need another's output.
+3. Specialists with no dependencies (or only depending on the original query) \
+run in parallel automatically — you don't need to group them.
+4. The fact_checker (if needed) will be added automatically as the last step.
 5. For simple single-domain queries, use just ONE specialist.
 
 Respond with ONLY valid JSON (no markdown fences, no commentary):
 {
-  "execution_phases": [["research", "math"], ["analysis"]],
+  "specialists": ["research", "math", "analysis"],
   "specialist_tasks": {
     "research": "specific task description for the research agent",
     "math": "specific task description for the math agent",
-    "analysis": "specific task description for the analysis agent"
+    "analysis": "analyze and compare the research and math findings"
+  },
+  "depends_on": {
+    "research": [],
+    "math": [],
+    "analysis": ["research", "math"]
   },
   "needs_fact_check": false,
   "rationale": "brief explanation of why you chose this delegation strategy"
