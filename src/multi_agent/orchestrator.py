@@ -7,7 +7,7 @@ import threading
 from typing import AsyncGenerator, Dict, Generator, List, Optional
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.constants import (
     SPECIALIST_FACT_CHECKER,
@@ -17,6 +17,7 @@ from src.constants import (
 )
 from src.utils import extract_chunk_text
 
+from src.multi_agent.prompts import SUPERVISOR_SYNTHESIZE_PROMPT
 from src.multi_agent.supervisor import Supervisor, DelegationPlan
 from src.multi_agent.specialists import SpecialistAgent, build_specialists
 
@@ -125,9 +126,10 @@ class MultiAgentOrchestrator:
         )
 
         final_answer = ""
-        async for chunk in self.llm.astream(
-            [HumanMessage(content=synthesis_input)]
-        ):
+        async for chunk in self.llm.astream([
+            SystemMessage(content=SUPERVISOR_SYNTHESIZE_PROMPT),
+            HumanMessage(content=synthesis_input),
+        ]):
             text = extract_chunk_text(chunk)
             if text:
                 final_answer += text

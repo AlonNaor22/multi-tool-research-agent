@@ -9,7 +9,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from src.constants import SPECIALIST_FACT_CHECKER, SPECIALIST_RESEARCH
-from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT, SUPERVISOR_SYNTHESIZE_PROMPT
+from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT
 from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 from src.utils import flatten_content
 
@@ -120,30 +120,3 @@ class Supervisor:
             )
             return self._fallback_plan(query)
 
-    async def synthesize(
-        self,
-        query: str,
-        specialist_results: Dict[str, str],
-        fact_check_report: str = "",
-    ) -> str:
-        """Combine specialist outputs and optional fact-check into one answer."""
-        parts = [f"Original question: {query}\n"]
-
-        for name, result in specialist_results.items():
-            if name == SPECIALIST_FACT_CHECKER:
-                continue  # handled separately
-            parts.append(f"--- {name.upper()} AGENT FINDINGS ---\n{result}\n")
-
-        if fact_check_report:
-            parts.append(
-                f"--- FACT-CHECK REPORT ---\n{fact_check_report}\n"
-            )
-
-        combined = "\n".join(parts)
-        messages = [
-            SystemMessage(content=SUPERVISOR_SYNTHESIZE_PROMPT),
-            HumanMessage(content=combined),
-        ]
-
-        response = await self.llm.ainvoke(messages)
-        return flatten_content(response.content)

@@ -1,14 +1,11 @@
 """LangGraph research agent with memory, plan-and-execute, and multi-agent orchestration."""
 
 import sys
-from typing import Annotated, Generator, List, Optional
-import operator
+from typing import Generator, List, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
-from langgraph.graph import StateGraph, END, START
-from typing_extensions import TypedDict
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from src.constants import (
@@ -360,6 +357,59 @@ class ResearchAgent:
         return True
 
 
+    def route_query(self, query: str, mode: str = "Auto"):
+        """Sync generator that routes to the right mode and yields typed events.
+
+        Centralizes mode selection so app.py and main.py don't duplicate it.
+        Yields the same event types as plan_and_execute_stream / multi_agent_stream.
+        """
+        from src.planner import is_simple_query
+        from src.constants import MODE_AUTO, MODE_DIRECT, MODE_PLAN_EXECUTE, MODE_MULTI_AGENT
+
+        if mode == MODE_MULTI_AGENT:
+            yield from self.multi_agent_stream(query)
+        elif mode == MODE_PLAN_EXECUTE or (mode == MODE_AUTO and not is_simple_query(query)):
+            yield from self.plan_and_execute_stream(query)
+        else:
+            yield from self._direct_stream(query)
+
+    def _direct_stream(self, query: str):
+        """Sync generator for direct mode that yields the same event types as other modes."""
+        self.timing_callback.reset()
+        self.observability_callback.reset(question=query)
+
+        messages = self.memory.get_messages()
+        messages.append(HumanMessage(content=query))
+
+        final_answer = ""
+        for chunk, metadata in self.agent.stream(
+            {"messages": messages},
+            config={
+                "callbacks": [self.timing_callback, self.observability_callback],
+                "recursion_limit": MAX_ITERATIONS * 2,
+            },
+            stream_mode="messages",
+        ):
+            node = metadata.get("langgraph_node", "")
+            if node == "model" and isinstance(chunk, AIMessageChunk):
+                text = extract_chunk_text(chunk)
+                if text:
+                    final_answer += text
+                    yield {"type": EVENT_SYNTHESIS_TOKEN, "token": text}
+            elif node == "tools" and isinstance(chunk, ToolMessage):
+                yield {
+                    "type": EVENT_STEP_TOOL,
+                    "step_idx": -1,
+                    "tool_name": chunk.name or "tool",
+                    "tool_output": chunk.content or "",
+                }
+
+        self.memory.add_exchange(query, final_answer)
+        metrics = self.observability_callback.get_metrics()
+        self.metrics_store.save(metrics)
+        self.rate_limiter.record_tokens(metrics.total_tokens)
+        yield {"type": EVENT_DONE, "answer": final_answer}
+
     def _get_orchestrator(self):
         """Lazily build and cache the multi-agent orchestrator."""
         if not hasattr(self, '_multi_agent_orchestrator') or self._multi_agent_orchestrator is None:
@@ -374,16 +424,21 @@ class ResearchAgent:
 
     async def multi_agent_query(self, query: str, verbose: bool = True) -> str:
         """Run query via multi-agent orchestration; return synthesized answer."""
+        self.observability_callback.reset(question=query)
         orchestrator = self._get_orchestrator()
         if verbose:
             answer = await orchestrator.run_verbose(query)
         else:
             answer = await orchestrator.run(query)
         self.memory.add_exchange(query, answer)
+        metrics = self.observability_callback.get_metrics()
+        self.metrics_store.save(metrics)
+        self.rate_limiter.record_tokens(metrics.total_tokens)
         return answer
 
     def multi_agent_stream(self, query: str):
         """Yield typed multi-agent events (sync generator) for Streamlit UI."""
+        self.observability_callback.reset(question=query)
         orchestrator = self._get_orchestrator()
         final_answer = ""
         for event in orchestrator.stream(query):
@@ -392,106 +447,15 @@ class ResearchAgent:
                 final_answer = event.get("answer", "")
         if final_answer:
             self.memory.add_exchange(query, final_answer)
-
-    def _build_plan_execute_graph(self):
-        """Build a StateGraph with create_plan, execute_step, and synthesize nodes."""
-        from src.planner import generate_plan, ResearchPlan
-
-        class PlanExecuteState(TypedDict):
-            query: str
-            plan_data: dict                              # ResearchPlan.model_dump()
-            current_step: int
-            all_findings: Annotated[List[str], operator.add]
-            final_answer: str
-
-        async def create_plan_node(state: PlanExecuteState) -> dict:
-            plan = generate_plan(state["query"], self.llm)
-            return {
-                "plan_data": plan.model_dump(),
-                "current_step": 0,
-                "all_findings": [],
-                "final_answer": "",
-            }
-
-        async def execute_step_node(state: PlanExecuteState) -> dict:
-            """Run current step via inner agent and advance the step pointer."""
-            plan = ResearchPlan(**state["plan_data"])
-            idx = state["current_step"]
-
-            if idx >= len(plan.steps):
-                return {"plan_data": plan.model_dump()}
-
-            step = plan.steps[idx]
-            plan.steps[idx] = step.model_copy(update={"status": STATUS_IN_PROGRESS})
-
-            step_messages = [
-                HumanMessage(
-                    content=(
-                        f"Research task: {step.description}\n\n"
-                        f"Focus specifically on this task. Be thorough but concise."
-                    )
-                )
-            ]
-            result = await self.agent.ainvoke(
-                {"messages": step_messages},
-                {"recursion_limit": 20},
-            )
-            findings = extract_ai_answer(result)
-            plan.steps[idx] = step.model_copy(
-                update={"status": STATUS_DONE, "findings": findings}
-            )
-            return {
-                "plan_data": plan.model_dump(),
-                "all_findings": [
-                    f"Step {step.step_number} — {step.description}:\n{findings}"
-                ],
-                "current_step": idx + 1,
-            }
-
-        async def synthesize_node(state: PlanExecuteState) -> dict:
-            plan = ResearchPlan(**state["plan_data"])
-            findings = state.get("all_findings", [])
-
-            if not findings:
-                prompt = state["query"]
-            else:
-                steps_text = "\n\n".join(findings)
-                prompt = (
-                    f"Synthesize these research findings into a comprehensive answer.\n\n"
-                    f"Original question: {state['query']}\n\n"
-                    f"Research findings:\n{steps_text}"
-                )
-
-            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-            return {"final_answer": flatten_content(response.content)}
-
-        def should_continue(state: PlanExecuteState) -> str:
-            plan = ResearchPlan(**state["plan_data"])
-            if state["current_step"] >= len(plan.steps):
-                return "synthesize"
-            return "execute_step"
-
-        def after_create_plan(state: PlanExecuteState) -> str:
-            plan = ResearchPlan(**state["plan_data"])
-            if plan.is_simple or not plan.steps:
-                return "synthesize"
-            return "execute_step"
-
-        workflow = StateGraph(PlanExecuteState)
-        workflow.add_node("create_plan", create_plan_node)
-        workflow.add_node("execute_step", execute_step_node)
-        workflow.add_node("synthesize", synthesize_node)
-
-        workflow.add_edge(START, "create_plan")
-        workflow.add_conditional_edges("create_plan", after_create_plan)
-        workflow.add_conditional_edges("execute_step", should_continue)
-        workflow.add_edge("synthesize", END)
-
-        return workflow.compile()
+        metrics = self.observability_callback.get_metrics()
+        self.metrics_store.save(metrics)
+        self.rate_limiter.record_tokens(metrics.total_tokens)
 
     async def plan_and_execute(self, query: str, verbose: bool = True) -> str:
         """Generate a plan, execute each step, and synthesize findings into an answer."""
         from src.planner import generate_plan
+
+        self.observability_callback.reset(question=query)
 
         if verbose:
             print("\n\U0001f5fa\ufe0f  Generating research plan...")
@@ -526,11 +490,16 @@ class ResearchAgent:
                     )
                 )
             ]
-            result = await self.agent.ainvoke(
-                {"messages": step_messages},
-                {"recursion_limit": 20},
-            )
-            findings = extract_ai_answer(result)
+            try:
+                result = await self.agent.ainvoke(
+                    {"messages": step_messages},
+                    {"recursion_limit": 20,
+                     "callbacks": [self.observability_callback]},
+                )
+                findings = extract_ai_answer(result)
+            except Exception as e:
+                findings = f"Error in step {step.step_number}: {str(e)}"
+
             plan.steps[i] = step.model_copy(
                 update={"status": STATUS_DONE, "findings": findings}
             )
@@ -553,24 +522,31 @@ class ResearchAgent:
             print(f"{'=' * 60}\n")
 
         final_answer = ""
-        async for chunk in self.llm.astream([HumanMessage(content=synthesis_prompt)]):
-            text = extract_chunk_text(chunk)
-            if text:
-                final_answer += text
-                if verbose:
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
+        try:
+            async for chunk in self.llm.astream([HumanMessage(content=synthesis_prompt)]):
+                text = extract_chunk_text(chunk)
+                if text:
+                    final_answer += text
+                    if verbose:
+                        sys.stdout.write(text)
+                        sys.stdout.flush()
+        except Exception as e:
+            final_answer = final_answer or f"Error during synthesis: {str(e)}"
 
         if verbose:
             print()
 
         self.memory.add_exchange(query, final_answer)
+        metrics = self.observability_callback.get_metrics()
+        self.metrics_store.save(metrics)
+        self.rate_limiter.record_tokens(metrics.total_tokens)
         return final_answer
 
     def plan_and_execute_stream(self, query: str) -> Generator[dict, None, None]:
         """Yield typed plan-and-execute events (sync generator) for Streamlit UI."""
         from src.planner import generate_plan
 
+        self.observability_callback.reset(question=query)
         plan = generate_plan(query, self.llm)
         yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
@@ -661,6 +637,9 @@ class ResearchAgent:
                 yield {"type": EVENT_SYNTHESIS_TOKEN, "token": text}
 
         self.memory.add_exchange(query, final_answer)
+        metrics = self.observability_callback.get_metrics()
+        self.metrics_store.save(metrics)
+        self.rate_limiter.record_tokens(metrics.total_tokens)
         yield {"type": EVENT_DONE, "answer": final_answer, "plan": plan}
 
 def create_research_agent():
