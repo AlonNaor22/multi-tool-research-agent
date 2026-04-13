@@ -11,6 +11,11 @@ from collections import Counter
 
 from langchain_core.callbacks import BaseCallbackHandler
 
+# ─── Module overview ───────────────────────────────────────────────
+# Tracks per-query metrics (tokens, cost, timing, tool stats) via a
+# LangChain callback handler, stores them as JSONL via MetricsStore,
+# and provides summary/formatting utilities for CLI output.
+# ───────────────────────────────────────────────────────────────────
 
 MODEL_PRICING = {
     # Sonnet
@@ -92,9 +97,11 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         self._query_start = time.time()
         self._question = question[:200]
 
+    # Records the start time of an LLM call for thinking-duration tracking.
     def on_llm_start(self, serialized: Dict[str, Any], prompts: Any, **kwargs) -> None:
         self._llm_start = time.time()
 
+    # Accumulates thinking time and extracts token usage from the LLM response.
     def on_llm_end(self, response: Any, **kwargs) -> None:
         if self._llm_start is not None:
             self._thinking_time += time.time() - self._llm_start
@@ -115,11 +122,13 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                             self._input_tokens += getattr(metadata, "input_tokens", 0)
                             self._output_tokens += getattr(metadata, "output_tokens", 0)
 
+    # Records tool name and start time when a tool call begins.
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         self._current_tool_name = serialized.get("name", "unknown")
         self._current_tool_start = time.time()
         self._current_tool_input = str(input_str)[:200]
 
+    # Records tool duration and success status on completion.
     def on_tool_end(self, output: str, **kwargs) -> None:
         if self._current_tool_start is not None:
             duration = time.time() - self._current_tool_start
@@ -134,6 +143,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             self._tool_successes += 1
             self._current_tool_start = None
 
+    # Records tool duration and error status on failure.
     def on_tool_error(self, error: Exception, **kwargs) -> None:
         if self._current_tool_start is not None:
             duration = time.time() - self._current_tool_start
@@ -147,6 +157,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             self._tool_failures += 1
             self._current_tool_start = None
 
+    # Compiles all captured data into a QueryMetrics with cost estimate.
     def get_metrics(self) -> QueryMetrics:
         """Compile captured token/tool/timing data into a QueryMetrics object."""
         total_duration = time.time() - self._query_start if self._query_start else 0.0
@@ -187,10 +198,12 @@ class MetricsStore:
         if dirpath and not os.path.exists(dirpath):
             os.makedirs(dirpath)
 
+    # Takes (metrics). Appends a single QueryMetrics entry as a JSON line.
     def save(self, metrics: QueryMetrics) -> None:
         with open(self.filepath, "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics.to_dict(), ensure_ascii=False) + "\n")
 
+    # Takes (limit). Reads the JSONL file and returns the most recent entries.
     def load(self, limit: int = 100) -> List[QueryMetrics]:
         """Load the most recent `limit` metrics entries from the JSONL file."""
         if not os.path.exists(self.filepath):
@@ -208,6 +221,7 @@ class MetricsStore:
 
         return entries[-limit:]
 
+    # Aggregates token, cost, duration, and tool stats across all stored metrics.
     def get_summary_stats(self) -> Dict:
         """Aggregate token, cost, duration, and tool stats across stored metrics."""
         entries = self.load(limit=500)
@@ -247,6 +261,7 @@ class MetricsStore:
             "tool_success_rate": round(total_successes / total_tool_calls * 100, 1) if total_tool_calls else 100.0,
         }
 
+    # Formats aggregate stats as a readable multi-line string for CLI display.
     def format_summary(self) -> str:
         """Format aggregate stats as a readable multi-line string."""
         stats = self.get_summary_stats()
@@ -275,6 +290,8 @@ class MetricsStore:
         return "\n".join(lines)
 
 
+# Takes (metrics). Formats a single QueryMetrics as a multi-line CLI summary
+# showing tokens, cost, duration breakdown, and tool success/failure counts.
 def format_query_metrics(metrics: QueryMetrics) -> str:
     """Format a single QueryMetrics as a multi-line CLI summary."""
     lines = [

@@ -19,6 +19,12 @@ from src.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ─── Module overview ───────────────────────────────────────────────
+# LangGraph research agent with memory, plan-and-execute, and
+# multi-agent orchestration. Wires tools, callbacks, and modes.
+# ───────────────────────────────────────────────────────────────────
+
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
 from src.rate_limiter import RateLimiter
 from src.tool_health import check_tool_health, get_available_tools
@@ -108,6 +114,8 @@ TOOL_CATEGORIES = {
 }
 
 
+# Takes (disabled_tools). Assembles the system prompt with categorized tool
+# listings, filtering out any tools flagged as unhealthy.
 def _build_system_prompt(disabled_tools: list = None) -> str:
     """Build system prompt with tool categories, excluding disabled_tools from listings."""
     disabled = set(disabled_tools or [])
@@ -251,6 +259,7 @@ class ResearchAgent:
             debug=VERBOSE,
         )
 
+    # Runs a single research query, updates memory and metrics, returns answer.
     async def query(self, question: str, show_timing: bool = True) -> str:
         """Run a research query async, update memory, and return the answer string."""
         try:
@@ -281,6 +290,8 @@ class ResearchAgent:
         except Exception as e:
             return f"Error running research query: {str(e)}"
 
+    # Takes (question, show_timing). Streams the agent response with real-time
+    # CLI output, saves metrics, and returns the final answer.
     async def stream_query(self, question: str, show_timing: bool = True) -> str:
         """Stream a research query with real-time output and return the final answer."""
         try:
@@ -317,12 +328,15 @@ class ResearchAgent:
         except Exception as e:
             return f"Error running research query: {str(e)}"
 
+    # Returns a human-readable timing summary from the last query.
     def get_last_timing(self) -> str:
         return self.timing_callback.get_summary()
 
+    # Returns the QueryMetrics object captured during the last query.
     def get_last_metrics(self):
         return self.observability_callback.get_metrics()
 
+    # Clears conversation history, resets rate limiter and session ID.
     def clear_memory(self):
         """Clear conversation history, reset rate limiter, and start a new session."""
         self.memory.clear()
@@ -330,9 +344,11 @@ class ResearchAgent:
         self.current_session_id = None
         print("Conversation memory cleared.")
 
+    # Returns the current conversation history as a formatted string.
     def get_memory(self) -> str:
         return self.memory.buffer
 
+    # Persists session history to a JSON file and tracks the session ID.
     def save_session(self, session_id: str = None, description: str = None) -> str:
         """Save session history to JSON, reusing current session ID if set."""
         from src.session_manager import save_session
@@ -349,6 +365,7 @@ class ResearchAgent:
 
         return filepath
 
+    # Restores a previously saved session into memory by its ID.
     def load_session(self, session_id: str) -> bool:
         """Load a saved session into memory by session_id; return True on success."""
         from src.session_manager import load_session
@@ -363,6 +380,8 @@ class ResearchAgent:
         return True
 
 
+    # Takes (query, mode). Routes to multi-agent, plan-and-execute, or direct mode
+    # based on the mode flag (or auto-detection). Yields typed events.
     def route_query(self, query: str, mode: str = "Auto"):
         """Sync generator that routes to the right mode and yields typed events.
 
@@ -379,6 +398,8 @@ class ResearchAgent:
         else:
             yield from self._direct_stream(query)
 
+    # Takes (query). Sync generator for direct single-agent mode,
+    # yielding synthesis tokens and tool events matching other modes' format.
     def _direct_stream(self, query: str):
         """Sync generator for direct mode that yields the same event types as other modes."""
         self.timing_callback.reset()
@@ -416,6 +437,7 @@ class ResearchAgent:
         self.rate_limiter.record_tokens(metrics.total_tokens)
         yield {"type": EVENT_DONE, "answer": final_answer}
 
+    # Lazily builds and caches the MultiAgentOrchestrator instance.
     def _get_orchestrator(self):
         """Lazily build and cache the multi-agent orchestrator."""
         if not hasattr(self, '_multi_agent_orchestrator') or self._multi_agent_orchestrator is None:
@@ -428,6 +450,7 @@ class ResearchAgent:
             )
         return self._multi_agent_orchestrator
 
+    # Takes (query, verbose). Runs via multi-agent orchestration and returns the answer.
     async def multi_agent_query(self, query: str, verbose: bool = True) -> str:
         """Run query via multi-agent orchestration; return synthesized answer."""
         self.observability_callback.reset(question=query)
@@ -442,6 +465,7 @@ class ResearchAgent:
         self.rate_limiter.record_tokens(metrics.total_tokens)
         return answer
 
+    # Takes (query). Sync generator yielding multi-agent events for Streamlit UI.
     def multi_agent_stream(self, query: str):
         """Yield typed multi-agent events (sync generator) for Streamlit UI."""
         self.observability_callback.reset(question=query)
@@ -457,6 +481,8 @@ class ResearchAgent:
         self.metrics_store.save(metrics)
         self.rate_limiter.record_tokens(metrics.total_tokens)
 
+    # Takes (step, plan, completed_findings). Executes a single plan step,
+    # injecting context from declared dependency steps.
     async def _run_step(
         self,
         step,
@@ -481,6 +507,8 @@ class ResearchAgent:
         )
         return extract_ai_answer(result)
 
+    # Takes (query, verbose). Generates a research plan, executes steps in
+    # dependency-driven waves, and synthesizes findings into a final answer.
     async def plan_and_execute(self, query: str, verbose: bool = True) -> str:
         """Generate a plan, execute steps in dependency-driven waves, synthesize."""
         from src.planner import generate_plan
@@ -584,6 +612,8 @@ class ResearchAgent:
         self.rate_limiter.record_tokens(metrics.total_tokens)
         return final_answer
 
+    # Takes (query). Sync generator yielding plan-and-execute events (plan created,
+    # step progress, synthesis tokens) for Streamlit UI consumption.
     def plan_and_execute_stream(self, query: str) -> Generator[dict, None, None]:
         """Yield typed plan-and-execute events (sync generator) for Streamlit UI."""
         from src.planner import generate_plan
@@ -705,6 +735,7 @@ class ResearchAgent:
         self.rate_limiter.record_tokens(metrics.total_tokens)
         yield {"type": EVENT_DONE, "answer": final_answer, "plan": plan}
 
+# Factory function that creates and returns a ResearchAgent instance.
 def create_research_agent():
     """Create and return a ResearchAgent instance."""
     return ResearchAgent()

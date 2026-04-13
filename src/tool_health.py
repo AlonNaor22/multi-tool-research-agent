@@ -3,6 +3,11 @@
 import os
 from typing import Dict, List, Tuple
 
+# ─── Module overview ───────────────────────────────────────────────
+# Startup health checks for tools with external dependencies (API
+# keys, optional libraries). Probes each requirement and returns a
+# health dict used to filter tools and display status in the UI.
+# ───────────────────────────────────────────────────────────────────
 
 API_KEY_REQUIREMENTS = {
     "wolfram_alpha": {
@@ -25,11 +30,13 @@ LIBRARY_REQUIREMENTS = {
 }
 
 
+# Takes (env_var). Returns True if the env var is set and non-empty.
 def _check_api_key(env_var: str) -> bool:
     value = os.getenv(env_var, "").strip()
     return len(value) > 0
 
 
+# Takes (module_name). Returns True if the Python module can be imported.
 def _check_library(module_name: str) -> bool:
     try:
         __import__(module_name)
@@ -38,6 +45,7 @@ def _check_library(module_name: str) -> bool:
         return False
 
 
+# Probes all API keys and libraries. Returns {tool_name: {available, reason, ...}}.
 def check_tool_health() -> Dict[str, dict]:
     """Probe API keys and libraries; return {tool_name: {available, reason}} dict."""
     health = {}
@@ -72,6 +80,8 @@ def check_tool_health() -> Dict[str, dict]:
     return health
 
 
+# Takes (all_tools, health). Filters out unhealthy tools.
+# Returns (available_tools, disabled_names).
 def get_available_tools(all_tools: list, health: Dict[str, dict] = None) -> Tuple[list, List[str]]:
     """Filter all_tools by health; return (available_tools, disabled_names)."""
     if health is None:
@@ -88,6 +98,7 @@ def get_available_tools(all_tools: list, health: Dict[str, dict] = None) -> Tupl
     return available, disabled
 
 
+# Takes (health, all_tool_names). Formats a human-readable status string for CLI output.
 def format_health_status(health: Dict[str, dict], all_tool_names: List[str]) -> str:
     """Format tool health as a readable multi-line string for CLI."""
     lines = ["\nTool Status:"]

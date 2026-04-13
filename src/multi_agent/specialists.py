@@ -25,6 +25,12 @@ from src.multi_agent.prompts import (
 
 logger = logging.getLogger(__name__)
 
+# ─── Module overview ───────────────────────────────────────────────
+# Defines specialist agent configs (tools, prompts, limits) and the
+# SpecialistAgent class that wraps a LangGraph agent with timeout.
+# build_specialists() creates all specialists from definitions.
+# ───────────────────────────────────────────────────────────────────
+
 DEFAULT_RECURSION_LIMIT = 20
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
@@ -127,6 +133,8 @@ class SpecialistAgent:
                 debug=False,
             )
 
+    # Takes (task, callbacks). Runs the agent with asyncio timeout,
+    # returns SpecialistResult with content, timed_out, or error flags.
     async def run(self, task: str, callbacks: Optional[list] = None) -> SpecialistResult:
         """Execute task with timeout; return structured result."""
         if self.agent is None:
@@ -169,6 +177,8 @@ class SpecialistAgent:
             )
 
 
+# Takes (all_tools, llm, tool_health). Instantiates every specialist from
+# SPECIALIST_DEFINITIONS, resolving tool objects by name and filtering health.
 def build_specialists(
     all_tools: list,
     llm: ChatAnthropic,

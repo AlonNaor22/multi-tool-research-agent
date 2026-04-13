@@ -11,7 +11,13 @@ from src.constants import (
     SNIPPET_MAX_CHARS,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Performs general web searches via the DuckDuckGo Search API.
+# Formats results with title, URL, and snippet for the agent.
+# ───────────────────────────────────────────────────────────────────
 
+# Takes (query, max_results, region). Runs a DuckDuckGo text search in a thread
+# with timeout protection. Returns a list of result dicts.
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def async_web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS, region: str = None):
     """Perform a DuckDuckGo web search asynchronously and return a list of result dicts."""
@@ -34,6 +40,8 @@ async def async_web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS, r
     return results
 
 
+# Takes a search query (plain string or JSON with max_results/region).
+# Returns numbered results with title, URL, and truncated snippet.
 @safe_tool_call("performing web search")
 async def web_search(query: str) -> str:
     """Search the GENERAL WEB for information from all types of websites. Returns a mix of blogs, forums, company sites, docs, and articles — not limited to news.

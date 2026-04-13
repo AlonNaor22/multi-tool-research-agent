@@ -11,6 +11,11 @@ from src.constants import (
     ABSTRACT_MAX_CHARS,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Searches the ArXiv pre-print repository for academic papers in STEM.
+# Supports category filtering, sort options, and abstract truncation.
+# ───────────────────────────────────────────────────────────────────
+
 # Common ArXiv categories
 ARXIV_CATEGORIES = {
     "cs.AI": "Artificial Intelligence",
@@ -30,6 +35,8 @@ ARXIV_CATEGORIES = {
 }
 
 
+# Takes (search_query, max_results, sort_by). Queries the ArXiv API with retry.
+# Returns a list of arxiv paper objects.
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def async_search_arxiv(search_query: str, max_results: int = DEFAULT_MAX_RESULTS,
                              sort_by: str = "relevance"):
@@ -58,6 +65,8 @@ async def async_search_arxiv(search_query: str, max_results: int = DEFAULT_MAX_R
     return papers
 
 
+# Takes a query string (plain text or JSON with options). Searches ArXiv for papers.
+# Returns formatted paper list with titles, authors, dates, categories, and abstracts.
 @safe_tool_call("searching ArXiv")
 async def arxiv_search(query: str) -> str:
     """Search ArXiv for PRE-PRINTS — the latest unpublished research in STEM fields. ArXiv papers are first-to-publish but NOT peer-reviewed.

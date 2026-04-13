@@ -8,6 +8,11 @@ from langchain_core.tools import tool
 from src.utils import async_retry_on_error, get_aiohttp_session, safe_tool_call, require_input
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT
 
+# ─── Module overview ───────────────────────────────────────────────
+# Fetches and extracts readable text from web pages and PDFs at a
+# given URL. Strips boilerplate HTML and extracts page metadata.
+# ───────────────────────────────────────────────────────────────────
+
 # Try to import pypdf for PDF support
 try:
     from pypdf import PdfReader
@@ -20,6 +25,7 @@ MAX_CONTENT_CHARS = 5000
 MAX_PDF_PAGES = 20
 
 
+# Pulls author, date, and description from HTML meta tags.
 def _extract_metadata(soup: BeautifulSoup) -> dict:
     """Extract metadata (author, date, description) from HTML page."""
     metadata = {}
@@ -54,6 +60,8 @@ def _extract_metadata(soup: BeautifulSoup) -> dict:
     return metadata
 
 
+# Takes raw PDF bytes and extracts text page-by-page (up to MAX_PDF_PAGES).
+# Returns formatted metadata and content string.
 def _extract_pdf_content(content: bytes, url: str) -> str:
     """Extract text content from a PDF file."""
     if not PDF_SUPPORT:
@@ -97,6 +105,8 @@ def _extract_pdf_content(content: bytes, url: str) -> str:
         return f"Error extracting PDF content: {str(e)}"
 
 
+# Strips navigation/scripts, finds main content area, and extracts clean text.
+# Returns title, metadata, and body content.
 def _extract_html_content(html: str, url: str) -> str:
     """Extract readable content from HTML."""
     soup = BeautifulSoup(html, 'html.parser')
@@ -152,6 +162,8 @@ def _extract_html_content(html: str, url: str) -> str:
     return "\n".join(result_parts)
 
 
+# Takes a URL string. Fetches the page and routes to PDF or HTML extraction.
+# Returns the extracted text content with title and metadata.
 @safe_tool_call("fetching URL")
 @async_retry_on_error(
     max_retries=2,

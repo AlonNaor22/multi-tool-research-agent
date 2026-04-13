@@ -13,6 +13,12 @@ from src.utils import flatten_content
 
 logger = logging.getLogger(__name__)
 
+# ─── Module overview ───────────────────────────────────────────────
+# Generates a multi-step ResearchPlan from a user query via LLM,
+# with dependency graph for parallel execution. Simple queries are
+# detected early and skipped (is_simple=True).
+# ───────────────────────────────────────────────────────────────────
+
 _SIMPLE_STARTERS = (
     "what is ", "what are ", "who is ", "who are ", "when did ", "when is ",
     "where is ", "where are ", "how much ", "how many ", "convert ", "calculate ",
@@ -23,6 +29,7 @@ _SIMPLE_STARTERS = (
 _SIMPLE_MAX_WORDS = 8
 
 
+# Takes (query). Returns True if the query is short or matches a simple-question pattern.
 def is_simple_query(query: str) -> bool:
     """Return True if query is short or starts with a simple-question pattern."""
     q = query.strip().lower()
@@ -83,6 +90,8 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
 """
 
 
+# Takes (data, valid_steps). Extracts and validates depends_on from LLM JSON.
+# Falls back to a sequential chain if the field is missing or malformed.
 def _parse_depends_on(
     data: dict, valid_steps: set[int],
 ) -> Dict[int, List[int]]:
@@ -117,6 +126,8 @@ def _parse_depends_on(
     return deps
 
 
+# Takes (query, llm). Calls the LLM to decompose a complex query into steps,
+# or returns is_simple=True for trivial queries. Falls back to a single step on error.
 def generate_plan(query: str, llm: ChatAnthropic) -> ResearchPlan:
     """Return a ResearchPlan with steps, or is_simple=True for trivial queries."""
     if is_simple_query(query):

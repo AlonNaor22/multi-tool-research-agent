@@ -13,11 +13,17 @@ from langchain_core.messages import AIMessage
 
 from src.constants import DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_HEADERS, DEFAULT_CACHE_TTL
 
+# ─── Module overview ───────────────────────────────────────────────
+# Shared utilities used across the codebase: retry/timeout wrappers,
+# async HTTP helpers, TTL cache, tool-input parsing, text truncation,
+# and the safe_tool_call / cached_tool decorators.
+# ───────────────────────────────────────────────────────────────────
 
 # ---------------------------------------------------------------------------
 # Anthropic content helpers
 # ---------------------------------------------------------------------------
 
+# Takes (content, sep). Normalizes str or Anthropic content-block list to plain text.
 def flatten_content(content: Union[str, List[dict]], sep: str = " ") -> str:
     """Takes str or Anthropic content-block list, returns joined plain text."""
     if isinstance(content, str):
@@ -31,11 +37,13 @@ def flatten_content(content: Union[str, List[dict]], sep: str = " ") -> str:
     return ""
 
 
+# Takes (chunk). Extracts text content from an LLM message or chunk object.
 def extract_chunk_text(chunk) -> str:
     """Takes an LLM message/chunk, returns its text content as a string."""
     return flatten_content(getattr(chunk, "content", ""), sep="")
 
 
+# Takes (result, default). Walks messages in reverse to find the last AIMessage text.
 def extract_ai_answer(result: dict, default: str = "No answer was generated.") -> str:
     """Takes agent result dict, returns last AIMessage text or default."""
     for msg in reversed(result.get("messages", [])):
@@ -55,6 +63,8 @@ async def _retry_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
+# Takes (max_retries, delay, backoff, exceptions). Returns a decorator that
+# retries an async function with exponential backoff on matching exceptions.
 def async_retry_on_error(
     max_retries: int = 3,
     delay: float = 1.0,
@@ -96,6 +106,7 @@ def async_retry_on_error(
     return decorator
 
 
+# Takes (error). Checks status codes and error strings for HTTP 429 indicators.
 def _is_rate_limit_error(error: Exception) -> bool:
     """Returns True if the exception looks like an HTTP 429."""
     if hasattr(error, "response") and hasattr(error.response, "status_code"):
@@ -110,6 +121,7 @@ def _is_rate_limit_error(error: Exception) -> bool:
 # Async timeout wrapper
 # ---------------------------------------------------------------------------
 
+# Takes (func, args, timeout). Runs a blocking function in a thread with a timeout.
 async def async_run_with_timeout(func: Callable, args: tuple = (), timeout: int = 30) -> Any:
     """Runs a blocking func in a thread; raises TimeoutError after *timeout* seconds."""
     try:
@@ -129,6 +141,7 @@ async def async_run_with_timeout(func: Callable, args: tuple = (), timeout: int 
 _session: Optional[aiohttp.ClientSession] = None
 
 
+# Returns the module-level aiohttp session, creating one if needed.
 async def get_aiohttp_session() -> aiohttp.ClientSession:
     """Returns the shared aiohttp session, creating it if needed."""
     global _session
@@ -137,6 +150,7 @@ async def get_aiohttp_session() -> aiohttp.ClientSession:
     return _session
 
 
+# Closes the shared aiohttp session and resets the module-level reference.
 async def close_aiohttp_session() -> None:
     """Closes the shared aiohttp session."""
     global _session
@@ -149,6 +163,7 @@ async def close_aiohttp_session() -> None:
 # Safe execute
 # ---------------------------------------------------------------------------
 
+# Takes (func, *args, default). Calls an async function, returning default on error.
 async def safe_execute(func: Callable, *args, default: Any = None, **kwargs) -> Any:
     """Calls an async fn; returns *default* on any exception."""
     try:
@@ -199,6 +214,7 @@ class TTLCache:
 # Tool-input parsing
 # ---------------------------------------------------------------------------
 
+# Takes (raw, defaults). Parses raw string or JSON into (query, options_dict).
 def parse_tool_input(raw: str, defaults: Optional[Dict] = None) -> Tuple[str, Dict]:
     """Takes raw tool input (string or JSON), returns (query, options_dict)."""
     opts: Dict[str, Any] = dict(defaults or {})
@@ -214,6 +230,8 @@ def parse_tool_input(raw: str, defaults: Optional[Dict] = None) -> Tuple[str, Di
     return raw, opts
 
 
+# Takes (query, default, max_allowed). Extracts "N results: query" prefix.
+# Returns (clean_query, clamped_count).
 def parse_result_count(
     query: str, default: int = 5, max_allowed: int = 10,
 ) -> Tuple[str, int]:
@@ -228,6 +246,7 @@ def parse_result_count(
 # Text truncation
 # ---------------------------------------------------------------------------
 
+# Takes (text, limit, suffix). Cuts text to limit chars, appending suffix if truncated.
 def truncate(text: str, limit: int, suffix: str = "...") -> str:
     """Truncate *text* to *limit* chars, appending *suffix* if cut."""
     if len(text) <= limit:
@@ -235,6 +254,7 @@ def truncate(text: str, limit: int, suffix: str = "...") -> str:
     return text[:limit] + suffix
 
 
+# Takes (value, label). Returns an error string if value is blank, else None.
 def require_input(value: str, label: str = "query") -> Optional[str]:
     """Return an error string if *value* is empty/blank, else None."""
     if not value or not value.strip():
@@ -242,6 +262,7 @@ def require_input(value: str, label: str = "query") -> Optional[str]:
     return None
 
 
+# Takes (operation). Returns a decorator that wraps an async tool fn in try/except.
 def safe_tool_call(operation: str):
     """Decorator that wraps an async tool fn in try/except, returning 'Error …' on failure."""
     def decorator(func: Callable) -> Callable:
@@ -259,6 +280,8 @@ def safe_tool_call(operation: str):
 # Async HTTP fetch
 # ---------------------------------------------------------------------------
 
+# Takes (url, params, headers, timeout, response_type). GETs a URL via shared session.
+# Returns parsed json, text, or bytes depending on response_type.
 async def async_fetch(
     url: str,
     *,
@@ -288,6 +311,7 @@ async def async_fetch(
 # Caching decorator for tool functions
 # ---------------------------------------------------------------------------
 
+# Takes (prefix, ttl). Returns a decorator that caches async fn results by args.
 def cached_tool(prefix: str, ttl: int = DEFAULT_CACHE_TTL):
     """Decorator: caches an async fn's return value by (prefix, *args) key."""
     _cache = TTLCache(ttl=ttl)

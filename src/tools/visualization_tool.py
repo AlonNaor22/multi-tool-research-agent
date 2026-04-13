@@ -12,6 +12,10 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 from src.constants import CHART_FIGSIZE, CHART_DPI
 
+# ─── Module overview ───────────────────────────────────────────────
+# Generates matplotlib charts (bar, line, pie, scatter, histogram,
+# box, violin, heatmap, function) from structured data specs.
+# ───────────────────────────────────────────────────────────────────
 
 # Output directory for charts
 OUTPUT_DIR = "output"
@@ -52,6 +56,9 @@ def get_colors(palette: str, count: int) -> list:
     return [colors[i % len(colors)] for i in range(count)]
 
 
+# Takes a spec dict with chart_type, data, title, palette, etc.
+# Renders the chart via matplotlib and saves as PNG to output/.
+# Returns a success message with filepath or an error string.
 def _generate_chart_from_spec(spec: dict) -> str:
     """Generate a chart from a spec dict and save as PNG."""
     chart_type = spec.get("chart_type", "bar").lower()
@@ -146,6 +153,8 @@ def _generate_chart_from_spec(spec: dict) -> str:
 # Validation
 # ---------------------------------------------------------------------------
 
+# Checks that required data keys exist for the given chart_type.
+# Returns an error string if invalid, None if valid.
 def _validate_data(chart_type: str, data: dict) -> str | None:
     """Return an error string if data is invalid for chart_type, else None."""
     if chart_type in ("bar", "stacked_bar", "line", "area"):
@@ -176,6 +185,7 @@ def _validate_data(chart_type: str, data: dict) -> str | None:
 # Individual chart drawing functions
 # ---------------------------------------------------------------------------
 
+# Renders a bar chart (single or grouped series) with optional error bars.
 def _draw_bar(ax, data, spec, palette, single_color, show_legend, error_data):
     if "series" in data:
         labels = data["labels"]
@@ -201,6 +211,7 @@ def _draw_bar(ax, data, spec, palette, single_color, show_legend, error_data):
     ax.set_ylabel(spec.get("ylabel", ""))
 
 
+# Renders a stacked bar chart by accumulating series values on a running bottom.
 def _draw_stacked_bar(ax, data, spec, palette, single_color, show_legend):
     if "series" not in data:
         return _draw_bar(ax, data, spec, palette, single_color, show_legend, None)
@@ -217,6 +228,7 @@ def _draw_stacked_bar(ax, data, spec, palette, single_color, show_legend):
     ax.set_ylabel(spec.get("ylabel", ""))
 
 
+# Renders a line chart (single or multi-series) with optional error bars.
 def _draw_line(ax, data, spec, palette, single_color, show_legend, error_data):
     labels = data["labels"]
     if "series" in data:
@@ -241,6 +253,7 @@ def _draw_line(ax, data, spec, palette, single_color, show_legend, error_data):
     ax.set_ylabel(spec.get("ylabel", ""))
 
 
+# Renders a filled area chart (single or multi-series).
 def _draw_area(ax, data, spec, palette, single_color, show_legend):
     labels = data["labels"]
     if "series" in data:
@@ -263,6 +276,7 @@ def _draw_area(ax, data, spec, palette, single_color, show_legend):
     ax.set_ylabel(spec.get("ylabel", ""))
 
 
+# Renders a pie chart with percentage labels from labels/values data.
 def _draw_pie(ax, data, palette):
     labels, values = data["labels"], data["values"]
     colors = get_colors(palette, len(labels))
@@ -270,6 +284,7 @@ def _draw_pie(ax, data, palette):
     ax.axis('equal')
 
 
+# Renders a scatter plot from x/y coordinate arrays.
 def _draw_scatter(ax, data, spec, palette, single_color):
     x_vals = data.get("x", data.get("labels", []))
     y_vals = data.get("y", data.get("values", []))
@@ -279,6 +294,7 @@ def _draw_scatter(ax, data, spec, palette, single_color):
     ax.set_ylabel(spec.get("ylabel", "Y"))
 
 
+# Renders a histogram from a values array with configurable bin count.
 def _draw_histogram(ax, data, spec, palette, single_color):
     values = data["values"]
     bins = spec.get("bins", 10)
@@ -288,6 +304,7 @@ def _draw_histogram(ax, data, spec, palette, single_color):
     ax.set_ylabel(spec.get("ylabel", "Frequency"))
 
 
+# Renders a box plot from one or more series of values.
 def _draw_box(ax, data, spec, palette):
     show_fliers = spec.get("showfliers", True)
     if "series" in data:
@@ -317,6 +334,7 @@ def _draw_box(ax, data, spec, palette):
     ax.set_ylabel(spec.get("ylabel", ""))
 
 
+# Renders a violin plot showing distribution shape, means, and medians.
 def _draw_violin(ax, data, spec, palette):
     if "series" in data:
         all_values = [s["values"] for s in data["series"]]
@@ -340,6 +358,7 @@ def _draw_violin(ax, data, spec, palette):
     ax.set_ylabel(spec.get("ylabel", ""))
 
 
+# Renders a heatmap from a 2D matrix with optional cell annotations.
 def _draw_heatmap(ax, data, spec, fig):
     matrix = np.array(data["matrix"])
     cmap = spec.get("cmap", "viridis")
@@ -367,6 +386,7 @@ def _draw_heatmap(ax, data, spec, fig):
     ax.set_ylabel(spec.get("ylabel", ""))
 
 
+# Evaluates math expression strings over an x range and plots the curves.
 def _draw_function(ax, data, spec, palette, single_color, show_legend):
     x_range = data.get("x_range", [-10, 10])
     points = data.get("points", 500)
@@ -430,6 +450,8 @@ class VisualizationTool(BaseTool):
     )
     args_schema: Type[BaseModel] = ChartInput
 
+    # Takes chart parameters, builds a spec dict, and delegates to _generate_chart_from_spec.
+    # Returns the chart filepath or error message.
     def _run(self, chart_type: str = "bar", data: dict = None, title: str = "",
              palette: str = "default", grid: bool = True, legend: bool = True) -> str:
         spec = {"chart_type": chart_type, "data": data or {}, "title": title,
@@ -443,6 +465,7 @@ class VisualizationTool(BaseTool):
 visualization_tool = VisualizationTool()
 
 
+# Parses a JSON string into a chart spec and generates the chart.
 def generate_chart(input_str: str) -> str:
     """Parse a JSON string and generate a chart. Used by tests and CLI."""
     try:

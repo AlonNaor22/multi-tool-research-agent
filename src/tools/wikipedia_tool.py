@@ -8,11 +8,17 @@ from src.utils import (
 )
 from src.constants import DEFAULT_SEARCH_TIMEOUT, WIKI_MAX_CHARS
 
+# ─── Module overview ───────────────────────────────────────────────
+# Looks up Wikipedia article summaries and search results using
+# the wikipedia library. Handles disambiguation and suggestions.
+# ───────────────────────────────────────────────────────────────────
 
 # Configuration
 DEFAULT_SENTENCES = 5  # Number of sentences in summary
 
 
+# Takes a query string (or JSON with sentences/results options).
+# Returns article summary with title/URL, or multiple search results.
 @safe_tool_call("searching Wikipedia")
 async def wikipedia(query: str) -> str:
     """Look up EXPLANATIONS, HISTORY, and CONTEXT on Wikipedia. Use for understanding topics, not for getting specific numbers.

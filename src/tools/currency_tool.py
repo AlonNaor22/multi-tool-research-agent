@@ -10,6 +10,11 @@ from src.utils import async_retry_on_error, async_fetch, safe_tool_call, require
 from src.constants import DEFAULT_HTTP_TIMEOUT
 
 
+# ─── Module overview ───────────────────────────────────────────────
+# Converts between currencies using real-time exchange rates from
+# the frankfurter.app API. Parses natural-language conversion queries.
+# ───────────────────────────────────────────────────────────────────
+
 # Common currency codes and their aliases
 CURRENCY_ALIASES = {
     # Major currencies
@@ -55,6 +60,8 @@ VALID_CURRENCIES = {
 }
 
 
+# Takes (currency). Resolves aliases and names to a 3-letter ISO code.
+# Returns the uppercase ISO code or None if unrecognized.
 def normalize_currency(currency: str) -> Optional[str]:
     """Convert currency name/alias to ISO code."""
     currency_clean = currency.strip().lower()
@@ -71,6 +78,8 @@ def normalize_currency(currency: str) -> Optional[str]:
     return None
 
 
+# Takes (from_currency, to_currency). Calls the frankfurter.app API.
+# Returns a dict containing the exchange rate and date.
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
     """Fetch exchange rate from frankfurter.app API."""
@@ -84,6 +93,8 @@ async def get_exchange_rate(from_currency: str, to_currency: str) -> Dict:
     return await async_fetch(base_url, params=params, timeout=DEFAULT_HTTP_TIMEOUT)
 
 
+# Takes (amount, from_currency, to_currency). Normalizes codes and fetches rate.
+# Returns a formatted string with the converted amount and exchange rate.
 async def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
     """Convert an amount from one currency to another."""
     # Normalize currency codes
@@ -127,6 +138,8 @@ async def convert_currency(amount: float, from_currency: str, to_currency: str) 
         return f"Error converting currency: {str(e)}"
 
 
+# Takes (input_str). Parses natural-language conversion requests like "100 USD to EUR".
+# Returns the converted amount, exchange rate, and date.
 @safe_tool_call("converting currency")
 async def currency_converter(input_str: str) -> str:
     """Convert between currencies using real-time exchange rates.
@@ -182,6 +195,7 @@ async def currency_converter(input_str: str) -> str:
     )
 
 
+# Returns help text listing supported formats and currency codes.
 def _get_help() -> str:
     """Return help text."""
     return """Currency Converter Help:

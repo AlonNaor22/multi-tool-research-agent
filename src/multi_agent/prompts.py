@@ -1,5 +1,11 @@
 """System prompts for the supervisor and specialist agents."""
 
+# ─── Module overview ───────────────────────────────────────────────
+# String constants defining system prompts for every agent role:
+# supervisor (planning + synthesis), research, math, analysis,
+# fact-checker, and translation specialists.
+# ───────────────────────────────────────────────────────────────────
+
 SUPERVISOR_PLAN_PROMPT = """\
 You are a research supervisor. Your job is to analyze a user query and delegate
 sub-tasks to specialist agents. Each specialist has a focused skill set:

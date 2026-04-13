@@ -24,10 +24,17 @@ except ImportError:
 # Preprocessing helpers
 # ---------------------------------------------------------------------------
 
+# ─── Module overview ───────────────────────────────────────────────
+# SymPy-powered solver for equations, systems, matrix ops, and
+# symbolic algebra (simplify, expand, factor, derivatives, integrals).
+# ───────────────────────────────────────────────────────────────────
+
 _KNOWN_FUNCTIONS = {'sin', 'cos', 'tan', 'log', 'exp', 'sqrt', 'abs',
                      'sinh', 'cosh', 'tanh', 'asin', 'acos', 'atan'}
 
 
+# Takes (equation_str). Converts ^ to ** and inserts implicit multiplication.
+# Returns the preprocessed string ready for SymPy parsing.
 def _preprocess_equation(equation_str: str) -> str:
     """Convert ^ to ** and insert implicit multiplication for SymPy."""
     equation_str = equation_str.replace("^", "**")
@@ -44,6 +51,7 @@ def _preprocess_equation(equation_str: str) -> str:
     return equation_str
 
 
+# Takes (s, pos). Checks if the character at pos ends a known function name.
 def _is_function_prefix(s: str, pos: int) -> bool:
     """Check if position is the trailing char of a known function name."""
     for func in _KNOWN_FUNCTIONS:
@@ -55,6 +63,8 @@ def _is_function_prefix(s: str, pos: int) -> bool:
     return False
 
 
+# Takes (expression_str). Finds single-letter variable names excluding reserved words.
+# Returns a deduplicated list of variable characters.
 def _extract_variables(expression_str: str) -> List[str]:
     """Extract single-letter variable names, excluding reserved math names."""
     reserved = {'sin', 'cos', 'tan', 'log', 'exp', 'sqrt', 'abs', 'pi', 'e'}
@@ -68,12 +78,14 @@ def _extract_variables(expression_str: str) -> List[str]:
     return variables
 
 
+# Takes (expr_str, local_dict). Parses with implicit multiplication transforms.
 def _parse_sympy_expr(expr_str: str, local_dict: dict):
     """Parse a string into a SymPy expression with implicit multiplication."""
     transformations = standard_transformations + (implicit_multiplication_application,)
     return parse_expr(expr_str, local_dict=local_dict, transformations=transformations)
 
 
+# Takes (val). Formats a SymPy value as a clean numeric string.
 def _format_number(val) -> str:
     """Format a SymPy value as a clean numeric string."""
     if val.is_number:
@@ -91,6 +103,8 @@ def _format_number(val) -> str:
 # Single equation (existing)
 # ---------------------------------------------------------------------------
 
+# Takes (input_str, target_var). Parses and solves a single equation.
+# Returns the solution(s) as "var = value" string.
 def _solve_single_equation(input_str: str, target_var: Optional[str] = None) -> str:
     """Solve a single equation for one variable (defaults to x)."""
     if "=" not in input_str:
@@ -137,6 +151,8 @@ def _solve_single_equation(input_str: str, target_var: Optional[str] = None) -> 
 # Systems of equations (new)
 # ---------------------------------------------------------------------------
 
+# Takes (input_str). Splits comma-separated equations and solves the system.
+# Returns all variable solutions or an error message.
 def _solve_system(input_str: str) -> str:
     """Solve a comma-separated system of equations for all variables."""
     equations_str = [eq.strip() for eq in input_str.split(",")]
@@ -204,6 +220,7 @@ def _solve_system(input_str: str) -> str:
 # Matrix operations (new)
 # ---------------------------------------------------------------------------
 
+# Takes (matrix_str). Parses "[[1,2],[3,4]]" into a SymPy Matrix.
 def _parse_matrix(matrix_str: str) -> "Matrix":
     """Parse a string like '[[1,2],[3,4]]' into a SymPy Matrix."""
     matrix_str = matrix_str.strip()
@@ -222,6 +239,7 @@ def _parse_matrix(matrix_str: str) -> "Matrix":
         raise ValueError(f"Cannot parse matrix: '{matrix_str}'. Use format: [[1,2],[3,4]]")
 
 
+# Takes (m). Formats a SymPy Matrix as a readable nested-bracket string.
 def _format_matrix(m: "Matrix") -> str:
     """Format a SymPy Matrix as a readable nested-bracket string."""
     rows = m.tolist()
@@ -235,6 +253,8 @@ def _format_matrix(m: "Matrix") -> str:
     return "[" + ", ".join(formatted_rows) + "]"
 
 
+# Takes (op, input_str). Dispatches matrix ops: multiply, inverse, det, etc.
+# Returns the formatted result or an error message.
 def _handle_matrix_operation(op: str, input_str: str) -> str:
     """Dispatch matrix operations (multiply, inverse, det, eigenvalues, etc.)."""
     try:
@@ -295,6 +315,8 @@ def _handle_matrix_operation(op: str, input_str: str) -> str:
 # Symbolic algebra (new)
 # ---------------------------------------------------------------------------
 
+# Takes (op, input_str). Runs simplify/expand/factor/derivative/integrate.
+# Returns the symbolic result string.
 def _handle_symbolic(op: str, input_str: str) -> str:
     """Handle symbolic algebra (simplify, expand, factor, derivative, integrate)."""
     try:
@@ -349,6 +371,7 @@ def _handle_symbolic(op: str, input_str: str) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+# Returns help text listing all supported operations and examples.
 def _get_help() -> str:
     """Return help text."""
     return """Equation Solver & Symbolic Math Help:
@@ -408,6 +431,8 @@ class EquationSolverTool(BaseTool):
     )
     args_schema: Type[BaseModel] = EquationSolverInput
 
+    # Takes (operation, expression). Routes to the appropriate solver.
+    # Returns the solution string or error.
     def _run(self, operation: str = "solve", expression: str = "") -> str:
         if not SYMPY_AVAILABLE:
             return "Error: SymPy library is not installed. Run: pip install sympy"
@@ -452,6 +477,8 @@ class EquationSolverTool(BaseTool):
 
 equation_solver_tool = EquationSolverTool()
 
+# Takes (input_str). Detects operation from prefix and delegates to the tool.
+# Returns the solver result. Used by tests and CLI.
 def solve_equation(input_str: str) -> str:
     """Parse a string with optional prefix and solve. Used by tests and CLI."""
     if not input_str or not input_str.strip():

@@ -11,11 +11,18 @@ from src.constants import (
     ARTICLE_BODY_MAX_CHARS,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Searches recent news articles via the DuckDuckGo News API.
+# Supports time-range filtering (day/week/month) and region scoping.
+# ───────────────────────────────────────────────────────────────────
+
 
 # Configuration
 DEFAULT_TIMELIMIT = "w"  # Past week
 
 
+# Takes a query string, result count, time limit, and optional region.
+# Returns a list of raw article dicts from DuckDuckGo News.
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
                             timelimit: str = DEFAULT_TIMELIMIT, region: str = None):
@@ -40,6 +47,9 @@ async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
     return results
 
 
+# Tool entry point. Parses input options, runs the news search, and formats
+# results with title, source, date, body snippet, and URL.
+# Returns a formatted multi-article string or an error/empty message.
 @safe_tool_call("searching news")
 async def news_search(query: str) -> str:
     """Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, magazines, and news sites — with publication dates and source names.

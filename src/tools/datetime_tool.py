@@ -5,6 +5,11 @@ from datetime import datetime, timedelta, timezone
 from langchain_core.tools import tool
 from src.utils import safe_tool_call
 
+# ─── Module overview ───────────────────────────────────────────────
+# Date/time operations: arithmetic, timezone conversion, business-day
+# counting, and date info lookups. All input is JSON-based.
+# ───────────────────────────────────────────────────────────────────
+
 # Common timezone offsets (no pytz dependency needed)
 TIMEZONE_OFFSETS = {
     "UTC": 0, "GMT": 0,
@@ -19,6 +24,8 @@ TIMEZONE_OFFSETS = {
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
+# Takes (date_str). Tries several common date formats.
+# Returns a datetime or raises ValueError.
 def _parse_date(date_str: str) -> datetime:
     """Parse a date string in common formats (YYYY-MM-DD, MM/DD/YYYY, etc.)."""
     formats = [
@@ -35,6 +42,8 @@ def _parse_date(date_str: str) -> datetime:
     raise ValueError(f"Could not parse date: '{date_str}'. Use YYYY-MM-DD format.")
 
 
+# Takes (name). Maps a timezone abbreviation to a fixed UTC offset.
+# Returns a timezone object or raises ValueError.
 def _get_tz(name: str) -> timezone:
     """Get a fixed-offset timezone by abbreviation."""
     name = name.upper().strip()
@@ -46,6 +55,8 @@ def _get_tz(name: str) -> timezone:
     return timezone(timedelta(hours=offset_hours))
 
 
+# Takes (dt, months). Adds months to a date, clamping to month-end.
+# Returns the adjusted datetime.
 def _add_months(dt: datetime, months: int) -> datetime:
     """Add months to a date, clamping day to month-end when needed."""
     import calendar
@@ -56,6 +67,8 @@ def _add_months(dt: datetime, months: int) -> datetime:
     return dt.replace(year=year, month=month, day=day)
 
 
+# Takes (start, end). Counts weekdays between two dates, excluding endpoints.
+# Returns the integer count of business days.
 def _business_days_between(start: datetime, end: datetime) -> int:
     """Count business days (Mon-Fri) between two dates, excluding endpoints."""
     if start > end:
@@ -69,6 +82,8 @@ def _business_days_between(start: datetime, end: datetime) -> int:
     return count
 
 
+# Takes (start, days). Skips weekends while adding days.
+# Returns the resulting datetime.
 def _add_business_days(start: datetime, days: int) -> datetime:
     """Add N business days to a date."""
     current = start
@@ -82,6 +97,8 @@ def _add_business_days(start: datetime, days: int) -> datetime:
     return current
 
 
+# Takes (query) as JSON. Dispatches to now/add/diff/convert/info/business_days.
+# Returns a formatted date/time result string.
 @safe_tool_call("calculating date/time")
 async def datetime_calculator(query: str) -> str:
     """Perform date/time calculations: arithmetic, timezone conversion, business days, and date info. All input is JSON.

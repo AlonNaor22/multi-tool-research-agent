@@ -7,6 +7,12 @@ defaults, specialist names, event types, research modes, and step statuses.
 
 from typing import Literal
 
+# ─── Module overview ───────────────────────────────────────────────
+# Central registry of every shared constant: HTTP defaults, timeouts,
+# content-size limits, API URLs, specialist names, streaming event
+# types, research modes, and step/specialist statuses.
+# ───────────────────────────────────────────────────────────────────
+
 # ---------------------------------------------------------------------------
 # HTTP headers — used by tools that make direct HTTP requests
 # (youtube, google_scholar, pdf, url, etc.)

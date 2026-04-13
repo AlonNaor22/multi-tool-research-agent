@@ -20,10 +20,17 @@ from src.constants import (
     SNIPPET_MAX_CHARS,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Searches published academic papers via the Semantic Scholar API.
+# Supports year-range filtering, citation counts, and result caching.
+# ───────────────────────────────────────────────────────────────────
+
 # Fields to request from the Semantic Scholar API
 _PAPER_FIELDS = "title,authors,year,citationCount,abstract,url,externalIds,publicationTypes"
 
 
+# Takes (query, max_results, year_from, year_to). Queries Semantic Scholar API.
+# Returns a list of paper dicts with title, authors, year, citations, abstract, url.
 @cached_tool("scholar")
 @async_retry_on_error(max_retries=2, delay=2.0)
 async def search_semantic_scholar(
@@ -84,6 +91,8 @@ async def search_semantic_scholar(
     return results
 
 
+# Takes (results, query). Formats paper dicts into a numbered display string.
+# Returns the formatted text with titles, authors, years, citations, and abstracts.
 def format_results(results: List[Dict], query: str) -> str:
     """Format a list of paper dicts into a display string."""
     if not results:
@@ -114,6 +123,8 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+# Takes (input_str). Parses year filters and options, then searches Semantic Scholar.
+# Returns formatted academic paper results.
 @safe_tool_call("searching academic papers")
 async def google_scholar(input_str: str) -> str:
     """Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. Covers journals, conferences, and theses — with citation counts.
@@ -174,6 +185,7 @@ RULE: Need PUBLISHED papers with citations? -> google_scholar. Need the NEWEST p
     return format_results(results, query)
 
 
+# Returns help text listing supported formats, options, and examples.
 def _get_help() -> str:
     """Return help text for the scholar search tool."""
     return """Academic Paper Search Help (powered by Semantic Scholar):

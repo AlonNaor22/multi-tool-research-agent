@@ -25,7 +25,14 @@ except ImportError:
             PdfReader = None
             PDF_LIBRARY = None
 
+# ─── Module overview ───────────────────────────────────────────────
+# Fetches PDFs from URLs and extracts text using pdfplumber (or pypdf
+# as fallback). Supports page-limited reads and summary mode.
+# ───────────────────────────────────────────────────────────────────
 
+
+# Takes a URL and timeout. Downloads the PDF bytes via async HTTP.
+# Returns raw PDF bytes; raises if the response is not a valid PDF.
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def fetch_pdf(url: str, timeout: int = 30) -> bytes:
     """Fetch PDF content from a URL as bytes."""
@@ -42,6 +49,8 @@ async def fetch_pdf(url: str, timeout: int = 30) -> bytes:
     return content_bytes
 
 
+# Takes PDF bytes and optional page limit. Delegates to pdfplumber or pypdf.
+# Returns the extracted text with page separators and metadata.
 def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
     """Extract text from PDF content using the best available library."""
     if PDF_LIBRARY == "pdfplumber":
@@ -52,6 +61,7 @@ def extract_text_from_pdf(pdf_content: bytes, max_pages: Optional[int] = None) -
         return "Error: No PDF library installed. Install pdfplumber (pip install pdfplumber) or pypdf (pip install pypdf)."
 
 
+# Extracts text via pdfplumber; handles complex layouts and metadata.
 def _extract_with_pdfplumber(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
     """Extract text using pdfplumber (better for complex layouts)."""
     try:
@@ -92,6 +102,7 @@ def _extract_with_pdfplumber(pdf_content: bytes, max_pages: Optional[int] = None
         return f"Error extracting text from PDF: {str(e)}"
 
 
+# Fallback extractor using pypdf/PyPDF2 when pdfplumber is unavailable.
 def _extract_with_pypdf(pdf_content: bytes, max_pages: Optional[int] = None) -> str:
     """Extract text using pypdf (fallback)."""
     try:
@@ -132,6 +143,8 @@ def _extract_with_pypdf(pdf_content: bytes, max_pages: Optional[int] = None) -> 
         return f"Error extracting text from PDF: {str(e)}"
 
 
+# Takes raw extracted text. Collapses whitespace, strips control chars,
+# and truncates to max_length. Returns the cleaned string.
 def clean_text(text: str, max_length: int = 15000) -> str:
     """Clean and truncate extracted text."""
     text = re.sub(r'\n{3,}', '\n\n', text)
@@ -144,6 +157,8 @@ def clean_text(text: str, max_length: int = 15000) -> str:
     return text.strip()
 
 
+# Tool entry point. Parses URL and options (page limit, summary mode),
+# fetches the PDF, extracts and cleans text. Returns formatted content.
 @safe_tool_call("reading PDF")
 async def pdf_reader(input_str: str) -> str:
     """Specialized PDF reader using pdfplumber — handles complex layouts, multi-column papers, and tables better than fetch_url. Use for academic papers and detailed reports.

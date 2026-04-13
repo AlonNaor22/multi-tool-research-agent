@@ -1,5 +1,11 @@
 """Per-session token budget enforcer."""
 
+# ─── Module overview ───────────────────────────────────────────────
+# Enforces a per-session token budget to prevent runaway API costs.
+# RateLimiter tracks tokens spent and raises RateLimitExceeded when
+# the budget is exhausted.
+# ───────────────────────────────────────────────────────────────────
+
 
 class RateLimitExceeded(Exception):
     """Raised when a query would exceed the token budget."""
@@ -21,14 +27,17 @@ class RateLimiter:
         self.budget: int = 100_000
         self.tokens_spent: int = 0
 
+    # Takes (enabled, budget). Updates the limiter's on/off state and max token count.
     def set_config(self, enabled: bool, budget: int) -> None:
         self.enabled = enabled
         self.budget = max(0, budget)
 
+    # Raises RateLimitExceeded if spending has reached or exceeded the budget.
     def check_budget(self) -> None:
         if self.enabled and self.tokens_spent >= self.budget:
             raise RateLimitExceeded(self.tokens_spent, self.budget)
 
+    # Takes (tokens). Adds the count to tokens_spent.
     def record_tokens(self, tokens: int) -> None:
         self.tokens_spent += tokens
 

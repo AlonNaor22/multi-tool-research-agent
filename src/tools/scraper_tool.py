@@ -5,7 +5,13 @@ from langchain_core.tools import tool
 from src.utils import async_retry_on_error, async_fetch, parse_tool_input, safe_tool_call, require_input
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT, DEFAULT_MAX_CONTENT_CHARS
 
+# ─── Module overview ───────────────────────────────────────────────
+# Scrapes web pages and extracts structured data: tables (as markdown),
+# lists, links, and heading outlines. Supports CSS selectors for targeting
+# specific page regions.
+# ───────────────────────────────────────────────────────────────────
 
+# Fetches raw HTML from a URL with retry logic.
 @async_retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
 async def _fetch_html(url: str) -> str:
     """Fetch raw HTML from a URL."""
@@ -17,6 +23,8 @@ async def _fetch_html(url: str) -> str:
     )
 
 
+# Takes (soup, max_tables). Finds <table> elements and converts rows/cells to markdown.
+# Returns a markdown string with up to max_tables tables.
 def _extract_tables(soup: BeautifulSoup, max_tables: int = 5) -> str:
     """Extract tables as markdown."""
     tables = soup.find_all("table")
@@ -53,6 +61,8 @@ def _extract_tables(soup: BeautifulSoup, max_tables: int = 5) -> str:
     return "\n\n".join(results)
 
 
+# Takes (soup, max_lists). Extracts <ul> and <ol> elements as formatted text.
+# Returns numbered or bulleted list items.
 def _extract_lists(soup: BeautifulSoup, max_lists: int = 5) -> str:
     """Extract ordered and unordered lists."""
     all_lists = soup.find_all(["ul", "ol"])
@@ -78,6 +88,8 @@ def _extract_lists(soup: BeautifulSoup, max_lists: int = 5) -> str:
     return "\n\n".join(results)
 
 
+# Takes (soup, max_links). Collects unique <a> elements with text and href.
+# Returns markdown-formatted link list, skipping anchors and javascript: hrefs.
 def _extract_links(soup: BeautifulSoup, max_links: int = 20) -> str:
     """Extract links with text and URLs."""
     links = soup.find_all("a", href=True)
@@ -101,6 +113,8 @@ def _extract_links(soup: BeautifulSoup, max_links: int = 20) -> str:
     return "**Links:**\n" + "\n".join(results) if results else ""
 
 
+# Takes (soup). Builds an indented outline from h1-h4 headings.
+# Returns the page structure as a tree of heading text.
 def _extract_headings(soup: BeautifulSoup) -> str:
     """Extract page structure from headings."""
     headings = soup.find_all(["h1", "h2", "h3", "h4"])
@@ -117,6 +131,9 @@ def _extract_headings(soup: BeautifulSoup) -> str:
     return "**Page Structure:**\n" + "\n".join(lines)
 
 
+# Takes a URL (or JSON with url/extract/selector). Fetches HTML, strips noise,
+# extracts selected structured data types, and returns formatted markdown.
+# Returns combined headings, tables, lists, and links as a single string.
 @safe_tool_call("scraping webpage")
 async def web_scraper(query: str) -> str:
     """Extract structured data from web pages — tables, lists, links, and headings. Use this instead of fetch_url when you need organized data, not raw text.

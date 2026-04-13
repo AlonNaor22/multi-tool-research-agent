@@ -8,12 +8,17 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 from src.utils import async_retry_on_error, parse_tool_input, get_aiohttp_session, safe_tool_call
 
+# ─── Module overview ───────────────────────────────────────────────
+# Fetches current weather and multi-day forecasts from the
+# OpenWeatherMap API. Supports city names and lat/lon coordinates.
+# ───────────────────────────────────────────────────────────────────
 
 # API endpoints
 CURRENT_WEATHER_URL = "http://api.openweathermap.org/data/2.5/weather"
 FORECAST_URL = "http://api.openweathermap.org/data/2.5/forecast"
 
 
+# Formats an OpenWeatherMap current-weather response into a readable string.
 def _format_current_weather(data: dict, units: str) -> str:
     """Format current weather API response into a readable string."""
     temp_unit = "\u00b0C" if units == "metric" else "\u00b0F"
@@ -51,6 +56,7 @@ def _is_closer_to_noon(candidate_hour: int, current_best_hour: int) -> bool:
     return abs(candidate_hour - 12) < abs(current_best_hour - 12)
 
 
+# Picks the closest-to-noon entry per day and formats a multi-day summary.
 def _format_forecast(data: dict, units: str, days: int = 3) -> str:
     """Format forecast API response into a readable multi-day summary."""
     temp_unit = "\u00b0C" if units == "metric" else "\u00b0F"
@@ -91,6 +97,8 @@ def _format_forecast(data: dict, units: str, days: int = 3) -> str:
     return "\n".join(result_parts)
 
 
+# Takes location (city or lat/lon), units, and forecast flag.
+# Calls the OpenWeatherMap API and returns formatted weather data.
 @safe_tool_call("getting weather")
 @async_retry_on_error(
     max_retries=2,
@@ -175,6 +183,7 @@ class WeatherTool(BaseTool):
     )
     args_schema: Type[BaseModel] = WeatherInput
 
+    # Delegates to the core _get_weather async function with all parameters.
     async def _arun(self, location: str = "", lat: float = None, lon: float = None,
                     units: str = "metric", forecast: bool = False, days: int = 3) -> str:
         return await _get_weather(location, lat, lon, units, forecast, days)
@@ -187,6 +196,7 @@ class WeatherTool(BaseTool):
 weather_tool = WeatherTool()
 
 
+# Parses a location string or JSON and fetches weather. Used by tests and CLI.
 async def get_weather(query: str) -> str:
     """Parse a location string/JSON and fetch weather. Used by tests and CLI."""
     location_str, opts = parse_tool_input(query, {

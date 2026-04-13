@@ -11,6 +11,12 @@ from src.constants import (
     DEFAULT_HTTP_TIMEOUT,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Queries structured entity facts from Wikidata via SPARQL.
+# Supports entity lookup, search, and raw SPARQL queries.
+# ───────────────────────────────────────────────────────────────────
+
+# Sends a SPARQL query to the Wikidata endpoint and returns parsed bindings.
 @async_retry_on_error(max_retries=2, delay=2.0)
 async def _run_sparql(sparql_query: str) -> List[Dict]:
     """Execute a SPARQL query against Wikidata and return results."""
@@ -38,6 +44,7 @@ async def _run_sparql(sparql_query: str) -> List[Dict]:
     return results
 
 
+# Builds a SPARQL query that finds an entity by exact name and returns its properties.
 def _entity_lookup_sparql(entity_name: str, limit: int = 10) -> str:
     """Build a SPARQL query that finds an entity and returns key facts."""
     return f"""
@@ -53,6 +60,7 @@ LIMIT {limit}
 """
 
 
+# Builds a SPARQL query that fuzzy-searches for entities by partial name.
 def _search_entities_sparql(search_term: str, limit: int = 5) -> str:
     """Build a SPARQL query that searches for entities by partial name match."""
     return f"""
@@ -70,6 +78,7 @@ LIMIT {limit}
 """
 
 
+# Formats SPARQL property/value rows into a human-readable fact list.
 def format_entity_facts(results: List[Dict], entity: str) -> str:
     """Format entity facts from SPARQL results."""
     if not results:
@@ -101,6 +110,7 @@ def format_entity_facts(results: List[Dict], entity: str) -> str:
     return "\n".join(lines)
 
 
+# Formats entity search results with label, description, and Wikidata URL.
 def format_search_results(results: List[Dict], query: str) -> str:
     """Format entity search results."""
     if not results:
@@ -122,6 +132,8 @@ def format_search_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+# Takes an entity name, "search: term", or "sparql: query" string.
+# Routes to the appropriate SPARQL query mode and returns formatted results.
 @safe_tool_call("querying Wikidata")
 async def wikidata(input_str: str) -> str:
     """Look up STRUCTURED ENTITY FACTS from Wikidata — the database behind Wikipedia. Use when you need a specific property of a known entity (country, person, city, etc.).
@@ -150,6 +162,7 @@ RULE: Need a FACT about an ENTITY? -> Wikidata. Need an EXPLANATION? -> Wikipedi
     return await _wikidata_cached_fetch(input_str.strip())
 
 
+# Cached inner function that dispatches SPARQL, search, or entity lookups.
 @cached_tool("wikidata")
 async def _wikidata_cached_fetch(input_str: str) -> str:
     """Inner cacheable function for wikidata_query."""

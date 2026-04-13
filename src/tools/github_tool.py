@@ -10,9 +10,16 @@ from src.constants import (
     MAX_SEARCH_RESULTS, GITHUB_DESC_MAX_CHARS,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Searches GitHub via the public REST API for repositories, code,
+# issues, or users. Supports sorting and result-count limits.
+# ───────────────────────────────────────────────────────────────────
+
 GITHUB_API_BASE = "https://api.github.com"
 
 
+# Takes (endpoint, params). Calls the GitHub REST API with retry logic.
+# Returns the parsed JSON response dict.
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def _github_api_request(endpoint: str, params: dict) -> dict:
     """Make a request to the GitHub REST API and return the JSON response."""
@@ -31,6 +38,8 @@ async def _github_api_request(endpoint: str, params: dict) -> dict:
         raise
 
 
+# Takes a query string (plain text or JSON with options). Searches GitHub.
+# Returns formatted results for repos, code, issues, or users.
 @safe_tool_call("searching GitHub")
 async def github_search(query: str) -> str:
     """Search GitHub for repositories, code, issues, or users. Use for finding open-source projects, code examples, libraries, and developer tools.

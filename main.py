@@ -17,7 +17,16 @@ from src.tool_health import format_health_status
 from src.observability import MetricsStore
 from src.utils import close_aiohttp_session
 
+# ─── Module overview ───────────────────────────────────────────────
+# CLI entry point.  Parses --plan / --multi-agent flags, boots the
+# agent, and runs an interactive REPL with session save/load,
+# memory clear, stats display, and clean math output for terminals.
+# ───────────────────────────────────────────────────────────────────
 
+
+# Takes raw agent text. Replaces MATH_STRUCTURED: JSON and HTML math
+# blocks with plain-text fallbacks safe for terminal display.
+# Returns cleaned string.
 def _clean_math_output(text: str) -> str:
     """Clean math output for CLI display.
 
@@ -79,6 +88,8 @@ def _clean_math_output(text: str) -> str:
     return "".join(result_parts)
 
 
+# Parses CLI flags (--plan, --multi-agent).
+# Returns argparse.Namespace with boolean flags.
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -106,6 +117,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Takes (plan_mode, multi_agent_mode). Prints the CLI welcome banner
+# with available commands and the active execution mode.
 def print_banner(plan_mode: bool = False, multi_agent_mode: bool = False):
     """Print the application banner."""
     print("\n" + "=" * 60)
@@ -127,6 +140,8 @@ def print_banner(plan_mode: bool = False, multi_agent_mode: bool = False):
     print()
 
 
+# Main async REPL loop.  Initialises the agent, checks API keys,
+# then dispatches each query via direct / plan / multi-agent mode.
 async def main():
     """Main async CLI loop."""
     args = parse_args()

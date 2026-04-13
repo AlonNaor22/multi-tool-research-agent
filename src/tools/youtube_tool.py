@@ -9,6 +9,11 @@ from src.utils import (
 )
 from src.constants import DEFAULT_SEARCH_TIMEOUT, DESCRIPTION_MAX_CHARS
 
+# ─── Module overview ───────────────────────────────────────────────
+# Searches YouTube for videos using yt-dlp. Returns titles,
+# channels, durations, view counts, and description snippets.
+# ───────────────────────────────────────────────────────────────────
+
 def _format_duration(seconds) -> str:
     """Convert seconds to H:MM:SS or MM:SS string."""
     if not seconds:
@@ -34,6 +39,8 @@ def _format_views(count) -> str:
         return "Unknown views"
 
 
+# Takes (query, max_results). Runs yt-dlp ytsearch in a thread with timeout.
+# Returns a list of video metadata dicts (title, url, channel, views, etc.).
 @cached_tool("youtube")
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def async_search_youtube_ytdlp(query: str, max_results: int = 5) -> List[Dict]:
@@ -78,6 +85,7 @@ async def async_search_youtube_ytdlp(query: str, max_results: int = 5) -> List[D
     return results
 
 
+# Formats a list of video dicts into a numbered, human-readable string.
 def format_results(results: List[Dict], query: str) -> str:
     """Format YouTube video search results into a readable multi-line string."""
     if not results:
@@ -99,6 +107,8 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+# Takes a search query string (with optional "N results:" prefix).
+# Searches YouTube and returns formatted video listings.
 @safe_tool_call("searching YouTube")
 async def youtube_search(input_str: str) -> str:
     """Search YouTube for videos on any topic.

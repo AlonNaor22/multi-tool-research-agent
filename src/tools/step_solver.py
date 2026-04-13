@@ -39,11 +39,19 @@ from src.tools.equation_solver_tool import (
     _parse_matrix, _format_matrix, _format_number,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Generates pedagogical step-by-step breakdowns for arithmetic, calculus,
+# equation solving, and matrix operations using SymPy. Returns formatted
+# multi-line strings or structured dicts with LaTeX for rich rendering.
+# ───────────────────────────────────────────────────────────────────
+
 
 # ============================================================================
 # OPERATION DETECTION
 # ============================================================================
 
+# Takes (input_str). Classifies the math expression into an operation type
+# (e.g. derivative, integral, matrix_det). Returns (operation_type, cleaned_input).
 def detect_operation(input_str: str) -> Tuple[str, str]:
     """Classify input into an operation type.
 
@@ -116,6 +124,7 @@ def detect_operation(input_str: str) -> Tuple[str, str]:
     return ("simple", s)
 
 
+# Checks if an expression has 3+ operators or nested parentheses (depth >= 2).
 def _is_complex_arithmetic(expr: str) -> bool:
     """Check if an expression is complex enough to warrant step-by-step."""
     # Count binary operators (excluding unary minus at start or after open paren)
@@ -146,6 +155,8 @@ def _is_complex_arithmetic(expr: str) -> bool:
 class StepByStepSolver:
     """Generates step-by-step math solutions for students."""
 
+    # Takes (operation, expr). Dispatches to the appropriate step-by-step method.
+    # Returns a formatted multi-line solution string.
     def solve(self, operation: str, expr: str) -> str:
         """Main dispatcher — returns a formatted step-by-step solution string."""
         if not SYMPY_AVAILABLE and operation not in ("complex_arithmetic",):
@@ -180,6 +191,7 @@ class StepByStepSolver:
     # Complex arithmetic
     # ------------------------------------------------------------------
 
+    # Parses expr as an AST and evaluates step by step, recording each operation.
     def _arithmetic_steps(self, expr: str) -> str:
         """Show order-of-operations steps for complex arithmetic."""
         lines = [f"Step-by-step solution for: {expr}", ""]
@@ -204,6 +216,7 @@ class StepByStepSolver:
         lines.append(f"Result: {final}")
         return "\n".join(lines)
 
+    # Recursively walks an AST node, appending (description, value) to steps.
     def _eval_ast_steps(self, node, steps: list) -> float:
         """Recursively evaluate an AST node, recording steps."""
         if isinstance(node, ast.Constant):
@@ -307,6 +320,7 @@ class StepByStepSolver:
     # Derivatives
     # ------------------------------------------------------------------
 
+    # Differentiates term by term, identifying rules (power, trig, chain).
     def _derivative_steps(self, expr_str: str) -> str:
         """Show step-by-step differentiation."""
         preprocessed = _preprocess_equation(expr_str)
@@ -366,6 +380,7 @@ class StepByStepSolver:
         lines.append(f"Result: d/d{var_name}({expr}) = {simplified}")
         return "\n".join(lines)
 
+    # Returns a human-readable differentiation rule name for the given term.
     def _identify_rule(self, term, var) -> str:
         """Identify which differentiation rule applies to a term."""
         var_sym = var if isinstance(var, Symbol) else symbols(str(var))
@@ -404,6 +419,7 @@ class StepByStepSolver:
     # Integrals
     # ------------------------------------------------------------------
 
+    # Integrates term by term, with optional bounds evaluation for definite integrals.
     def _integral_steps(self, expr_str: str) -> str:
         """Show step-by-step integration."""
         # Parse bounds if present: "x^2 from 0 to 5" or "x^2 dx from 0 to 5"
@@ -490,6 +506,7 @@ class StepByStepSolver:
 
         return "\n".join(lines)
 
+    # Returns a human-readable integration rule name for the given term.
     def _identify_integral_rule(self, term, var) -> str:
         """Identify which integration rule applies."""
         var_sym = var if isinstance(var, Symbol) else symbols(str(var))
@@ -524,6 +541,7 @@ class StepByStepSolver:
     # Equation solving
     # ------------------------------------------------------------------
 
+    # Solves linear/quadratic/general equations, showing rearrangement and factoring steps.
     def _solve_equation_steps(self, expr_str: str) -> str:
         """Show step-by-step equation solving."""
         if "=" not in expr_str:
@@ -657,6 +675,7 @@ class StepByStepSolver:
     # Matrix operations
     # ------------------------------------------------------------------
 
+    # Computes determinant with cofactor expansion steps for 1x1 through 3x3 matrices.
     def _matrix_determinant_steps(self, matrix_str: str) -> str:
         """Show step-by-step determinant calculation."""
         m = _parse_matrix(matrix_str)
@@ -740,6 +759,7 @@ class StepByStepSolver:
 
         return "\n".join(lines)
 
+    # Shows dot-product calculations for each element of the result matrix.
     def _matrix_multiply_steps(self, expr_str: str) -> str:
         """Show step-by-step matrix multiplication."""
         parts = re.split(r'\]\]\s*\*\s*\[\[', expr_str)
@@ -795,6 +815,7 @@ class StepByStepSolver:
         lines.append(f"Result: {_format_matrix(result_matrix)}")
         return "\n".join(lines)
 
+    # Computes inverse via determinant check and adjugate method with steps.
     def _matrix_inverse_steps(self, matrix_str: str) -> str:
         """Show step-by-step matrix inversion."""
         m = _parse_matrix(matrix_str)
@@ -849,6 +870,7 @@ class StepByStepSolver:
 
         return "\n".join(lines)
 
+    # Shows row-to-column swap for each element of the matrix.
     def _matrix_transpose_steps(self, matrix_str: str) -> str:
         """Show step-by-step matrix transposition."""
         m = _parse_matrix(matrix_str)
@@ -871,6 +893,7 @@ class StepByStepSolver:
         lines.append(f"Result: {_format_matrix(result)}")
         return "\n".join(lines)
 
+    # Shows element-wise addition for two same-dimension matrices.
     def _matrix_add_steps(self, expr_str: str) -> str:
         """Show step-by-step matrix addition."""
         parts = re.split(r'\]\]\s*\+\s*\[\[', expr_str)
@@ -922,6 +945,8 @@ class StepByStepSolver:
     # STRUCTURED OUTPUT (for math_formatter HTML rendering)
     # ==================================================================
 
+    # Takes (operation, expr). Like solve() but returns a structured dict with
+    # LaTeX strings, step objects, and matrix data for HTML rendering.
     def solve_structured(self, operation: str, expr: str) -> dict:
         """Return a structured dict with LaTeX for rich rendering.
 
@@ -967,6 +992,7 @@ class StepByStepSolver:
         except Exception as e:
             return {"error": str(e)}
 
+    # Structured output variant of _arithmetic_steps with LaTeX fields.
     def _arithmetic_structured(self, expr: str) -> dict:
         """Structured output for complex arithmetic."""
         try:
@@ -998,6 +1024,7 @@ class StepByStepSolver:
             "error": None,
         }
 
+    # Structured output variant of _derivative_steps with LaTeX fields.
     def _derivative_structured(self, expr_str: str) -> dict:
         """Structured output for differentiation."""
         preprocessed = _preprocess_equation(expr_str)
@@ -1065,6 +1092,7 @@ class StepByStepSolver:
             "error": None,
         }
 
+    # Structured output variant of _integral_steps with LaTeX fields.
     def _integral_structured(self, expr_str: str) -> dict:
         """Structured output for integration."""
         bounds = None
@@ -1159,6 +1187,7 @@ class StepByStepSolver:
                 "error": None,
             }
 
+    # Structured output variant of _solve_equation_steps with LaTeX fields.
     def _solve_equation_structured(self, expr_str: str) -> dict:
         """Structured output for equation solving."""
         if "=" not in expr_str:
@@ -1258,6 +1287,7 @@ class StepByStepSolver:
             "error": None,
         }
 
+    # Structured output variant of _matrix_determinant_steps with LaTeX fields.
     def _matrix_det_structured(self, matrix_str: str) -> dict:
         """Structured output for determinant."""
         m = _parse_matrix(matrix_str)
@@ -1312,6 +1342,7 @@ class StepByStepSolver:
             "error": None,
         }
 
+    # Structured output variant of _matrix_multiply_steps with LaTeX fields.
     def _matrix_mul_structured(self, expr_str: str) -> dict:
         """Structured output for matrix multiplication."""
         parts = re.split(r'\]\]\s*\*\s*\[\[', expr_str)
@@ -1358,6 +1389,7 @@ class StepByStepSolver:
             "error": None,
         }
 
+    # Structured output variant of _matrix_inverse_steps with LaTeX fields.
     def _matrix_inv_structured(self, matrix_str: str) -> dict:
         """Structured output for matrix inverse."""
         m = _parse_matrix(matrix_str)
@@ -1414,6 +1446,7 @@ class StepByStepSolver:
             "has_function": False, "expression_str": None, "error": None,
         }
 
+    # Structured output variant of _matrix_transpose_steps with LaTeX fields.
     def _matrix_trans_structured(self, matrix_str: str) -> dict:
         """Structured output for transpose."""
         m = _parse_matrix(matrix_str)
@@ -1434,6 +1467,7 @@ class StepByStepSolver:
             "has_function": False, "expression_str": None, "error": None,
         }
 
+    # Structured output variant of _matrix_add_steps with LaTeX fields.
     def _matrix_add_structured(self, expr_str: str) -> dict:
         """Structured output for matrix addition."""
         parts = re.split(r'\]\]\s*\+\s*\[\[', expr_str)

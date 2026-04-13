@@ -4,11 +4,19 @@ import json
 from typing import Optional
 from langchain_core.tools import tool
 
+# ─── Module overview ───────────────────────────────────────────────
+# Renders MATH_STRUCTURED JSON payloads (from the calculator tool)
+# into Streamlit-compatible KaTeX markdown with LaTeX equations,
+# step-by-step solutions, and matrix tables.
+# ───────────────────────────────────────────────────────────────────
+
 
 # ---------------------------------------------------------------------------
 # Markdown generation helpers
 # ---------------------------------------------------------------------------
 
+# Takes a 2D list and optional caption. Renders a centered markdown table.
+# Returns the table as a multi-line string.
 def _matrix_to_markdown(data: list, caption: Optional[str] = None) -> str:
     """Render a 2D list as a centered markdown table."""
     if not data:
@@ -37,6 +45,7 @@ def _fmt_num(v) -> str:
     return str(v)
 
 
+# Wraps a LaTeX expression in inline KaTeX delimiters ($...$).
 def _latex_inline(expr: str) -> str:
     """Wrap expr in KaTeX inline delimiters ($...$)."""
     if not expr:
@@ -44,6 +53,7 @@ def _latex_inline(expr: str) -> str:
     return f"${expr}$"
 
 
+# Wraps a LaTeX expression in block KaTeX delimiters ($$...$$).
 def _latex_block(expr: str) -> str:
     """Wrap expr in KaTeX block delimiters ($$...$$)."""
     if not expr:
@@ -55,6 +65,8 @@ def _latex_block(expr: str) -> str:
 # Main formatter
 # ---------------------------------------------------------------------------
 
+# Takes a MATH_STRUCTURED JSON string. Assembles title, steps, matrices, and result
+# into a single KaTeX markdown document. Returns the formatted string.
 def format_math(input_str: str) -> str:
     """Convert a MATH_STRUCTURED JSON string into Streamlit-compatible KaTeX markdown."""
     # Strip the prefix if present
@@ -124,6 +136,8 @@ def format_math(input_str: str) -> str:
     return "\n".join(lines)
 
 
+# Tool entry point. Takes raw calculator output (MATH_STRUCTURED: prefix + JSON).
+# Returns formatted KaTeX markdown ready for Streamlit display.
 async def math_formatter(input_str: str) -> str:
     """Format mathematical results with properly rendered equations and matrices.
 

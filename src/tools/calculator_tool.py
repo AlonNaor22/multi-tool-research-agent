@@ -9,6 +9,11 @@ from pydantic import BaseModel, Field
 
 from src.tools.step_solver import detect_operation, StepByStepSolver
 
+# ─── Module overview ───────────────────────────────────────────────
+# Safe math evaluation with variable storage, step-by-step solutions,
+# and support for calculus, matrix ops, and symbolic expressions.
+# ───────────────────────────────────────────────────────────────────
+
 # Global step solver instance
 _step_solver = StepByStepSolver()
 
@@ -75,6 +80,8 @@ class AdvancedCalculator:
         """Initialize with empty variable storage."""
         self.variables: Dict[str, float] = {}
 
+    # Takes (name, value). Validates and stores a named variable.
+    # Returns a confirmation string or error message.
     def set_variable(self, name: str, value: float) -> str:
         """Store a named variable for later use in expressions."""
         # Validate variable name (alphanumeric, starts with letter)
@@ -106,6 +113,8 @@ class AdvancedCalculator:
         self.variables.clear()
         return "All variables cleared."
 
+    # Takes (expression). Evaluates it in a restricted namespace with no builtins.
+    # Returns the float result or raises on forbidden/invalid input.
     def safe_eval(self, expression: str) -> float:
         """Evaluate a math expression in a restricted namespace (no builtins)."""
         # Build the safe namespace
@@ -142,6 +151,8 @@ class AdvancedCalculator:
 
         return float(result)
 
+    # Takes (input_str). Routes to variable ops, step-by-step solver, or safe_eval.
+    # Returns the computed result string or a structured JSON for complex ops.
     def calculate(self, input_str: str) -> str:
         """Process a calculation, variable assignment, or step-by-step request."""
         input_str = input_str.strip()
@@ -279,6 +290,8 @@ class CalculatorTool(BaseTool):
     )
     args_schema: Type[BaseModel] = CalculatorInput
 
+    # Takes (expression). Delegates to the global calculator instance.
+    # Returns the calculation result as a string.
     def _run(self, expression: str = "") -> str:
         return _calculator.calculate(expression)
 

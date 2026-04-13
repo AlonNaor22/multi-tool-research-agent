@@ -6,6 +6,10 @@ import asyncio
 from langchain_core.tools import tool
 from src.utils import async_retry_on_error, safe_tool_call, require_input
 
+# ─── Module overview ───────────────────────────────────────────────
+# Translates text between 100+ languages using Google Translate via
+# deep-translator. Supports pipe-delimited and natural language input.
+# ───────────────────────────────────────────────────────────────────
 
 # Common language name -> code mapping for user-friendly input
 LANGUAGE_ALIASES = {
@@ -29,6 +33,7 @@ LANGUAGE_ALIASES = {
 }
 
 
+# Resolves a language name or code to a GoogleTranslator-compatible code.
 def _normalize_language(lang: str) -> str:
     """Convert a language name or code to a GoogleTranslator-compatible code."""
     lang = lang.strip().lower()
@@ -37,6 +42,7 @@ def _normalize_language(lang: str) -> str:
     return LANGUAGE_ALIASES.get(lang, lang)
 
 
+# Runs GoogleTranslator.translate in a thread to avoid blocking the event loop.
 @async_retry_on_error(max_retries=2, delay=1.0)
 async def _async_do_translate(text: str, source: str, target: str) -> str:
     """Perform the translation using deep-translator, offloaded to a thread."""
@@ -49,6 +55,8 @@ async def _async_do_translate(text: str, source: str, target: str) -> str:
     return await asyncio.to_thread(_translate)
 
 
+# Takes a translation request string (pipe-delimited or natural language).
+# Parses source/target languages, translates, and returns the result with labels.
 @safe_tool_call("translating text")
 async def translate(input_str: str) -> str:
     """Translate text between 100+ languages using Google Translate.

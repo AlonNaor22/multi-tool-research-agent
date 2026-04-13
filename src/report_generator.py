@@ -7,7 +7,13 @@ Markdown document that can be saved and shared.
 import os
 from datetime import datetime
 
+# ─── Module overview ───────────────────────────────────────────────
+# Generates and saves Markdown research reports from query/answer
+# pairs. Used by the export feature to persist results to disk.
+# ───────────────────────────────────────────────────────────────────
 
+
+# Takes (query, answer, tools_used). Builds a formatted Markdown report string.
 def generate_report(query: str, answer: str, tools_used: list = None) -> str:
     """
     Generate a formatted Markdown research report.
@@ -70,6 +76,8 @@ The agent autonomously decided which tools to use based on the question.
     return report
 
 
+# Takes (report, filename, output_dir). Writes the Markdown string to a file.
+# Returns the full path of the saved file.
 def save_report(report: str, filename: str = None, output_dir: str = "output") -> str:
     """
     Save a report to a Markdown file.
@@ -105,6 +113,8 @@ def save_report(report: str, filename: str = None, output_dir: str = "output") -
     return filepath
 
 
+# Takes (query, answer, filename). Generates and saves a report in one call.
+# Returns the saved file path.
 def export_research(query: str, answer: str, filename: str = None) -> str:
     """
     Convenience function: Generate and save a research report in one call.

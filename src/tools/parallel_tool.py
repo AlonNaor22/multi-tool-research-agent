@@ -12,6 +12,11 @@ from src.tools.wikipedia_tool import wikipedia
 from src.tools.news_tool import news_search
 from src.tools.arxiv_tool import arxiv_search
 
+# ─── Module overview ───────────────────────────────────────────────
+# Meta-tool that dispatches multiple search queries (web, wikipedia,
+# news, arxiv) concurrently via asyncio.gather and merges results.
+# ───────────────────────────────────────────────────────────────────
+
 
 # Timeout for the entire parallel operation (seconds)
 PARALLEL_TIMEOUT = 60
@@ -26,6 +31,8 @@ TRUNCATION_LIMITS = {
 }
 
 
+# Takes a search type string (web/wikipedia/news/arxiv).
+# Returns the matching async search function, or None if unknown.
 def get_search_function(search_type: str):
     """Return the async search function for a given type, or None."""
     search_functions = {
@@ -37,6 +44,8 @@ def get_search_function(search_type: str):
     return search_functions.get(search_type.lower())
 
 
+# Takes a result string and its search type. Truncates to a type-specific
+# character limit, preferring sentence/line boundaries.
 def truncate_result(result: str, search_type: str) -> str:
     """Truncate a search result to a type-specific character limit."""
     limit = TRUNCATION_LIMITS.get(search_type, TRUNCATION_LIMITS["default"])
@@ -62,6 +71,8 @@ def truncate_result(result: str, search_type: str) -> str:
     return truncated + "..."
 
 
+# Takes a search spec dict with "type" and "query" keys.
+# Returns a dict with type, query, result string, and success boolean.
 async def execute_single_search(search_spec: Dict) -> Dict:
     """Run one search and return a dict with type, query, result, and success."""
     search_type = search_spec.get("type", "web")
@@ -94,6 +105,9 @@ async def execute_single_search(search_spec: Dict) -> Dict:
         }
 
 
+# Tool entry point. Takes a JSON string with a "searches" array.
+# Runs all searches concurrently, truncates each result, and returns
+# a combined summary with per-source status.
 async def parallel_search(input_str: str) -> str:
     """Execute multiple searches in parallel for faster results. Use this when you need to gather information from multiple sources at once.
 

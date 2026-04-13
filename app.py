@@ -31,11 +31,20 @@ from src.constants import (
     STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_DONE,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Streamlit chat UI.  Renders a two-column layout (chat + callback
+# inbox), streams agent output token-by-token, and supports three
+# execution modes: direct, plan-and-execute, and multi-agent.
+# Sidebar exposes API-key config, tool health, metrics, and sessions.
+# ───────────────────────────────────────────────────────────────────
+
 
 # ---------------------------------------------------------------------------
 # Smart content renderer — handles math formatting and chart images
 # ---------------------------------------------------------------------------
 
+# Takes (text, placeholder). Shows streaming text in the placeholder,
+# substituting a clean status line when math content is mid-generation.
 def _stream_display(text: str, placeholder) -> None:
     """Display streaming text, hiding raw math content during token generation.
 
@@ -69,6 +78,9 @@ def _stream_display(text: str, placeholder) -> None:
 
     placeholder.markdown(text + "▌")
 
+# Takes (text, container). Renders final agent output: auto-formats
+# MATH_STRUCTURED JSON, embeds local chart PNGs, and falls back to
+# st.markdown for everything else.
 def _render_agent_content(text: str, container=None):
     """Render agent output with math formatting and chart embedding.
 
@@ -124,6 +136,9 @@ def _render_agent_content(text: str, container=None):
     container.markdown(text)
 
 
+# Takes raw text containing MATH_STRUCTURED: JSON blocks.
+# Replaces each block with formatted HTML/markdown via math_formatter.
+# Returns the cleaned string.
 def _auto_format_math_structured(text: str) -> str:
     """Find raw MATH_STRUCTURED: JSON in text and replace with formatted markdown.
 
@@ -395,6 +410,8 @@ with st.sidebar:
 # Helper — render a single callback inbox event as styled HTML
 # ---------------------------------------------------------------------------
 
+# Takes a ResearchPlan. Builds a compact markdown string with status
+# icons, step descriptions, dependency hints, and finding previews.
 def _render_plan(plan: ResearchPlan) -> str:
     """Render a ResearchPlan as a compact markdown string for Streamlit."""
     STATUS_ICON = {STATUS_PENDING: "⏳", STATUS_IN_PROGRESS: "🔄", STATUS_DONE: "✅"}
@@ -413,6 +430,8 @@ def _render_plan(plan: ResearchPlan) -> str:
     return "\n".join(lines)
 
 
+# Takes an event dict with time, message, and is_error fields.
+# Returns a styled HTML div for the callback inbox column.
 def _render_inbox_event(event: Dict) -> str:
     """Return an HTML div for one callback inbox event."""
     if event["is_error"]:
@@ -430,6 +449,8 @@ def _render_inbox_event(event: Dict) -> str:
         f'{event["message"]}</div>'
     )
 
+# Takes a DelegationPlan and optional specialist_status dict.
+# Returns compact markdown showing each specialist, its task, and deps.
 def _render_delegation_plan(plan: DelegationPlan, specialist_status: Dict[str, str] = None) -> str:
     """Render a DelegationPlan as compact markdown for Streamlit."""
     STATUS_ICON = {STATUS_PENDING: "\u23f3", STATUS_IN_PROGRESS: "\U0001f504", STATUS_DONE: "\u2705"}

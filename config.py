@@ -4,6 +4,12 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+# ─── Module overview ───────────────────────────────────────────────
+# Loads .env, exposes API keys and tuning knobs (model, temperature,
+# token limits) as module-level constants.  The web UI also uses
+# API_KEYS and update_env_key to render its settings panel.
+# ───────────────────────────────────────────────────────────────────
+
 # Load environment variables from .env file
 ENV_PATH = Path(__file__).parent / ".env"
 load_dotenv(ENV_PATH, override=True)
@@ -33,6 +39,7 @@ API_KEYS = {
 }
 
 
+# Takes (key, value). Writes/updates the key in .env and sets os.environ.
 def update_env_key(key: str, value: str) -> None:
     """Write or update a single key in the .env file and set it in os.environ."""
     os.environ[key] = value

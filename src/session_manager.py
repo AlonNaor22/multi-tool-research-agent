@@ -5,16 +5,24 @@ import json
 from datetime import datetime
 from typing import List, Dict, Optional
 
+# ─── Module overview ───────────────────────────────────────────────
+# Persists and loads conversation sessions as JSON files in the
+# sessions/ directory. Each session stores (input, output) exchanges
+# with metadata (timestamps, schema version, message count).
+# ───────────────────────────────────────────────────────────────────
 
 SESSIONS_DIR = "sessions"
 SESSION_SCHEMA_VERSION = "1.0"
 
 
+# Creates the sessions/ directory if it does not exist.
 def ensure_sessions_dir():
     if not os.path.exists(SESSIONS_DIR):
         os.makedirs(SESSIONS_DIR)
 
 
+# Takes (description). Builds a filename-safe ID from the date and first 3 words.
+# Returns a date+time fallback when no description is given.
 def generate_session_id(description: str = None) -> str:
     """Generate a filename-safe session ID from date and optional description."""
     date_str = datetime.now().strftime('%d.%m.%Y')
@@ -35,6 +43,8 @@ def generate_session_id(description: str = None) -> str:
     return f"{date_str}_session_{time_str}"
 
 
+# Takes (history, session_id, description). Serializes history tuples to JSON.
+# Returns the file path of the saved session.
 def save_session(history: List[tuple], session_id: Optional[str] = None, description: Optional[str] = None) -> str:
     """Save history tuples to a JSON session file; return the file path."""
     ensure_sessions_dir()
@@ -61,6 +71,8 @@ def save_session(history: List[tuple], session_id: Optional[str] = None, descrip
     return filepath
 
 
+# Takes (session_id). Reads the JSON file and reconstructs (input, output) tuples.
+# Returns None if the file is missing or corrupt.
 def load_session(session_id: str) -> Optional[List[tuple]]:
     """Load a session by ID; return (input, output) tuples or None if missing."""
     filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
@@ -87,6 +99,7 @@ def load_session(session_id: str) -> Optional[List[tuple]]:
         return None
 
 
+# Scans sessions/ for JSON files and returns metadata dicts sorted newest-first.
 def list_sessions() -> List[Dict]:
     """Return all saved sessions as dicts with id, created_at, and message_count."""
     ensure_sessions_dir()
@@ -112,6 +125,8 @@ def list_sessions() -> List[Dict]:
     return sessions
 
 
+# Takes (session_id). Removes the session JSON file.
+# Returns True if deleted, False if not found.
 def delete_session(session_id: str) -> bool:
     """Delete a session file by ID; return True if found and deleted."""
     filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
@@ -122,6 +137,8 @@ def delete_session(session_id: str) -> bool:
     return False
 
 
+# Takes (session_id, num_messages). Loads the session and formats the first
+# N exchanges as a human-readable preview string. Returns None if missing.
 def get_session_preview(session_id: str, num_messages: int = 3) -> Optional[str]:
     """Return a formatted preview of the first num_messages exchanges, or None."""
     history = load_session(session_id)

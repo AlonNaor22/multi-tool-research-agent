@@ -15,6 +15,12 @@ from src.utils import flatten_content
 
 logger = logging.getLogger(__name__)
 
+# ─── Module overview ───────────────────────────────────────────────
+# LLM-based supervisor that converts a user query into a DelegationPlan
+# (which specialists to run, their tasks, and dependency ordering)
+# and provides a fallback single-specialist plan on parse failure.
+# ───────────────────────────────────────────────────────────────────
+
 
 class DelegationPlan(BaseModel):
     """Dependency-driven specialist delegation plan."""
@@ -32,6 +38,7 @@ class Supervisor:
     def __init__(self, llm: ChatAnthropic):
         self.llm = llm
 
+    # Takes (query). Builds the system + human message pair for the planning LLM call.
     @staticmethod
     def _plan_messages(query: str) -> List[BaseMessage]:
         return [
@@ -39,6 +46,8 @@ class Supervisor:
             HumanMessage(content=f"Create a delegation plan for: {query}"),
         ]
 
+    # Takes (content, query). Parses raw LLM JSON into a validated DelegationPlan,
+    # filtering unknown specialists and wiring up fact-checker dependencies.
     @staticmethod
     def _parse_plan_response(content: str, query: str) -> DelegationPlan:
         """Parse LLM JSON into a DelegationPlan; raises ValueError on malformed output."""
@@ -86,6 +95,7 @@ class Supervisor:
             rationale=rationale,
         )
 
+    # Takes (query). Returns a single-research-specialist plan used when parsing fails.
     @staticmethod
     def _fallback_plan(query: str) -> DelegationPlan:
         return DelegationPlan(
@@ -96,6 +106,7 @@ class Supervisor:
             rationale="Fallback — could not parse delegation plan.",
         )
 
+    # Takes (query). Invokes the LLM synchronously and returns a DelegationPlan.
     def create_delegation_plan(self, query: str) -> DelegationPlan:
         """Produce a DelegationPlan synchronously; falls back on parse failure."""
         try:
@@ -111,6 +122,7 @@ class Supervisor:
             )
             return self._fallback_plan(query)
 
+    # Takes (query). Async version of create_delegation_plan.
     async def acreate_delegation_plan(self, query: str) -> DelegationPlan:
         """Async version of create_delegation_plan; falls back on parse failure."""
         try:

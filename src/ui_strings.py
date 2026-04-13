@@ -8,6 +8,12 @@ To add a new language, copy this file to e.g. ``ui_strings_he.py``, translate
 every value, and import the desired module in ``app.py``.
 """
 
+# ─── Module overview ───────────────────────────────────────────────
+# All user-facing strings for the Streamlit UI, organized as nested
+# classes for dot-access (e.g. UI.sidebar.api_keys_header).
+# Uses {named} placeholders for i18n-friendly .format() calls.
+# ───────────────────────────────────────────────────────────────────
+
 
 class UI:
     """Top-level container for all user-facing strings."""

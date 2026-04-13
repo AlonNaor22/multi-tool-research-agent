@@ -21,6 +21,13 @@ from src.multi_agent.prompts import SUPERVISOR_SYNTHESIZE_PROMPT
 from src.multi_agent.supervisor import Supervisor, DelegationPlan
 from src.multi_agent.specialists import SpecialistAgent, SpecialistResult, build_specialists
 
+# ─── Module overview ───────────────────────────────────────────────
+# Drives the full multi-agent pipeline: supervisor creates a plan,
+# specialists run in dependency-ordered waves (parallel within each
+# wave), and the supervisor LLM synthesizes all results into a final
+# streamed answer.
+# ───────────────────────────────────────────────────────────────────
+
 
 class MultiAgentOrchestrator:
     """Phased parallel specialist orchestrator driven by a supervisor plan."""
@@ -37,6 +44,8 @@ class MultiAgentOrchestrator:
         self.supervisor = Supervisor(llm)
         self.specialists = build_specialists(all_tools, llm, tool_health)
 
+    # Takes (query). Yields typed events as specialists execute in dependency waves
+    # and the supervisor streams the synthesized answer.
     async def _astream_events(self, query: str) -> AsyncGenerator[dict, None]:
         """Yield typed events as the dependency-driven pipeline executes."""
         plan = await self.supervisor.acreate_delegation_plan(query)
@@ -63,6 +72,7 @@ class MultiAgentOrchestrator:
             for name in ready:
                 yield {"type": EVENT_SPECIALIST_STARTED, "specialist": name, "phase_idx": wave}
 
+            # Takes (name). Builds the task string with dependency context, runs the specialist.
             async def _run_specialist(name: str) -> SpecialistResult:
                 task = plan.specialist_tasks.get(name, query)
 
@@ -142,6 +152,7 @@ class MultiAgentOrchestrator:
             "plan": plan,
         }
 
+    # Takes (query). Runs the full pipeline and returns the final synthesized answer.
     async def run(self, query: str) -> str:
         """Run the full pipeline and return the final synthesized answer."""
         final_answer = ""
@@ -150,6 +161,7 @@ class MultiAgentOrchestrator:
                 final_answer = event.get("answer", "")
         return final_answer
 
+    # Takes (query). Same as run() but prints phase/specialist progress to stdout.
     async def run_verbose(self, query: str) -> str:
         """Run with verbose CLI output for each phase and specialist."""
         print(f"\n{'=' * 60}")
@@ -207,6 +219,8 @@ class MultiAgentOrchestrator:
         print()  # newline after streaming
         return final_answer
 
+    # Takes (query). Sync generator bridging async events via a background
+    # thread and queue, suitable for Streamlit's synchronous iteration.
     def stream(self, query: str) -> Generator[dict, None, None]:
         """Sync generator bridging async events via a thread+queue for Streamlit."""
         _SENTINEL = object()

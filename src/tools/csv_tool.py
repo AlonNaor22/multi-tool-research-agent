@@ -6,6 +6,13 @@ from src.utils import parse_tool_input, truncate, safe_tool_call, require_input
 from src.constants import CSV_MAX_OUTPUT_CHARS
 
 
+# ─── Module overview ───────────────────────────────────────────────
+# Reads CSV/Excel/TSV files and returns column info, statistics,
+# sample rows, and optional filtering or groupby aggregations.
+# ───────────────────────────────────────────────────────────────────
+
+# Takes a query string (file path or JSON with options). Reads the file with pandas.
+# Returns formatted column info, stats, and sample data or aggregation results.
 @safe_tool_call("reading file")
 async def csv_reader(query: str) -> str:
     """Read and analyze CSV or Excel spreadsheet files. Returns column info, statistics, and sample data. Can filter rows and perform aggregations.

@@ -6,11 +6,18 @@ from langchain_core.tools import tool
 from src.constants import MAX_OUTPUT_LENGTH
 from src.utils import truncate
 
+# ─── Module overview ───────────────────────────────────────────────
+# Runs user-supplied Python code in a sandboxed child process with
+# restricted builtins, a 5-second timeout, and captured stdout/stderr.
+# ───────────────────────────────────────────────────────────────────
+
 
 # Configuration
 EXECUTION_TIMEOUT = 5  # seconds
 
 
+# Runs code inside a child process with restricted builtins and
+# optional numpy/pandas. Puts (kind, value) tuple onto result_queue.
 def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
     """Run code in a child process with restricted builtins; results via queue."""
     import sys
@@ -118,6 +125,8 @@ def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
         result_queue.put(("error", f"Execution Error ({error_type}): {str(e)}"))
 
 
+# Takes a code string. Spawns a child process, enforces the timeout,
+# and returns captured output or an error/timeout message.
 def execute_python(code: str) -> str:
     """Spawn a child process to run code, kill on timeout, return captured output."""
     result_queue = multiprocessing.Queue()
@@ -150,6 +159,8 @@ def execute_python(code: str) -> str:
     return output
 
 
+# Tool entry point. Takes Python code as a string.
+# Returns execution output, truncated to MAX_OUTPUT_LENGTH.
 async def python_repl(code: str) -> str:
     """Execute Python code and return the output. Use this for complex calculations, data manipulation, string processing, working with lists/dicts, or any task that requires programming logic.
 

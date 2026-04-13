@@ -5,11 +5,17 @@ from langchain_core.tools import tool
 from src.utils import async_retry_on_error, async_fetch, safe_tool_call
 from config import WOLFRAM_ALPHA_APP_ID
 
+# ─── Module overview ───────────────────────────────────────────────
+# Queries the Wolfram Alpha Short Answers API for precise
+# scientific constants, physical properties, and reference data.
+# ───────────────────────────────────────────────────────────────────
 
 # Wolfram Alpha Short Answers API endpoint
 WOLFRAM_API_URL = "https://api.wolframalpha.com/v1/result"
 
 
+# Takes a natural-language query. Sends it to the Wolfram Short Answers API.
+# Returns the short answer string or a descriptive error message.
 @safe_tool_call("querying Wolfram Alpha")
 @async_retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
 async def wolfram_alpha(query: str) -> str:

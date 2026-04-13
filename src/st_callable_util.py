@@ -13,12 +13,22 @@ The solution (from the Streamlit-x-LangGraph-Cookbooks pattern):
 import inspect
 from typing import Any, Callable, Dict, TypeVar
 
+# ─── Module overview ───────────────────────────────────────────────
+# Streamlit-aware LangChain callback handler for real-time token
+# streaming. Captures the Streamlit script-run context at creation
+# time and injects it into every on_* method so UI writes work
+# from LangChain's internal callback threads.
+# ───────────────────────────────────────────────────────────────────
+
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 from langchain_core.callbacks.base import BaseCallbackHandler
 
 
+# Takes (parent_container). Creates a StreamHandler that streams tokens into
+# the given Streamlit container with proper script-run context injection.
+# Returns a configured BaseCallbackHandler instance.
 def get_streamlit_cb(parent_container: DeltaGenerator) -> BaseCallbackHandler:
     """Create a callback handler that streams LLM tokens into a Streamlit
     container — with proper script-run context so writes render in real time.

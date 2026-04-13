@@ -13,6 +13,12 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+# ─── Module overview ───────────────────────────────────────────────
+# LangChain callback handlers for tool timing and real-time streaming.
+# TimingCallbackHandler records per-tool durations for observability.
+# StreamingCallbackHandler pipes LLM tokens and tool status to stdout.
+# ───────────────────────────────────────────────────────────────────
+
 
 class TimingCallbackHandler(BaseCallbackHandler):
     """Tracks execution time for each tool call."""
@@ -23,6 +29,7 @@ class TimingCallbackHandler(BaseCallbackHandler):
         self._current_tool_start: Optional[float] = None
         self._current_tool_name: Optional[str] = None
 
+    # Takes (serialized, input_str). Records the tool name and start timestamp.
     def on_tool_start(
         self,
         serialized: Dict[str, Any],
@@ -34,6 +41,7 @@ class TimingCallbackHandler(BaseCallbackHandler):
 
         print(f"  ⏱️  [{self._current_tool_name}] Starting...")
 
+    # Takes (output). Computes duration since on_tool_start and appends to tool_times.
     def on_tool_end(
         self,
         output: str,
@@ -50,6 +58,7 @@ class TimingCallbackHandler(BaseCallbackHandler):
             self._current_tool_start = None
             self._current_tool_name = None
 
+    # Takes (error). Logs the failure duration and resets the current-tool state.
     def on_tool_error(
         self,
         error: Exception,
@@ -61,6 +70,7 @@ class TimingCallbackHandler(BaseCallbackHandler):
             self._current_tool_start = None
             self._current_tool_name = None
 
+    # Returns a formatted multi-line string summarizing all recorded tool durations.
     def get_summary(self) -> str:
         """Return a formatted multi-line summary of all tool execution times."""
         if not self.tool_times:
@@ -94,6 +104,7 @@ class StreamingCallbackHandler(BaseCallbackHandler):
         super().__init__()
         self._tool_depth = 0
 
+    # Takes (serialized, prompts). Prints "Thinking..." only at the top level.
     def on_llm_start(
         self,
         serialized: Dict[str, Any],
@@ -103,6 +114,7 @@ class StreamingCallbackHandler(BaseCallbackHandler):
         if self._tool_depth == 0:
             print("\n🧠 Thinking...", flush=True)
 
+    # Takes (token). Writes each token to stdout when not inside a tool call.
     def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
         if self._tool_depth == 0:
             sys.stdout.write(token)
@@ -111,6 +123,7 @@ class StreamingCallbackHandler(BaseCallbackHandler):
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         pass
 
+    # Takes (serialized, input_str). Increments tool depth and prints tool name.
     def on_tool_start(
         self,
         serialized: Dict[str, Any],
@@ -121,6 +134,7 @@ class StreamingCallbackHandler(BaseCallbackHandler):
         tool_name = serialized.get("name", "unknown_tool")
         print(f"\n🔧 Using {tool_name}...", flush=True)
 
+    # Takes (output). Decrements tool depth so token streaming resumes.
     def on_tool_end(self, output: str, **kwargs: Any) -> None:
         self._tool_depth = max(0, self._tool_depth - 1)
 

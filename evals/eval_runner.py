@@ -39,10 +39,18 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 
 # ── Loading ──────────────────────────────────────────────────────────
 
+# ─── Module overview ───────────────────────────────────────────────
+# Loads test cases from JSON, runs each through the agent, and scores
+# tool selection + answer quality.  Prints a scorecard and optionally
+# saves timestamped JSON results to evals/results/.
+# ───────────────────────────────────────────────────────────────────
+
 CASES_FILE = Path(__file__).parent / "test_cases.json"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 
+# Takes optional (case_id, category) filters.
+# Returns a list of test-case dicts loaded from test_cases.json.
 def load_test_cases(
     case_id: str | None = None,
     category: str | None = None,
@@ -69,6 +77,8 @@ def load_test_cases(
 
 # ── Scoring ──────────────────────────────────────────────────────────
 
+# Takes (tools_called, expected_tools). Returns True if at least one
+# expected tool was called.
 def score_tool_selection(
     tools_called: list[str],
     expected_tools: list[str],
@@ -77,6 +87,8 @@ def score_tool_selection(
     return any(tool in tools_called for tool in expected_tools)
 
 
+# Takes (answer, expected_keywords). Returns True if every keyword
+# appears in the answer (case-insensitive, comma-stripped).
 def score_answer(answer: str, expected_keywords: list[str]) -> bool:
     """Do ALL expected keywords appear in the answer (case-insensitive)?
 
@@ -92,6 +104,9 @@ def score_answer(answer: str, expected_keywords: list[str]) -> bool:
 
 # ── Runner ───────────────────────────────────────────────────────────
 
+# Takes a list of test-case dicts. Creates a fresh agent, runs each
+# case, scores tool selection + answer, prints a scorecard.
+# Returns a report dict with per-case results and aggregate stats.
 def run_eval(cases: list[dict[str, Any]]) -> dict[str, Any]:
     """Run all test cases through the agent and collect results."""
     print("\n" + "=" * 65)

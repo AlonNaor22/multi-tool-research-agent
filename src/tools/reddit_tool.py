@@ -19,6 +19,14 @@ from src.constants import (
     REDDIT_SELFTEXT_MAX_CHARS,
 )
 
+# ─── Module overview ───────────────────────────────────────────────
+# Searches Reddit posts via the public JSON API. Supports subreddit
+# filtering, sort modes, and time-range filters with result caching.
+# ───────────────────────────────────────────────────────────────────
+
+
+# Takes a query, result count, optional subreddit, sort, and time filter.
+# Returns a list of post dicts (title, score, comments, URL, selftext, etc.).
 @cached_tool("reddit")
 @async_retry_on_error(max_retries=2, delay=2.0)
 async def search_reddit(
@@ -71,6 +79,8 @@ def _format_score(score: int) -> str:
     return str(score)
 
 
+# Takes a list of post dicts and the original query.
+# Returns a formatted multi-line display string with scores and URLs.
 def format_results(results: List[Dict], query: str) -> str:
     """Format Reddit search results into a display string."""
     if not results:
@@ -92,6 +102,8 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
+# Tool entry point. Parses free-text or JSON input for subreddit, sort,
+# time filter, and result count. Returns formatted Reddit search results.
 @safe_tool_call("searching Reddit")
 async def reddit_search(input_str: str) -> str:
     """Search Reddit for posts, discussions, and community opinions.

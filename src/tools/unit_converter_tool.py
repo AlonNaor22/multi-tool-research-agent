@@ -5,10 +5,11 @@ from typing import Optional, Tuple, Dict, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-
-# ============================================================================
-# UNIT CONVERSION SYSTEM
-# ============================================================================
+# ─── Module overview ───────────────────────────────────────────────
+# Converts between units of length, weight, volume, time, speed, area,
+# temperature, and data storage. Uses base-unit conversion factors with
+# special-case handling for temperature.
+# ───────────────────────────────────────────────────────────────────
 
 # Conversion factors to base units
 # Length: base unit = meters
@@ -103,6 +104,8 @@ UNIT_CATEGORIES = {
 }
 
 
+# Looks up which category (length, weight, etc.) a unit belongs to.
+# Returns (category_name, conversion_dict) or None if not found.
 def find_unit_category(unit: str) -> Optional[Tuple[str, Dict]]:
     """Return (category_name, conversion_dict) for a unit, or None."""
     unit_lower = unit.lower().replace(" ", "_")
@@ -112,6 +115,8 @@ def find_unit_category(unit: str) -> Optional[Tuple[str, Dict]]:
     return None
 
 
+# Takes (value, from_unit, to_unit). Converts via intermediate Celsius.
+# Returns the converted temperature as a float.
 def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
     """Convert between Celsius, Fahrenheit, and Kelvin."""
     from_unit = from_unit.lower()
@@ -151,6 +156,8 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
         raise ValueError(f"Unknown temperature unit: {to_unit}")
 
 
+# Takes (value, from_unit, to_unit). Routes temperature specially, otherwise
+# converts value -> base unit -> target unit. Returns formatted result string.
 def convert_units(value: float, from_unit: str, to_unit: str) -> str:
     """Convert a numeric value between compatible units."""
     from_unit_clean = from_unit.lower().replace(" ", "_")
@@ -211,6 +218,8 @@ class UnitConverterTool(BaseTool):
     )
     args_schema: Type[BaseModel] = UnitConverterInput
 
+    # Takes (value, from_unit, to_unit). Delegates to convert_units.
+    # Returns formatted conversion result string.
     def _run(self, value: float = 0, from_unit: str = "", to_unit: str = "") -> str:
         return convert_units(value, from_unit, to_unit)
 
@@ -221,6 +230,7 @@ class UnitConverterTool(BaseTool):
 unit_converter_tool = UnitConverterTool()
 
 
+# Parses a natural-language string like '10 km to miles' and converts.
 def convert(input_str: str) -> str:
     """Parse '10 km to miles' string and convert. Used by tests and CLI."""
     if not input_str or not input_str.strip():
