@@ -98,17 +98,15 @@ class TestSpecialistDefinitions:
         from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 
         for name, defn in SPECIALIST_DEFINITIONS.items():
-            assert "tools" in defn, f"{name} missing 'tools'"
-            assert "prompt" in defn, f"{name} missing 'prompt'"
-            assert isinstance(defn["tools"], list), f"{name} tools not a list"
-            assert len(defn["tools"]) > 0, f"{name} has no tools"
-            assert isinstance(defn["prompt"], str), f"{name} prompt not a string"
-            assert len(defn["prompt"]) > 50, f"{name} prompt too short"
+            assert isinstance(defn.tools, list), f"{name} tools not a list"
+            assert len(defn.tools) > 0, f"{name} has no tools"
+            assert isinstance(defn.prompt, str), f"{name} prompt not a string"
+            assert len(defn.prompt) > 50, f"{name} prompt too short"
 
     def test_research_agent_has_broad_tools(self):
         from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 
-        research_tools = SPECIALIST_DEFINITIONS["research"]["tools"]
+        research_tools = SPECIALIST_DEFINITIONS["research"].tools
         assert "web_search" in research_tools
         assert "wikipedia" in research_tools
         assert "arxiv_search" in research_tools
@@ -116,7 +114,7 @@ class TestSpecialistDefinitions:
     def test_math_agent_has_computation_tools(self):
         from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 
-        math_tools = SPECIALIST_DEFINITIONS["math"]["tools"]
+        math_tools = SPECIALIST_DEFINITIONS["math"].tools
         assert "calculator" in math_tools
         assert "equation_solver" in math_tools
         assert "python_repl" in math_tools
@@ -124,7 +122,7 @@ class TestSpecialistDefinitions:
     def test_fact_checker_has_verification_tools(self):
         from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 
-        fc_tools = SPECIALIST_DEFINITIONS["fact_checker"]["tools"]
+        fc_tools = SPECIALIST_DEFINITIONS["fact_checker"].tools
         assert "web_search" in fc_tools
         assert "wikipedia" in fc_tools
         assert "wikidata" in fc_tools
@@ -133,8 +131,8 @@ class TestSpecialistDefinitions:
         """Fact-checker should share tools with research for independent verification."""
         from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 
-        research = set(SPECIALIST_DEFINITIONS["research"]["tools"])
-        fc = set(SPECIALIST_DEFINITIONS["fact_checker"]["tools"])
+        research = set(SPECIALIST_DEFINITIONS["research"].tools)
+        fc = set(SPECIALIST_DEFINITIONS["fact_checker"].tools)
         overlap = research & fc
         assert len(overlap) >= 3, "Fact-checker needs overlapping tools for cross-verification"
 
@@ -348,12 +346,10 @@ class TestSpecialistAgent:
         from src.multi_agent.specialists import SPECIALIST_DEFINITIONS
 
         for name, defn in SPECIALIST_DEFINITIONS.items():
-            assert "recursion_limit" in defn, f"{name} missing recursion_limit"
-            assert "timeout_seconds" in defn, f"{name} missing timeout_seconds"
-            assert defn["recursion_limit"] >= 5, (
+            assert defn.recursion_limit >= 5, (
                 f"{name} recursion_limit too small"
             )
-            assert defn["timeout_seconds"] >= 30, (
+            assert defn.timeout_seconds >= 30, (
                 f"{name} timeout_seconds too small"
             )
 
@@ -389,8 +385,9 @@ class TestSpecialistAgent:
             )
 
             result = await agent.run("task")
-            assert "Timed out" in result
-            assert "slowpoke" in result
+            assert result.timed_out
+            assert "Timed out" in result.content
+            assert "slowpoke" in result.content
 
     async def test_run_error_returns_degraded_string(self):
         """Non-timeout exceptions should also be caught and returned,
@@ -420,8 +417,9 @@ class TestSpecialistAgent:
             )
 
             result = await agent.run("task")
-            assert "Error" in result
-            assert "tool blew up" in result
+            assert result.error
+            assert "Error" in result.content
+            assert "tool blew up" in result.content
 
     def test_build_specialists_creates_all(self):
         """build_specialists should create all 5 specialist agents."""
@@ -430,7 +428,7 @@ class TestSpecialistAgent:
         # Create mock tools matching the names specialists expect
         all_tool_names = set()
         for defn in SPECIALIST_DEFINITIONS.values():
-            all_tool_names.update(defn["tools"])
+            all_tool_names.update(defn.tools)
 
         mock_tools = []
         for name in all_tool_names:

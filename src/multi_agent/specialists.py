@@ -1,6 +1,8 @@
 """Specialist agents wrapping focused tool subsets for multi-agent dispatch."""
 
 import asyncio
+import logging
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from langchain_anthropic import ChatAnthropic
@@ -21,59 +23,78 @@ from src.multi_agent.prompts import (
     TRANSLATION_AGENT_PROMPT,
 )
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_RECURSION_LIMIT = 20
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
 
-SPECIALIST_DEFINITIONS = {
-    SPECIALIST_RESEARCH: {
-        "tools": [
+@dataclass(frozen=True)
+class SpecialistConfig:
+    """Typed configuration for a specialist agent."""
+    tools: List[str]
+    prompt: str
+    recursion_limit: int = DEFAULT_RECURSION_LIMIT
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+
+
+@dataclass
+class SpecialistResult:
+    """Structured result from a specialist execution."""
+    name: str
+    content: str
+    timed_out: bool = False
+    error: bool = False
+
+
+SPECIALIST_DEFINITIONS: Dict[str, SpecialistConfig] = {
+    SPECIALIST_RESEARCH: SpecialistConfig(
+        tools=[
             "web_search", "wikipedia", "news_search", "arxiv_search",
             "google_scholar", "reddit_search", "youtube_search",
             "fetch_url", "pdf_reader", "wikidata", "github_search",
             "web_scraper", "parallel_search",
         ],
-        "prompt": RESEARCH_AGENT_PROMPT,
-        "recursion_limit": 25,
-        "timeout_seconds": 180.0,
-    },
-    SPECIALIST_MATH: {
-        "tools": [
+        prompt=RESEARCH_AGENT_PROMPT,
+        recursion_limit=25,
+        timeout_seconds=180.0,
+    ),
+    SPECIALIST_MATH: SpecialistConfig(
+        tools=[
             "calculator", "unit_converter", "equation_solver",
             "currency_converter", "wolfram_alpha", "python_repl",
             "datetime_calculator", "math_formatter", "create_chart",
         ],
-        "prompt": MATH_AGENT_PROMPT,
-        "recursion_limit": 15,
-        "timeout_seconds": 90.0,
-    },
-    SPECIALIST_ANALYSIS: {
-        "tools": [
+        prompt=MATH_AGENT_PROMPT,
+        recursion_limit=15,
+        timeout_seconds=90.0,
+    ),
+    SPECIALIST_ANALYSIS: SpecialistConfig(
+        tools=[
             "python_repl", "create_chart", "parallel_search",
             "csv_reader", "web_scraper",
         ],
-        "prompt": ANALYSIS_AGENT_PROMPT,
-        "recursion_limit": 20,
-        "timeout_seconds": 150.0,
-    },
-    SPECIALIST_FACT_CHECKER: {
-        "tools": [
+        prompt=ANALYSIS_AGENT_PROMPT,
+        recursion_limit=20,
+        timeout_seconds=150.0,
+    ),
+    SPECIALIST_FACT_CHECKER: SpecialistConfig(
+        tools=[
             "web_search", "wikipedia", "wikidata",
             "google_scholar", "fetch_url",
         ],
-        "prompt": FACT_CHECKER_PROMPT,
-        "recursion_limit": 15,
-        "timeout_seconds": 120.0,
-    },
-    SPECIALIST_TRANSLATION: {
-        "tools": [
+        prompt=FACT_CHECKER_PROMPT,
+        recursion_limit=15,
+        timeout_seconds=120.0,
+    ),
+    SPECIALIST_TRANSLATION: SpecialistConfig(
+        tools=[
             "translate", "fetch_url", "pdf_reader",
         ],
-        "prompt": TRANSLATION_AGENT_PROMPT,
-        "recursion_limit": 10,
-        "timeout_seconds": 60.0,
-    },
+        prompt=TRANSLATION_AGENT_PROMPT,
+        recursion_limit=10,
+        timeout_seconds=60.0,
+    ),
 }
 
 
@@ -106,10 +127,14 @@ class SpecialistAgent:
                 debug=False,
             )
 
-    async def run(self, task: str, callbacks: Optional[list] = None) -> str:
-        """Execute task with timeout; return answer string or degraded message."""
+    async def run(self, task: str, callbacks: Optional[list] = None) -> SpecialistResult:
+        """Execute task with timeout; return structured result."""
         if self.agent is None:
-            return f"[{self.name}] No tools available for this task."
+            return SpecialistResult(
+                name=self.name,
+                content=f"[{self.name}] No tools available for this task.",
+                error=True,
+            )
 
         messages = [HumanMessage(content=task)]
         config = {"recursion_limit": self.recursion_limit}
@@ -121,15 +146,28 @@ class SpecialistAgent:
                 self.agent.ainvoke({"messages": messages}, config),
                 timeout=self.timeout_seconds,
             )
-            return extract_ai_answer(result)
+            return SpecialistResult(
+                name=self.name,
+                content=extract_ai_answer(result),
+            )
         except asyncio.TimeoutError:
-            return (
-                f"[{self.name}] Timed out after {self.timeout_seconds:.0f}s — "
-                f"partial or no answer available. The orchestrator will "
-                f"continue with other specialists."
+            logger.warning(
+                "%s timed out after %.0fs; sync tools in executor threads "
+                "may still be running in the background",
+                self.name, self.timeout_seconds,
+            )
+            return SpecialistResult(
+                name=self.name,
+                content=f"[{self.name}] Timed out after {self.timeout_seconds:.0f}s.",
+                timed_out=True,
             )
         except Exception as e:
-            return f"[{self.name}] Error: {str(e)}"
+            return SpecialistResult(
+                name=self.name,
+                content=f"[{self.name}] Error: {str(e)}",
+                error=True,
+            )
+
 
 def build_specialists(
     all_tools: list,
@@ -140,19 +178,19 @@ def build_specialists(
     tool_by_name = {t.name: t for t in all_tools}
 
     specialists = {}
-    for name, defn in SPECIALIST_DEFINITIONS.items():
+    for name, config in SPECIALIST_DEFINITIONS.items():
         specialist_tools = [
-            tool_by_name[t] for t in defn["tools"]
+            tool_by_name[t] for t in config.tools
             if t in tool_by_name
         ]
         specialists[name] = SpecialistAgent(
             name=name,
             tools=specialist_tools,
-            system_prompt=defn["prompt"],
+            system_prompt=config.prompt,
             llm=llm,
             tool_health=tool_health,
-            recursion_limit=defn["recursion_limit"],
-            timeout_seconds=defn["timeout_seconds"],
+            recursion_limit=config.recursion_limit,
+            timeout_seconds=config.timeout_seconds,
         )
 
     return specialists

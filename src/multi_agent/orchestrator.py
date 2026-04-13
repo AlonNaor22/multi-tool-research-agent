@@ -19,7 +19,7 @@ from src.utils import extract_chunk_text
 
 from src.multi_agent.prompts import SUPERVISOR_SYNTHESIZE_PROMPT
 from src.multi_agent.supervisor import Supervisor, DelegationPlan
-from src.multi_agent.specialists import SpecialistAgent, build_specialists
+from src.multi_agent.specialists import SpecialistAgent, SpecialistResult, build_specialists
 
 
 class MultiAgentOrchestrator:
@@ -42,7 +42,7 @@ class MultiAgentOrchestrator:
         plan = await self.supervisor.acreate_delegation_plan(query)
         yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
-        completed: Dict[str, str] = {}
+        completed: Dict[str, SpecialistResult] = {}
         pending = set(plan.specialists)
         wave = 0
 
@@ -63,14 +63,14 @@ class MultiAgentOrchestrator:
             for name in ready:
                 yield {"type": EVENT_SPECIALIST_STARTED, "specialist": name, "phase_idx": wave}
 
-            async def _run_specialist(name: str) -> tuple:
+            async def _run_specialist(name: str) -> SpecialistResult:
                 task = plan.specialist_tasks.get(name, query)
 
                 # Inject context only from declared dependencies
                 deps = plan.depends_on.get(name, [])
                 if name == SPECIALIST_FACT_CHECKER and completed:
                     findings_text = "\n\n".join(
-                        f"[{n}]: {r}" for n, r in completed.items()
+                        f"[{n}]: {r.content}" for n, r in completed.items()
                         if n != SPECIALIST_FACT_CHECKER
                     )
                     task = (
@@ -80,39 +80,44 @@ class MultiAgentOrchestrator:
                     )
                 elif deps:
                     dep_context = "\n".join(
-                        f"[{d}]: {completed[d]}" for d in deps if d in completed
+                        f"[{d}]: {completed[d].content}" for d in deps if d in completed
                     )
                     task = task + f"\n\nContext from prior agents:\n{dep_context}"
 
                 specialist = self.specialists.get(name)
                 if specialist is None:
-                    return name, f"[{name}] Unknown specialist."
-                result = await specialist.run(task, callbacks=self.callbacks)
-                return name, result
+                    return SpecialistResult(name=name, content=f"[{name}] Unknown specialist.", error=True)
+                return await specialist.run(task, callbacks=self.callbacks)
 
             results = await asyncio.gather(*[_run_specialist(n) for n in ready])
 
-            for name, result in results:
-                completed[name] = result
-                pending.discard(name)
+            for result in results:
+                completed[result.name] = result
+                pending.discard(result.name)
                 yield {
                     "type": EVENT_SPECIALIST_DONE,
-                    "specialist": name,
+                    "specialist": result.name,
                     "phase_idx": wave,
-                    "result_preview": result[:300],
+                    "result_preview": result.content[:300],
+                    "timed_out": result.timed_out,
+                    "error": result.error,
                 }
 
             yield {"type": EVENT_PHASE_DONE, "phase_idx": wave}
             wave += 1
 
-        fact_check_report = completed.pop(SPECIALIST_FACT_CHECKER, "")
+        fact_check = completed.pop(SPECIALIST_FACT_CHECKER, None)
+        fact_check_report = fact_check.content if fact_check and not fact_check.timed_out else ""
+
+        # Skip timed-out and errored specialists in synthesis
+        usable = {n: r for n, r in completed.items() if not r.timed_out and not r.error}
 
         synthesis_input = (
             f"Synthesize these specialist findings into a comprehensive answer.\n\n"
             f"Original question: {query}\n\n"
             + "\n\n".join(
-                f"--- {n.upper()} AGENT ---\n{r}"
-                for n, r in completed.items()
+                f"--- {n.upper()} AGENT ---\n{r.content}"
+                for n, r in usable.items()
             )
             + (
                 f"\n\n--- FACT-CHECK REPORT ---\n{fact_check_report}"

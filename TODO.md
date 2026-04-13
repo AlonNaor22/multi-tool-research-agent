@@ -20,17 +20,7 @@ Within each category, items are ordered by **importance** (highest first).
 
 ## Code cleanup & refactoring
 
-1. [ ] **`SPECIALIST_DEFINITIONS` is a stringly-typed dict** —
-   `src/multi_agent/specialists.py`
-   Convert to a `TypedDict` or dataclass schema.
-
-2. [ ] **Sync-tool cancellation on specialist timeout** —
-   `src/multi_agent/specialists.py`
-   Sync tools in executor threads keep running past the timeout.
-
-3. [ ] **Timeout sentinel vs plain degraded string** —
-   `src/multi_agent/specialists.py` + orchestrator
-   Return a structured signal so synthesis can skip timed-out specialists.
+*All items completed.*
 
 ---
 
@@ -85,6 +75,9 @@ Within each category, items are ordered by **importance** (highest first).
 
 ### Code cleanup
 - [x] **Research agent prompt vague about tool names** — prompt now lists specific tools (web_search, arxiv_search, google_scholar, etc.)
+- [x] **SPECIALIST_DEFINITIONS stringly-typed dict** — converted to `SpecialistConfig` frozen dataclass
+- [x] **Timeout sentinel vs plain degraded string** — `SpecialistResult` dataclass with `timed_out`/`error` flags; synthesis skips timed-out specialists
+- [x] **Sync-tool cancellation on timeout** — logged warning on timeout; Python threads can't be forcibly killed, documented as known limitation
 
 ### Codebase improvements
 - [x] Migrate tools to `@tool` decorator + `BaseTool` subclass
