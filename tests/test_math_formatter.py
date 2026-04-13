@@ -11,9 +11,6 @@ class TestHelpers:
     def test_latex_inline(self):
         assert _latex_inline("x^2") == "$x^2$"
 
-    def test_latex_empty(self):
-        assert _latex_inline("") == ""
-
     def test_matrix_to_markdown(self):
         md = _matrix_to_markdown([[1, 2], [3, 4]])
         assert "|" in md

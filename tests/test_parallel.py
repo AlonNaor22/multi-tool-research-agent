@@ -38,8 +38,7 @@ class TestParallelSearch:
                 ]
             })
             result = await parallel_search(input_data)
-
-            assert len(result) > 0
+            assert "web" in result.lower() or "result" in result.lower() or "wiki" in result.lower()
 
     async def test_invalid_json(self):
         result = await parallel_search("not json {{{")
@@ -58,7 +57,7 @@ class TestParallelSearch:
 
         with patch("src.tools.parallel_tool.web_search", side_effect=mock_web_search):
             result = await parallel_search(input_data)
-            assert len(result) > 0
+            assert "result" in result or "Error" in result
 
     async def test_missing_query_in_search(self):
         input_data = json.dumps({
@@ -70,7 +69,7 @@ class TestParallelSearch:
 
         with patch("src.tools.parallel_tool.web_search", side_effect=mock_web_search):
             result = await parallel_search(input_data)
-            assert len(result) > 0  # Should handle gracefully
+            assert "result" in result or "Error" in result
 
     async def test_handles_tool_failure(self):
         async def mock_web_search(q):
@@ -90,4 +89,4 @@ class TestParallelSearch:
             result = await parallel_search(input_data)
 
             # Should still return results from working tools
-            assert len(result) > 0
+            assert "wiki_result" in result or "Error" in result

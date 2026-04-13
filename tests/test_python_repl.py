@@ -62,4 +62,4 @@ class TestSafety:
 
     async def test_empty_input(self):
         result = execute_python("")
-        assert len(result) >= 0  # Should not crash
+        assert "no output" in result.lower() or "Error" in result

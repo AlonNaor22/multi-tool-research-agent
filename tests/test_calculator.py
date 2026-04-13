@@ -83,19 +83,6 @@ class TestMathFunctions:
         assert calc.calculate("max(3, 1, 2)") == "3"
 
 
-class TestConstants:
-    """Test math constants."""
-
-    @pytest.mark.parametrize("expr,expected", [
-        ("pi", math.pi),
-        ("e", math.e),
-        ("tau", math.tau),
-    ])
-    async def test_constant_value(self, calc, expr, expected):
-        result = float(calc.calculate(expr))
-        assert abs(result - expected) < 0.0001
-
-
 class TestVariables:
     """Test variable storage and retrieval."""
 

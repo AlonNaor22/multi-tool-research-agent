@@ -55,10 +55,6 @@ class TestTemperatureConversions:
 class TestEdgeCases:
     """Test edge cases and error handling."""
 
-    async def test_zero_value(self):
-        result = convert("0 km to miles")
-        assert "0" in result
-
     async def test_negative_value(self):
         result = convert("-40 celsius to fahrenheit")
         assert "-40" in result

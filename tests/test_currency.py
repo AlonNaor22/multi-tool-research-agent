@@ -31,7 +31,7 @@ class TestCurrencyConversion:
         from src.tools.currency_tool import currency_converter
         result = await currency_converter("100 USD to USD")
         # Should handle same-currency conversion
-        assert "100" in result or len(result) > 0
+        assert "100" in result
 
     async def test_invalid_currency_code(self):
         mock_resp = AsyncMockResponse(
@@ -45,7 +45,7 @@ class TestCurrencyConversion:
             from src.tools.currency_tool import currency_converter
             result = await currency_converter("100 XYZ to ABC")
 
-            assert len(result) > 0  # Should return error, not crash
+            assert "Error" in result or "not found" in result.lower()
 
     async def test_currency_aliases(self):
         """Common names like 'dollar' should map to currency codes."""
@@ -65,7 +65,7 @@ class TestCurrencyConversion:
             from src.tools.currency_tool import currency_converter
             result = await currency_converter("100 dollars to euros")
 
-            assert len(result) > 0
+            assert "USD" in result or "EUR" in result or "dollar" in result.lower()
 
     async def test_api_failure(self):
         import aiohttp

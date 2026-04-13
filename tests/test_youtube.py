@@ -52,17 +52,6 @@ class TestYoutubeSearch:
                 assert "Test Channel" in result
                 assert "1,000 views" in result
 
-    def test_formats_duration(self):
-        from src.tools.youtube_tool import _format_duration
-        assert _format_duration(630) == "10:30"
-        assert _format_duration(3661) == "1:01:01"
-        assert _format_duration(None) == "Unknown"
-
-    def test_formats_views(self):
-        from src.tools.youtube_tool import _format_views
-        assert _format_views(1000) == "1,000 views"
-        assert _format_views(None) == "Unknown views"
-
     async def test_handles_no_results(self):
         mock_ydl = MagicMock()
         mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)

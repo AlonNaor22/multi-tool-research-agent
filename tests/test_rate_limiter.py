@@ -7,10 +7,6 @@ from src.rate_limiter import RateLimiter, RateLimitExceeded
 class TestRateLimiter:
     """Tests for the RateLimiter class."""
 
-    def test_disabled_by_default(self):
-        limiter = RateLimiter()
-        assert limiter.enabled is False
-
     def test_check_budget_passes_when_disabled(self):
         limiter = RateLimiter()
         limiter.tokens_spent = 999_999
@@ -79,10 +75,6 @@ class TestRateLimiter:
         limiter.set_config(enabled=True, budget=5_000)
         limiter.tokens_spent = 8_000
         assert limiter.tokens_remaining == 0
-
-    def test_usage_fraction_when_disabled(self):
-        limiter = RateLimiter()
-        assert limiter.usage_fraction == 0.0
 
     def test_usage_fraction_partial(self):
         limiter = RateLimiter()

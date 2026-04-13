@@ -1,4 +1,4 @@
-"""Tests for src/session_manager.py — SqliteSaver-backed session management."""
+"""Tests for session management and SqliteSaver checkpointing integration."""
 
 import sqlite3
 import pytest
@@ -11,6 +11,27 @@ from src.session_manager import (
     get_session_preview,
     generate_session_id,
 )
+
+
+class TestCheckpointerSetup:
+    """Test that SqliteSaver initializes correctly."""
+
+    def test_setup_creates_tables(self, checkpointer):
+        cursor = checkpointer.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        tables = {row[0] for row in cursor.fetchall()}
+        assert "checkpoints" in tables
+        assert "writes" in tables
+
+    def test_empty_list(self, checkpointer):
+        results = list(checkpointer.list(None))
+        assert results == []
+
+    def test_get_tuple_missing_thread(self, checkpointer):
+        config = {"configurable": {"thread_id": "nonexistent"}}
+        result = checkpointer.get_tuple(config)
+        assert result is None
 
 
 @pytest.fixture

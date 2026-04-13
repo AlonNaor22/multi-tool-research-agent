@@ -71,7 +71,7 @@ class TestNewsSearch:
 
     async def test_empty_query(self):
         result = await news_search("")
-        assert len(result) > 0
+        assert "Error" in result or "No" in result
 
     async def test_handles_api_error(self):
         mock_instance = MagicMock()
