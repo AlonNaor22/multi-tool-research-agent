@@ -1,28 +1,42 @@
-"""Tests for src/session_manager.py — save/load/list sessions."""
+"""Tests for src/session_manager.py — SqliteSaver-backed session management."""
 
-import os
-import json
+import sqlite3
 import pytest
-from unittest.mock import patch
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
 from src.session_manager import (
-    save_session,
-    load_session,
     list_sessions,
+    load_session,
     delete_session,
     get_session_preview,
     generate_session_id,
-    SESSIONS_DIR,
-    SESSION_SCHEMA_VERSION,
 )
 
 
 @pytest.fixture
-def sessions_dir(tmp_path):
-    """Use a temporary directory for session files."""
-    test_dir = str(tmp_path / "sessions")
-    with patch("src.session_manager.SESSIONS_DIR", test_dir):
-        os.makedirs(test_dir, exist_ok=True)
-        yield test_dir
+def checkpointer():
+    """In-memory SqliteSaver for testing."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    saver = SqliteSaver(conn=conn)
+    saver.setup()
+    yield saver
+    conn.close()
+
+
+def _put_checkpoint(checkpointer, thread_id, messages):
+    """Helper: store a checkpoint with the given messages for a thread."""
+    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": "", "checkpoint_id": ""}}
+    checkpoint = {
+        "v": 1,
+        "id": thread_id,
+        "ts": "2026-04-13T12:00:00+00:00",
+        "channel_values": {"messages": messages},
+        "channel_versions": {},
+        "versions_seen": {},
+        "pending_sends": [],
+    }
+    metadata = {}
+    checkpointer.put(config, checkpoint, metadata, {})
 
 
 class TestGenerateSessionId:
@@ -37,7 +51,6 @@ class TestGenerateSessionId:
     async def test_limits_to_three_words(self):
         sid = generate_session_id("one two three four five")
         parts = sid.split("_")
-        # Date + 3 words max
         assert len(parts) <= 4
 
     async def test_without_description(self):
@@ -50,174 +63,97 @@ class TestGenerateSessionId:
         assert "@" not in sid
 
 
-class TestSaveSession:
-    """Test saving sessions."""
+class TestListSessions:
+    """Test listing sessions from checkpoints."""
 
-    async def test_save_creates_file(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            history = [("What is AI?", "AI is artificial intelligence.")]
-            filepath = save_session(history, session_id="test_session")
+    async def test_list_empty(self, checkpointer):
+        sessions = list_sessions(checkpointer)
+        assert sessions == []
 
-            assert os.path.exists(filepath)
+    async def test_list_returns_saved_sessions(self, checkpointer):
+        _put_checkpoint(checkpointer, "session_one", [
+            HumanMessage(content="Q1"), AIMessage(content="A1"),
+        ])
+        _put_checkpoint(checkpointer, "session_two", [
+            HumanMessage(content="Q2"), AIMessage(content="A2"),
+        ])
 
-    async def test_save_correct_json_structure(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            history = [("Q1", "A1"), ("Q2", "A2")]
-            filepath = save_session(history, session_id="test_session")
+        sessions = list_sessions(checkpointer)
+        assert len(sessions) == 2
+        ids = [s["session_id"] for s in sessions]
+        assert "session_one" in ids
+        assert "session_two" in ids
 
-            with open(filepath, "r") as f:
-                data = json.load(f)
+    async def test_list_skips_step_threads(self, checkpointer):
+        _put_checkpoint(checkpointer, "main_session", [
+            HumanMessage(content="Q1"), AIMessage(content="A1"),
+        ])
+        _put_checkpoint(checkpointer, "main_session__step_1", [
+            HumanMessage(content="step task"),
+        ])
 
-            assert data["session_id"] == "test_session"
-            assert data["message_count"] == 2
-            assert len(data["history"]) == 2
-            assert data["history"][0]["input"] == "Q1"
-            assert data["history"][0]["output"] == "A1"
-
-    async def test_save_with_description(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            history = [("Q1", "A1")]
-            filepath = save_session(history, description="my research")
-            assert os.path.exists(filepath)
+        sessions = list_sessions(checkpointer)
+        assert len(sessions) == 1
+        assert sessions[0]["session_id"] == "main_session"
 
 
 class TestLoadSession:
-    """Test loading sessions."""
+    """Test loading sessions from checkpoints."""
 
-    async def test_load_restores_history(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            history = [("Q1", "A1"), ("Q2", "A2")]
-            save_session(history, session_id="load_test")
+    async def test_load_restores_history(self, checkpointer):
+        _put_checkpoint(checkpointer, "load_test", [
+            HumanMessage(content="Q1"), AIMessage(content="A1"),
+            HumanMessage(content="Q2"), AIMessage(content="A2"),
+        ])
 
-            loaded = load_session("load_test")
-            assert loaded is not None
-            assert len(loaded) == 2
-            assert loaded[0] == ("Q1", "A1")
-            assert loaded[1] == ("Q2", "A2")
+        loaded = load_session(checkpointer, "load_test")
+        assert loaded is not None
+        assert len(loaded) == 2
+        assert loaded[0] == ("Q1", "A1")
+        assert loaded[1] == ("Q2", "A2")
 
-    async def test_load_nonexistent_returns_none(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            result = load_session("nonexistent_session")
-            assert result is None
-
-    async def test_load_corrupted_json(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            filepath = os.path.join(sessions_dir, "corrupted.json")
-            with open(filepath, "w") as f:
-                f.write("not valid json {{{")
-
-            result = load_session("corrupted")
-            assert result is None
-
-
-class TestListSessions:
-    """Test listing sessions."""
-
-    async def test_list_empty(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            sessions = list_sessions()
-            assert sessions == []
-
-    async def test_list_returns_saved_sessions(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            save_session([("Q1", "A1")], session_id="session_one")
-            save_session([("Q2", "A2")], session_id="session_two")
-
-            sessions = list_sessions()
-            assert len(sessions) == 2
-            ids = [s["session_id"] for s in sessions]
-            assert "session_one" in ids
-            assert "session_two" in ids
-
-    async def test_list_skips_corrupted_files(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            save_session([("Q1", "A1")], session_id="good_session")
-
-            # Create a corrupted file
-            with open(os.path.join(sessions_dir, "bad.json"), "w") as f:
-                f.write("corrupted")
-
-            sessions = list_sessions()
-            assert len(sessions) == 1
+    async def test_load_nonexistent_returns_none(self, checkpointer):
+        result = load_session(checkpointer, "nonexistent_session")
+        assert result is None
 
 
 class TestDeleteSession:
     """Test deleting sessions."""
 
-    async def test_delete_existing(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            save_session([("Q1", "A1")], session_id="to_delete")
-            result = delete_session("to_delete")
-            assert result is True
-            assert not os.path.exists(os.path.join(sessions_dir, "to_delete.json"))
+    async def test_delete_existing(self, checkpointer):
+        _put_checkpoint(checkpointer, "to_delete", [
+            HumanMessage(content="Q1"), AIMessage(content="A1"),
+        ])
+        result = delete_session(checkpointer, "to_delete")
+        assert result is True
 
-    async def test_delete_nonexistent(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            result = delete_session("does_not_exist")
-            assert result is False
+        # Verify it's gone
+        assert load_session(checkpointer, "to_delete") is None
+
+    async def test_delete_nonexistent(self, checkpointer):
+        result = delete_session(checkpointer, "does_not_exist")
+        assert result is False
 
 
 class TestSessionPreview:
     """Test session preview generation."""
 
-    async def test_preview_shows_exchanges(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            save_session([("What is AI?", "AI is...")], session_id="preview_test")
-            preview = get_session_preview("preview_test")
-            assert "What is AI?" in preview
-            assert "AI is..." in preview
+    async def test_preview_shows_exchanges(self, checkpointer):
+        _put_checkpoint(checkpointer, "preview_test", [
+            HumanMessage(content="What is AI?"), AIMessage(content="AI is..."),
+        ])
+        preview = get_session_preview(checkpointer, "preview_test")
+        assert "What is AI?" in preview
+        assert "AI is..." in preview
 
-    async def test_preview_nonexistent(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            result = get_session_preview("nonexistent")
-            assert result is None
+    async def test_preview_nonexistent(self, checkpointer):
+        result = get_session_preview(checkpointer, "nonexistent")
+        assert result is None
 
-    async def test_preview_truncates_long_messages(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            long_msg = "A" * 100
-            save_session([(long_msg, "short")], session_id="long_test")
-            preview = get_session_preview("long_test")
-            assert "..." in preview
-
-
-class TestSessionVersioning:
-    """Test session schema versioning."""
-
-    async def test_saved_session_has_version(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            filepath = save_session([("Q1", "A1")], session_id="versioned")
-
-            with open(filepath, "r") as f:
-                data = json.load(f)
-
-            assert "version" in data
-            assert data["version"] == SESSION_SCHEMA_VERSION
-
-    async def test_loads_session_without_version_field(self, sessions_dir):
-        """Old sessions without a version field should still load (backward compat)."""
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            # Write a session file without a version field (old format)
-            old_session = {
-                "session_id": "old_format",
-                "created_at": "2025-01-01T00:00:00",
-                "updated_at": "2025-01-01T00:00:00",
-                "message_count": 1,
-                "history": [{"input": "Hello", "output": "Hi there"}]
-            }
-            filepath = os.path.join(sessions_dir, "old_format.json")
-            with open(filepath, "w") as f:
-                json.dump(old_session, f)
-
-            history = load_session("old_format")
-            assert history is not None
-            assert len(history) == 1
-            assert history[0] == ("Hello", "Hi there")
-
-    async def test_version_is_string(self, sessions_dir):
-        with patch("src.session_manager.SESSIONS_DIR", sessions_dir):
-            filepath = save_session([("Q1", "A1")], session_id="v_check")
-
-            with open(filepath, "r") as f:
-                data = json.load(f)
-
-            assert isinstance(data["version"], str)
+    async def test_preview_truncates_long_messages(self, checkpointer):
+        long_msg = "A" * 100
+        _put_checkpoint(checkpointer, "long_test", [
+            HumanMessage(content=long_msg), AIMessage(content="short"),
+        ])
+        preview = get_session_preview(checkpointer, "long_test")
+        assert "..." in preview

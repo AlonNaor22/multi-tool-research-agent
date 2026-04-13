@@ -11,12 +11,12 @@ import time
 import pandas as pd
 from datetime import datetime
 from typing import Any, Dict, List
-from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessageChunk, ToolMessage
 
 from src.agent import ResearchAgent
 from src.planner import is_simple_query, ResearchPlan
 from src.multi_agent.supervisor import DelegationPlan
-from src.session_manager import list_sessions
+from src.session_manager import list_sessions, get_session_preview, load_session
 from src.tool_health import format_health_status
 from src.observability import MetricsStore
 from src.rate_limiter import RateLimitExceeded
@@ -374,34 +374,24 @@ with st.sidebar:
     # Session management
     st.header(UI.sidebar.sessions_header)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(UI.sidebar.save_btn, use_container_width=True):
-            if agent.memory.history:
-                path = agent.save_session()
-                st.success(UI.sidebar.saved)
-            else:
-                st.warning(UI.sidebar.nothing_to_save)
-    with col2:
-        if st.button(UI.sidebar.clear_chat_btn, use_container_width=True):
-            agent.memory.clear()
-            agent.current_session_id = None
-            st.session_state.chat_history = []
-            st.session_state.last_metrics = None
-            st.session_state.callback_inbox = []
-            st.rerun()
+    if st.button(UI.sidebar.clear_chat_btn, use_container_width=True):
+        agent.clear_memory()
+        st.session_state.chat_history = []
+        st.session_state.last_metrics = None
+        st.session_state.callback_inbox = []
+        st.rerun()
 
     # Load session
-    sessions = list_sessions()
+    sessions = list_sessions(agent.checkpointer)
     if sessions:
         with st.expander(UI.sidebar.load_session, expanded=False):
             for s in sessions[:10]:
                 label = f"{s['session_id']} ({s['message_count']} msgs)"
                 if st.button(label, key=s["session_id"]):
                     if agent.load_session(s["session_id"]):
-                        # Rebuild chat_history from agent memory
+                        # Rebuild chat_history from checkpoint
                         st.session_state.chat_history = []
-                        for user_input, agent_output in agent.memory.history:
+                        for user_input, agent_output in agent.get_conversation_history():
                             st.session_state.chat_history.append({"role": "user", "content": user_input})
                             st.session_state.chat_history.append({"role": "assistant", "content": agent_output})
                         st.rerun()
@@ -790,8 +780,7 @@ with chat_col:
                     agent.timing_callback.reset()
                     agent.observability_callback.reset(question=prompt)
 
-                    messages = agent.memory.get_messages()
-                    messages.append(HumanMessage(content=prompt))
+                    messages = [HumanMessage(content=prompt)]
 
                     streamed_text = ""
                     math_tool_outputs = []  # Capture math_formatter and chart outputs
@@ -805,13 +794,7 @@ with chat_col:
 
                     for chunk, metadata in agent.agent.stream(
                         {"messages": messages},
-                        config={
-                            "callbacks": [
-                                agent.timing_callback,
-                                agent.observability_callback,
-                            ],
-                            "recursion_limit": 20,
-                        },
+                        config=agent._agent_config(),
                         stream_mode="messages",
                     ):
                         node = metadata.get("langgraph_node", "")
@@ -891,8 +874,7 @@ with chat_col:
 
                     status_placeholder.empty()
 
-                    # Save memory + metrics (direct mode)
-                    agent.memory.add_exchange(prompt, answer)
+                    # Save metrics (direct mode — checkpointer handles conversation history)
                     metrics = agent.observability_callback.get_metrics()
                     agent.metrics_store.save(metrics)
                     agent.rate_limiter.record_tokens(metrics.total_tokens)

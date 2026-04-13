@@ -1,30 +1,24 @@
-"""Persist and load conversation sessions as JSON files."""
+"""Session management backed by LangGraph SqliteSaver checkpoints."""
 
-import os
-import json
 from datetime import datetime
 from typing import List, Dict, Optional
 
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+from src.utils import flatten_content
+
 # ─── Module overview ───────────────────────────────────────────────
-# Persists and loads conversation sessions as JSON files in the
-# sessions/ directory. Each session stores (input, output) exchanges
-# with metadata (timestamps, schema version, message count).
+# Provides session listing, loading, deletion, and preview by
+# querying the SqliteSaver checkpoint database. Replaces the former
+# JSON-file-based session storage with a single SQLite source of truth.
 # ───────────────────────────────────────────────────────────────────
 
-SESSIONS_DIR = "sessions"
-SESSION_SCHEMA_VERSION = "1.0"
 
-
-# Creates the sessions/ directory if it does not exist.
-def ensure_sessions_dir():
-    if not os.path.exists(SESSIONS_DIR):
-        os.makedirs(SESSIONS_DIR)
-
-
-# Takes (description). Builds a filename-safe ID from the date and first 3 words.
-# Returns a date+time fallback when no description is given.
+# Generates a filename-safe session ID from date and optional description.
+# Returns a string like "13.04.2026_climate_policy_research".
 def generate_session_id(description: str = None) -> str:
-    """Generate a filename-safe session ID from date and optional description."""
+    """Generate a human-readable session ID from date and optional description."""
     date_str = datetime.now().strftime('%d.%m.%Y')
 
     if description:
@@ -43,116 +37,89 @@ def generate_session_id(description: str = None) -> str:
     return f"{date_str}_session_{time_str}"
 
 
-# Takes (history, session_id, description). Serializes history tuples to JSON.
-# Returns the file path of the saved session.
-def save_session(history: List[tuple], session_id: Optional[str] = None, description: Optional[str] = None) -> str:
-    """Save history tuples to a JSON session file; return the file path."""
-    ensure_sessions_dir()
+# Takes (checkpointer). Queries all checkpoints grouped by thread_id.
+# Returns list of dicts with session_id, created_at, message_count.
+def list_sessions(checkpointer: SqliteSaver) -> List[Dict]:
+    """List all conversation sessions from the checkpoint database."""
+    seen = {}
+    for checkpoint_tuple in checkpointer.list(None):
+        thread_id = checkpoint_tuple.config["configurable"]["thread_id"]
+        # Skip step-scoped threads (plan-execute intermediates)
+        if "__step_" in thread_id:
+            continue
+        if thread_id in seen:
+            continue
+        messages = checkpoint_tuple.checkpoint.get("channel_values", {}).get("messages", [])
+        msg_count = sum(1 for m in messages if isinstance(m, (HumanMessage, AIMessage)))
+        ts = checkpoint_tuple.checkpoint.get("ts", "")
+        seen[thread_id] = {
+            "session_id": thread_id,
+            "created_at": ts or "Unknown",
+            "message_count": msg_count,
+        }
 
-    if session_id is None:
-        session_id = generate_session_id(description)
-
-    session_data = {
-        "version": SESSION_SCHEMA_VERSION,
-        "session_id": session_id,
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
-        "message_count": len(history),
-        "history": [
-            {"input": inp, "output": out}
-            for inp, out in history
-        ]
-    }
-
-    filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(session_data, f, indent=2, ensure_ascii=False)
-
-    return filepath
-
-
-# Takes (session_id). Reads the JSON file and reconstructs (input, output) tuples.
-# Returns None if the file is missing or corrupt.
-def load_session(session_id: str) -> Optional[List[tuple]]:
-    """Load a session by ID; return (input, output) tuples or None if missing."""
-    filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
-
-    if not os.path.exists(filepath):
-        return None
-
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            session_data = json.load(f)
-
-        # Sessions without a version field are treated as v1.0
-        version = session_data.get("version", "1.0")
-
-        history = [
-            (exchange["input"], exchange["output"])
-            for exchange in session_data["history"]
-        ]
-
-        return history
-
-    except (json.JSONDecodeError, KeyError) as e:
-        print(f"Error loading session: {e}")
-        return None
-
-
-# Scans sessions/ for JSON files and returns metadata dicts sorted newest-first.
-def list_sessions() -> List[Dict]:
-    """Return all saved sessions as dicts with id, created_at, and message_count."""
-    ensure_sessions_dir()
-
-    sessions = []
-
-    for filename in os.listdir(SESSIONS_DIR):
-        if filename.endswith(".json"):
-            filepath = os.path.join(SESSIONS_DIR, filename)
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    sessions.append({
-                        "session_id": data.get("session_id", filename[:-5]),
-                        "created_at": data.get("created_at", "Unknown"),
-                        "message_count": data.get("message_count", len(data.get("history", [])))
-                    })
-            except (json.JSONDecodeError, IOError):
-                continue
-
+    sessions = list(seen.values())
     sessions.sort(key=lambda x: x["created_at"], reverse=True)
-
     return sessions
 
 
-# Takes (session_id). Removes the session JSON file.
-# Returns True if deleted, False if not found.
-def delete_session(session_id: str) -> bool:
-    """Delete a session file by ID; return True if found and deleted."""
-    filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
-
-    if os.path.exists(filepath):
-        os.remove(filepath)
-        return True
-    return False
-
-
-# Takes (session_id, num_messages). Loads the session and formats the first
-# N exchanges as a human-readable preview string. Returns None if missing.
-def get_session_preview(session_id: str, num_messages: int = 3) -> Optional[str]:
-    """Return a formatted preview of the first num_messages exchanges, or None."""
-    history = load_session(session_id)
-
-    if history is None:
+# Takes (checkpointer, session_id). Loads checkpoint and extracts
+# (user_input, agent_output) tuples for display.
+def load_session(checkpointer: SqliteSaver, session_id: str) -> Optional[List[tuple]]:
+    """Load a session's conversation history from the checkpoint database."""
+    config = {"configurable": {"thread_id": session_id}}
+    checkpoint_tuple = checkpointer.get_tuple(config)
+    if checkpoint_tuple is None:
         return None
 
+    messages = checkpoint_tuple.checkpoint.get("channel_values", {}).get("messages", [])
+    pairs = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            pairs.append((msg.content, ""))
+        elif isinstance(msg, AIMessage) and msg.content and pairs:
+            user_input, _ = pairs[-1]
+            text = flatten_content(msg.content, sep="\n") if not isinstance(msg.content, str) else msg.content
+            if text:
+                pairs[-1] = (user_input, text)
+
+    return [(u, a) for u, a in pairs if a]
+
+
+# Takes (checkpointer, session_id). Deletes all checkpoints for a thread.
+# Returns True if checkpoints existed.
+def delete_session(checkpointer: SqliteSaver, session_id: str) -> bool:
+    """Delete all checkpoints for a session thread."""
+    config = {"configurable": {"thread_id": session_id}}
+    checkpoint_tuple = checkpointer.get_tuple(config)
+    if checkpoint_tuple is None:
+        return False
+
+    if hasattr(checkpointer, 'conn'):
+        checkpointer.conn.execute(
+            "DELETE FROM checkpoints WHERE thread_id = ?", (session_id,)
+        )
+        checkpointer.conn.execute(
+            "DELETE FROM writes WHERE thread_id = ?", (session_id,)
+        )
+        checkpointer.conn.commit()
+    return True
+
+
+# Takes (checkpointer, session_id, num_messages). Returns a formatted
+# preview of the first num_messages exchanges, or None if session missing.
+def get_session_preview(checkpointer: SqliteSaver, session_id: str, num_messages: int = 3) -> Optional[str]:
+    """Return a formatted preview of the first few exchanges in a session."""
+    history = load_session(checkpointer, session_id)
+    if history is None:
+        return None
     if not history:
         return "Empty session (no messages)"
 
     preview_lines = []
-    for i, (inp, out) in enumerate(history[:num_messages]):
-        inp_preview = inp[:50] + "..." if len(inp) > 50 else inp
-        out_preview = out[:50] + "..." if len(out) > 50 else out
+    for user_input, agent_output in history[:num_messages]:
+        inp_preview = user_input[:50] + "..." if len(user_input) > 50 else user_input
+        out_preview = agent_output[:50] + "..." if len(agent_output) > 50 else agent_output
         preview_lines.append(f"  Q: {inp_preview}")
         preview_lines.append(f"  A: {out_preview}")
 

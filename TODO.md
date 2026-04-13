@@ -27,10 +27,11 @@ Do in this order — each builds on the previous:
    Defined `ResearchAgentState(AgentState)` and passed as `state_schema`
    to `create_agent()`. Specialists use base `AgentState` explicitly.
 
-2. [ ] **Add LangGraph checkpointing** — `src/agent.py`
-   No `MemorySaver` or `SqliteSaver` is configured; state exists only
-   in-memory. Add `MemorySaver` to `create_agent()` for fault tolerance
-   on long queries. (depends on #1)
+2. [x] **Unified persistence with SqliteSaver** — `src/agent.py`, `src/session_manager.py`
+   Replaced SimpleMemory + JSON session files with SqliteSaver
+   checkpointing to `sessions/checkpoints.db`. Auto-persists full
+   graph state after every node. Sessions listed/loaded/deleted from
+   SQLite. No manual "Save" button needed.
 
 3. [ ] **Inject dependency context as messages** — `src/agent.py`
    Plan-execute steps receive prior findings as plain text in the task

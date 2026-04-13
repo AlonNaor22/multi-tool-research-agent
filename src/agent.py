@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 import queue
+import sqlite3
 import sys
 import threading
 from typing import Dict, Generator, List, Optional
@@ -10,6 +12,7 @@ from typing import Dict, Generator, List, Optional
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent, AgentState
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from src.constants import (
@@ -21,9 +24,13 @@ from src.constants import (
 logger = logging.getLogger(__name__)
 
 # ─── Module overview ───────────────────────────────────────────────
-# LangGraph research agent with memory, plan-and-execute, and
-# multi-agent orchestration. Wires tools, callbacks, and modes.
+# LangGraph research agent with SqliteSaver checkpointing,
+# plan-and-execute, and multi-agent orchestration.
+# State is auto-persisted to sessions/checkpoints.db after every node.
 # ───────────────────────────────────────────────────────────────────
+
+SESSIONS_DIR = "sessions"
+CHECKPOINTS_DB = os.path.join(SESSIONS_DIR, "checkpoints.db")
 
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
 from src.rate_limiter import RateLimiter
@@ -182,52 +189,12 @@ class ResearchAgentState(AgentState):
     pass
 
 
-class SimpleMemory:
-    """Conversation memory storing all exchanges but prompting with only the last k."""
-
-    def __init__(self, k: int = 5):
-        self.k = k
-        self.history = []
-
-    def add_exchange(self, user_input: str, agent_output: str):
-        self.history.append((user_input, agent_output))
-
-    def get_messages(self) -> list:
-        """Return last k exchanges as HumanMessage/AIMessage pairs."""
-        if not self.history:
-            return []
-
-        recent_history = self.history[-self.k:]
-        messages = []
-        for user_input, agent_output in recent_history:
-            messages.append(HumanMessage(content=user_input))
-            messages.append(AIMessage(content=agent_output))
-        return messages
-
-    def get_history_string(self) -> str:
-        """Return last k exchanges as a formatted 'Human:/Assistant:' string."""
-        if not self.history:
-            return "No previous conversation."
-
-        recent_history = self.history[-self.k:]
-        lines = []
-        for user_input, agent_output in recent_history:
-            lines.append(f"Human: {user_input}")
-            lines.append(f"Assistant: {agent_output}")
-        return "\n".join(lines)
-
-    def clear(self):
-        self.history = []
-
-    @property
-    def buffer(self) -> str:
-        return self.get_history_string()
-
-
 class ResearchAgent:
-    """LangGraph-based research agent with tool calling, memory, and multi-agent modes."""
+    """LangGraph-based research agent with SqliteSaver checkpointing and multi-agent modes."""
 
     def __init__(self):
+        from src.session_manager import generate_session_id
+
         self.llm = ChatAnthropic(
             model=MODEL_NAME,
             temperature=TEMPERATURE,
@@ -251,13 +218,18 @@ class ResearchAgent:
         self.tool_health = check_tool_health()
         self.tools, self.disabled_tools = get_available_tools(all_tools, self.tool_health)
 
-        self.memory = SimpleMemory(k=5)
-        self.current_session_id = None
+        self.current_session_id = generate_session_id()
         self.timing_callback = TimingCallbackHandler()
         self.streaming_callback = StreamingCallbackHandler()
         self.observability_callback = ObservabilityCallbackHandler(model_name=MODEL_NAME)
         self.metrics_store = MetricsStore()
         self.rate_limiter = RateLimiter()
+
+        # SqliteSaver auto-persists graph state after every node execution
+        os.makedirs(SESSIONS_DIR, exist_ok=True)
+        self._db_conn = sqlite3.connect(CHECKPOINTS_DB, check_same_thread=False)
+        self.checkpointer = SqliteSaver(conn=self._db_conn)
+        self.checkpointer.setup()
 
         system_prompt = _build_system_prompt(disabled_tools=self.disabled_tools)
         self.agent = create_agent(
@@ -265,27 +237,56 @@ class ResearchAgent:
             tools=self.tools,
             system_prompt=system_prompt,
             state_schema=ResearchAgentState,
+            checkpointer=self.checkpointer,
             debug=VERBOSE,
         )
 
-    # Runs a single research query, updates memory and metrics, returns answer.
+    # Builds the config dict with thread_id, callbacks, and recursion limit.
+    # Accepts overrides for per-call customization.
+    def _agent_config(self, **overrides) -> dict:
+        config = {
+            "configurable": {"thread_id": self.current_session_id},
+            "callbacks": [self.timing_callback, self.observability_callback],
+            "recursion_limit": MAX_ITERATIONS * 2,
+        }
+        config.update(overrides)
+        return config
+
+    # Reads the latest checkpoint for the current thread_id and returns
+    # (user_input, agent_output) tuples for UI display.
+    def get_conversation_history(self) -> List[tuple]:
+        config = {"configurable": {"thread_id": self.current_session_id}}
+        checkpoint_tuple = self.checkpointer.get_tuple(config)
+        if not checkpoint_tuple:
+            return []
+        messages = checkpoint_tuple.checkpoint.get("channel_values", {}).get("messages", [])
+        pairs = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                pairs.append((msg.content, ""))
+            elif isinstance(msg, AIMessage) and msg.content and pairs:
+                # Attach to the last human message
+                user_input, _ = pairs[-1]
+                text = flatten_content(msg.content, sep="\n") if not isinstance(msg.content, str) else msg.content
+                if text:
+                    pairs[-1] = (user_input, text)
+        return [(u, a) for u, a in pairs if a]
+
+    # Runs a single research query, saves metrics, returns answer.
+    # Checkpointer auto-persists full message history.
     async def query(self, question: str, show_timing: bool = True) -> str:
-        """Run a research query async, update memory, and return the answer string."""
+        """Run a research query async and return the answer string."""
         try:
             self.rate_limiter.check_budget()
             self.timing_callback.reset()
             self.observability_callback.reset(question=question)
 
-            messages = self.memory.get_messages()
-            messages.append(HumanMessage(content=question))
             result = await self.agent.ainvoke(
-                {"messages": messages},
-                {"callbacks": [self.timing_callback, self.observability_callback],
-                 "recursion_limit": MAX_ITERATIONS * 2},
+                {"messages": [HumanMessage(content=question)]},
+                self._agent_config(),
             )
 
             answer = extract_ai_answer(result)
-            self.memory.add_exchange(question, answer)
 
             metrics = self.observability_callback.get_metrics()
             self.metrics_store.save(metrics)
@@ -309,21 +310,20 @@ class ResearchAgent:
             self.streaming_callback.reset()
             self.observability_callback.reset(question=question)
 
-            messages = self.memory.get_messages()
-            messages.append(HumanMessage(content=question))
+            config = self._agent_config(
+                callbacks=[self.timing_callback, self.streaming_callback,
+                           self.observability_callback],
+            )
 
             final_result = None
             async for chunk in self.agent.astream(
-                {"messages": messages},
-                {"callbacks": [self.timing_callback, self.streaming_callback,
-                               self.observability_callback],
-                 "recursion_limit": MAX_ITERATIONS * 2},
+                {"messages": [HumanMessage(content=question)]},
+                config,
                 stream_mode="values",
             ):
                 final_result = chunk
 
             answer = extract_ai_answer(final_result) if final_result else "No answer was generated."
-            self.memory.add_exchange(question, answer)
 
             metrics = self.observability_callback.get_metrics()
             self.metrics_store.save(metrics)
@@ -345,47 +345,24 @@ class ResearchAgent:
     def get_last_metrics(self):
         return self.observability_callback.get_metrics()
 
-    # Clears conversation history, resets rate limiter and session ID.
+    # Starts a fresh conversation by generating a new session ID.
+    # The checkpointer keeps old threads intact in SQLite.
     def clear_memory(self):
-        """Clear conversation history, reset rate limiter, and start a new session."""
-        self.memory.clear()
+        """Start a new conversation thread; old sessions remain in SQLite."""
+        from src.session_manager import generate_session_id
         self.rate_limiter.reset()
-        self.current_session_id = None
-        print("Conversation memory cleared.")
+        self.current_session_id = generate_session_id()
+        print("New conversation started.")
 
-    # Returns the current conversation history as a formatted string.
-    def get_memory(self) -> str:
-        return self.memory.buffer
-
-    # Persists session history to a JSON file and tracks the session ID.
-    def save_session(self, session_id: str = None, description: str = None) -> str:
-        """Save session history to JSON, reusing current session ID if set."""
-        from src.session_manager import save_session
-
-        if session_id is None and self.current_session_id is not None:
-            session_id = self.current_session_id
-
-        filepath = save_session(self.memory.history, session_id, description)
-
-        if self.current_session_id is None:
-            import os
-            filename = os.path.basename(filepath)
-            self.current_session_id = filename.replace('.json', '')
-
-        return filepath
-
-    # Restores a previously saved session into memory by its ID.
+    # Switches to an existing session by setting the thread_id.
+    # The checkpointer auto-loads its message history on next invoke.
     def load_session(self, session_id: str) -> bool:
-        """Load a saved session into memory by session_id; return True on success."""
-        from src.session_manager import load_session
-        history = load_session(session_id)
-
-        if history is None:
+        """Switch to an existing session; return True if checkpoint exists."""
+        config = {"configurable": {"thread_id": session_id}}
+        checkpoint_tuple = self.checkpointer.get_tuple(config)
+        if checkpoint_tuple is None:
             return False
-
-        self.memory.history = list(history)
         self.current_session_id = session_id
-
         return True
 
 
@@ -414,16 +391,10 @@ class ResearchAgent:
         self.timing_callback.reset()
         self.observability_callback.reset(question=query)
 
-        messages = self.memory.get_messages()
-        messages.append(HumanMessage(content=query))
-
         final_answer = ""
         for chunk, metadata in self.agent.stream(
-            {"messages": messages},
-            config={
-                "callbacks": [self.timing_callback, self.observability_callback],
-                "recursion_limit": MAX_ITERATIONS * 2,
-            },
+            {"messages": [HumanMessage(content=query)]},
+            config=self._agent_config(),
             stream_mode="messages",
         ):
             node = metadata.get("langgraph_node", "")
@@ -440,7 +411,6 @@ class ResearchAgent:
                     "tool_output": chunk.content or "",
                 }
 
-        self.memory.add_exchange(query, final_answer)
         metrics = self.observability_callback.get_metrics()
         self.metrics_store.save(metrics)
         self.rate_limiter.record_tokens(metrics.total_tokens)
@@ -468,7 +438,6 @@ class ResearchAgent:
             answer = await orchestrator.run_verbose(query)
         else:
             answer = await orchestrator.run(query)
-        self.memory.add_exchange(query, answer)
         metrics = self.observability_callback.get_metrics()
         self.metrics_store.save(metrics)
         self.rate_limiter.record_tokens(metrics.total_tokens)
@@ -479,13 +448,8 @@ class ResearchAgent:
         """Yield typed multi-agent events (sync generator) for Streamlit UI."""
         self.observability_callback.reset(question=query)
         orchestrator = self._get_orchestrator()
-        final_answer = ""
         for event in orchestrator.stream(query):
             yield event
-            if event.get("type") == EVENT_DONE:
-                final_answer = event.get("answer", "")
-        if final_answer:
-            self.memory.add_exchange(query, final_answer)
         metrics = self.observability_callback.get_metrics()
         self.metrics_store.save(metrics)
         self.rate_limiter.record_tokens(metrics.total_tokens)
@@ -510,9 +474,13 @@ class ResearchAgent:
             if dep_parts:
                 task += "\n\nContext from prior steps:\n" + "\n".join(dep_parts)
 
+        step_config = self._agent_config(
+            recursion_limit=20,
+            configurable={"thread_id": f"{self.current_session_id}__step_{step.step_number}"},
+        )
         result = await self.agent.ainvoke(
             {"messages": [HumanMessage(content=task)]},
-            {"recursion_limit": 20, "callbacks": [self.observability_callback]},
+            step_config,
         )
         return extract_ai_answer(result)
 
@@ -615,7 +583,6 @@ class ResearchAgent:
         if verbose:
             print()
 
-        self.memory.add_exchange(query, final_answer)
         metrics = self.observability_callback.get_metrics()
         self.metrics_store.save(metrics)
         self.rate_limiter.record_tokens(metrics.total_tokens)
@@ -632,11 +599,10 @@ class ResearchAgent:
         yield {"type": EVENT_PLAN_CREATED, "plan": plan}
 
         if plan.is_simple:
-            messages_in = [HumanMessage(content=query)]
             final_answer = ""
             for chunk, metadata in self.agent.stream(
-                {"messages": messages_in},
-                config={"recursion_limit": 20},
+                {"messages": [HumanMessage(content=query)]},
+                config=self._agent_config(recursion_limit=20),
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
@@ -738,7 +704,6 @@ class ResearchAgent:
                 final_answer += text
                 yield {"type": EVENT_SYNTHESIS_TOKEN, "token": text}
 
-        self.memory.add_exchange(query, final_answer)
         metrics = self.observability_callback.get_metrics()
         self.metrics_store.save(metrics)
         self.rate_limiter.record_tokens(metrics.total_tokens)

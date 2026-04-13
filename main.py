@@ -132,9 +132,9 @@ def print_banner(plan_mode: bool = False, multi_agent_mode: bool = False):
     print("\nCommands:")
     print("  Type your question to research")
     print("  'clear'    - Clear conversation memory")
-    print("  'save'     - Save current session")
     print("  'load'     - Load a previous session")
     print("  'sessions' - List all saved sessions")
+    print("  'history'  - Show conversation history")
     print("  'stats'    - Show performance stats")
     print("  'quit'     - Exit the program")
     print()
@@ -189,30 +189,14 @@ async def main():
                 print("Started fresh conversation.\n")
                 continue
 
-            # Check for save session command
+            # Save is no longer needed — sessions are auto-persisted
             if query.lower() == "save":
-                if not agent.memory.history:
-                    print("Nothing to save - no conversation yet.\n")
-                else:
-                    is_new = agent.current_session_id is None
-                    description = None
-
-                    # Ask for description only when creating a new session
-                    if is_new:
-                        description = input("Session description (3 words max, or press Enter to skip): ").strip()
-                        if not description:
-                            description = None
-
-                    filepath = agent.save_session(description=description)
-                    if is_new:
-                        print(f"New session created: {filepath}\n")
-                    else:
-                        print(f"Session updated: {filepath}\n")
+                print("Sessions are auto-saved.\n")
                 continue
 
             # Check for load session command
             if query.lower() == "load":
-                sessions = list_sessions()
+                sessions = list_sessions(agent.checkpointer)
                 if not sessions:
                     print("No saved sessions found.\n")
                 else:
@@ -237,8 +221,7 @@ async def main():
                             session_id = choice  # Treat as session ID
 
                         if agent.load_session(session_id):
-                            print(f"Loaded session: {session_id}")
-                            print(f"Restored {len(agent.memory.history)} messages.\n")
+                            print(f"Loaded session: {session_id}\n")
                         else:
                             print(f"Could not load session: {session_id}\n")
                 continue
@@ -252,7 +235,7 @@ async def main():
 
             # Check for list sessions command
             if query.lower() == "sessions":
-                sessions = list_sessions()
+                sessions = list_sessions(agent.checkpointer)
                 if not sessions:
                     print("No saved sessions found.\n")
                 else:
@@ -262,10 +245,24 @@ async def main():
                         print(f"  {s['session_id']}")
                         print(f"    Created: {s['created_at'][:19]}")
                         print(f"    Messages: {s['message_count']}")
-                        preview = get_session_preview(s['session_id'], 1)
+                        preview = get_session_preview(agent.checkpointer, s['session_id'], 1)
                         if preview:
                             print(f"    Preview:\n{preview}")
                         print()
+                continue
+
+            # Check for history command
+            if query.lower() == "history":
+                history = agent.get_conversation_history()
+                if not history:
+                    print("No conversation history yet.\n")
+                else:
+                    print("\nConversation history:")
+                    print("-" * 50)
+                    for i, (user_input, assistant_output) in enumerate(history, 1):
+                        print(f"  [{i}] You: {user_input[:80]}{'...' if len(user_input) > 80 else ''}")
+                        print(f"      Agent: {assistant_output[:80]}{'...' if len(assistant_output) > 80 else ''}")
+                    print()
                 continue
 
             # Skip empty input
