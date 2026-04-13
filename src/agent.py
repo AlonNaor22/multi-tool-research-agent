@@ -1,7 +1,11 @@
 """LangGraph research agent with memory, plan-and-execute, and multi-agent orchestration."""
 
+import asyncio
+import logging
+import queue
 import sys
-from typing import Generator, List, Optional
+import threading
+from typing import Dict, Generator, List, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
@@ -11,8 +15,10 @@ from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from src.constants import (
     EVENT_PLAN_CREATED, EVENT_SYNTHESIS_TOKEN, EVENT_DONE,
     EVENT_STEP_STARTED, EVENT_STEP_TOOL, EVENT_STEP_DONE,
-    STATUS_IN_PROGRESS, STATUS_DONE,
+    EVENT_WAVE_STARTED, STATUS_IN_PROGRESS, STATUS_DONE,
 )
+
+logger = logging.getLogger(__name__)
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
 from src.rate_limiter import RateLimiter
 from src.tool_health import check_tool_health, get_available_tools
@@ -451,8 +457,32 @@ class ResearchAgent:
         self.metrics_store.save(metrics)
         self.rate_limiter.record_tokens(metrics.total_tokens)
 
+    async def _run_step(
+        self,
+        step,
+        plan,
+        completed_findings: Dict[int, str],
+    ) -> str:
+        """Execute a single plan step, injecting context from declared dependencies."""
+        task = f"Research task: {step.description}\n\nFocus specifically on this task. Be thorough but concise."
+
+        deps = plan.depends_on.get(step.step_number, [])
+        if deps:
+            dep_parts = [
+                f"[Step {d} findings]: {completed_findings[d]}"
+                for d in deps if d in completed_findings
+            ]
+            if dep_parts:
+                task += "\n\nContext from prior steps:\n" + "\n".join(dep_parts)
+
+        result = await self.agent.ainvoke(
+            {"messages": [HumanMessage(content=task)]},
+            {"recursion_limit": 20, "callbacks": [self.observability_callback]},
+        )
+        return extract_ai_answer(result)
+
     async def plan_and_execute(self, query: str, verbose: bool = True) -> str:
-        """Generate a plan, execute each step, and synthesize findings into an answer."""
+        """Generate a plan, execute steps in dependency-driven waves, synthesize."""
         from src.planner import generate_plan
 
         self.observability_callback.reset(question=query)
@@ -470,46 +500,58 @@ class ResearchAgent:
         if verbose:
             print(f"\nResearch Plan ({len(plan.steps)} steps):")
             for step in plan.steps:
-                print(f"  {step.step_number}. {step.description}")
+                deps = plan.depends_on.get(step.step_number, [])
+                dep_info = f"  (depends on: {deps})" if deps else ""
+                print(f"  {step.step_number}. {step.description}{dep_info}")
                 if step.expected_tools:
                     print(f"     Tools: {', '.join(step.expected_tools)}")
             print()
 
-        all_findings = []
-        for i, step in enumerate(plan.steps):
+        completed_findings: Dict[int, str] = {}
+        pending = {s.step_number for s in plan.steps}
+        step_map = {s.step_number: (i, s) for i, s in enumerate(plan.steps)}
+        wave = 0
+
+        while pending:
+            ready = [
+                sn for sn in sorted(pending)
+                if all(d in completed_findings for d in plan.depends_on.get(sn, []))
+            ]
+            if not ready:
+                logger.warning("No ready steps — possible circular dependency; breaking")
+                break
+
+            parallel_note = " (parallel)" if len(ready) > 1 else ""
             if verbose:
                 print(f"\n{'=' * 60}")
-                print(f"Step {step.step_number}: {step.description}")
+                print(f"Wave {wave + 1}{parallel_note}: Steps {ready}")
                 print(f"{'=' * 60}")
 
-            step_messages = [
-                HumanMessage(
-                    content=(
-                        f"Research task: {step.description}\n\n"
-                        f"Focus specifically on this task. Be thorough but concise."
-                    )
-                )
-            ]
-            try:
-                result = await self.agent.ainvoke(
-                    {"messages": step_messages},
-                    {"recursion_limit": 20,
-                     "callbacks": [self.observability_callback]},
-                )
-                findings = extract_ai_answer(result)
-            except Exception as e:
-                findings = f"Error in step {step.step_number}: {str(e)}"
+            async def _exec(sn: int) -> tuple:
+                idx, step = step_map[sn]
+                try:
+                    findings = await self._run_step(step, plan, completed_findings)
+                except Exception as e:
+                    findings = f"Error in step {sn}: {str(e)}"
+                return sn, idx, findings
 
-            plan.steps[i] = step.model_copy(
-                update={"status": STATUS_DONE, "findings": findings}
-            )
-            all_findings.append(
-                f"Step {step.step_number} \u2014 {step.description}:\n{findings}"
-            )
-            if verbose:
-                print(f"\u2705 Step {step.step_number} complete")
+            results = await asyncio.gather(*[_exec(sn) for sn in ready])
 
-        steps_text = "\n\n".join(all_findings)
+            for sn, idx, findings in results:
+                completed_findings[sn] = findings
+                pending.discard(sn)
+                plan.steps[idx] = plan.steps[idx].model_copy(
+                    update={"status": STATUS_DONE, "findings": findings}
+                )
+                if verbose:
+                    print(f"\u2705 Step {sn} complete")
+
+            wave += 1
+
+        steps_text = "\n\n".join(
+            f"Step {s.step_number} \u2014 {s.description}:\n{s.findings}"
+            for s in plan.steps
+        )
         synthesis_prompt = (
             f"Synthesize these research findings into a comprehensive answer.\n\n"
             f"Original question: {query}\n\n"
@@ -570,55 +612,76 @@ class ResearchAgent:
             yield {"type": EVENT_DONE, "answer": final_answer, "plan": plan}
             return
 
-        for i, step in enumerate(plan.steps):
-            plan.steps[i] = step.model_copy(update={"status": STATUS_IN_PROGRESS})
-            yield {"type": EVENT_STEP_STARTED, "step_idx": i, "plan": plan}
+        # --- Wave-based parallel execution via async-to-sync bridge ---
+        _SENTINEL = object()
+        q: queue.Queue = queue.Queue()
+        agent_ref = self
 
-            step_messages = [
-                HumanMessage(
-                    content=(
-                        f"Research task: {step.description}\n\n"
-                        f"Focus specifically on this task. Be thorough but concise."
+        async def _drive() -> None:
+            completed_findings: Dict[int, str] = {}
+            pending = {s.step_number for s in plan.steps}
+            step_map = {s.step_number: (i, s) for i, s in enumerate(plan.steps)}
+            wave = 0
+
+            while pending:
+                ready = [
+                    sn for sn in sorted(pending)
+                    if all(d in completed_findings for d in plan.depends_on.get(sn, []))
+                ]
+                if not ready:
+                    logger.warning("No ready steps — possible circular dependency; breaking")
+                    break
+
+                q.put({"type": EVENT_WAVE_STARTED, "wave_idx": wave, "step_numbers": ready})
+
+                for sn in ready:
+                    idx, step = step_map[sn]
+                    plan.steps[idx] = step.model_copy(update={"status": STATUS_IN_PROGRESS})
+                    q.put({"type": EVENT_STEP_STARTED, "step_idx": idx, "plan": plan})
+
+                async def _exec(sn: int) -> tuple:
+                    idx, step = step_map[sn]
+                    try:
+                        findings = await agent_ref._run_step(step, plan, completed_findings)
+                    except Exception as e:
+                        findings = f"Error in step {sn}: {str(e)}"
+                    return sn, idx, findings
+
+                results = await asyncio.gather(*[_exec(sn) for sn in ready])
+
+                for sn, idx, findings in results:
+                    completed_findings[sn] = findings
+                    pending.discard(sn)
+                    plan.steps[idx] = plan.steps[idx].model_copy(
+                        update={"status": STATUS_DONE, "findings": findings}
                     )
-                )
-            ]
+                    q.put({"type": EVENT_STEP_DONE, "step_idx": idx, "plan": plan})
 
-            inner_result = None
-            for update in self.agent.stream(
-                {"messages": step_messages},
-                config={"recursion_limit": 20},
-                stream_mode="updates",
-            ):
-                inner_result = update
-                for node_name, node_output in update.items():
-                    if node_name == "tools":
-                        msgs = node_output.get("messages", [])
-                        for msg in msgs:
-                            if isinstance(msg, ToolMessage):
-                                yield {
-                                    "type": EVENT_STEP_TOOL,
-                                    "step_idx": i,
-                                    "tool_name": msg.name or "tool",
-                                    "tool_output": msg.content or "",
-                                }
+                wave += 1
 
-            findings = ""
-            if inner_result:
-                for node_name, node_output in inner_result.items():
-                    msgs = node_output.get("messages", [])
-                    for msg in reversed(msgs):
-                        if isinstance(msg, AIMessage) and msg.content:
-                            findings = flatten_content(msg.content, sep="\n")
-                            if findings:
-                                break
-                    if findings:
-                        break
+        def _runner() -> None:
+            try:
+                asyncio.run(_drive())
+            except BaseException as exc:
+                q.put(("error", exc))
+                return
+            q.put(("done", _SENTINEL))
 
-            plan.steps[i] = plan.steps[i].model_copy(
-                update={"status": STATUS_DONE, "findings": findings}
-            )
-            yield {"type": EVENT_STEP_DONE, "step_idx": i, "plan": plan}
+        worker = threading.Thread(target=_runner, daemon=True)
+        worker.start()
 
+        while True:
+            item = q.get()
+            if isinstance(item, dict):
+                yield item
+            elif isinstance(item, tuple) and item[0] == "error":
+                worker.join()
+                raise item[1]
+            else:
+                break
+        worker.join()
+
+        # --- Synthesis phase (sync, same as before) ---
         steps_text = "\n\n".join(
             f"Step {s.step_number} \u2014 {s.description}:\n{s.findings}"
             for s in plan.steps

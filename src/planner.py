@@ -1,7 +1,8 @@
 """Plan generation with complexity detection for plan-and-execute research mode."""
 
 import json
-from typing import List
+import logging
+from typing import Dict, List
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field
 from src.constants import STATUS_PENDING, StepStatus
 from src.utils import flatten_content
 
+logger = logging.getLogger(__name__)
 
 _SIMPLE_STARTERS = (
     "what is ", "what are ", "who is ", "who are ", "when did ", "when is ",
@@ -42,15 +44,16 @@ class ResearchStep(BaseModel):
 
 
 class ResearchPlan(BaseModel):
-    """Multi-step research plan; is_simple=True bypasses planning."""
+    """Multi-step research plan with dependency graph for parallel execution."""
     query: str
     steps: List[ResearchStep] = Field(default_factory=list)
+    depends_on: Dict[int, List[int]] = Field(default_factory=dict)
     is_simple: bool = False
 
 
 _PLANNER_SYSTEM = """\
 You are a research planning assistant.
-Given a complex research query, decompose it into 3–6 concrete, sequential research steps.
+Given a complex research query, decompose it into 3–6 concrete research steps.
 
 For each step specify:
 - A clear description of what to research in this step
@@ -58,17 +61,60 @@ For each step specify:
   news_search, google_scholar, reddit_search, youtube_search, fetch_url, pdf_reader,
   python_repl, calculator, wolfram_alpha, weather, wikidata, translate)
 
+RULES:
+1. Use depends_on to declare which steps need another step's output.
+2. Steps with no dependencies run in parallel automatically — don't make them sequential \
+unless one truly needs the other's findings.
+3. A final comparison/synthesis step should depend on all the research steps it draws from.
+
 Respond with ONLY valid JSON (no markdown fences, no commentary):
 {
   "steps": [
-    {
-      "step_number": 1,
-      "description": "...",
-      "expected_tools": ["tool1", "tool2"]
-    }
-  ]
+    {"step_number": 1, "description": "Research topic A", "expected_tools": ["web_search"]},
+    {"step_number": 2, "description": "Research topic B", "expected_tools": ["web_search"]},
+    {"step_number": 3, "description": "Compare A and B findings", "expected_tools": ["python_repl"]}
+  ],
+  "depends_on": {
+    "1": [],
+    "2": [],
+    "3": [1, 2]
+  }
 }
 """
+
+
+def _parse_depends_on(
+    data: dict, valid_steps: set[int],
+) -> Dict[int, List[int]]:
+    """Extract and validate depends_on from LLM response JSON.
+
+    Falls back to a sequential chain if the field is missing.
+    """
+    raw = data.get("depends_on")
+    if not raw or not isinstance(raw, dict):
+        # Fallback: sequential chain (step N depends on N-1)
+        sorted_steps = sorted(valid_steps)
+        deps: Dict[int, List[int]] = {sorted_steps[0]: []}
+        for prev, cur in zip(sorted_steps, sorted_steps[1:]):
+            deps[cur] = [prev]
+        return deps
+
+    deps = {}
+    for key, val in raw.items():
+        try:
+            sn = int(key)
+        except (ValueError, TypeError):
+            continue
+        if sn not in valid_steps:
+            continue
+        dep_list = [int(d) for d in val if int(d) in valid_steps and int(d) != sn]
+        deps[sn] = dep_list
+
+    # Ensure every step has an entry
+    for sn in valid_steps:
+        deps.setdefault(sn, [])
+
+    return deps
 
 
 def generate_plan(query: str, llm: ChatAnthropic) -> ResearchPlan:
@@ -95,7 +141,9 @@ def generate_plan(query: str, llm: ChatAnthropic) -> ResearchPlan:
         ]
         if not steps:
             raise ValueError("Empty steps list")
-        return ResearchPlan(query=query, steps=steps)
+
+        depends_on = _parse_depends_on(data, {s.step_number for s in steps})
+        return ResearchPlan(query=query, steps=steps, depends_on=depends_on)
 
     except Exception:
         return ResearchPlan(
@@ -107,4 +155,5 @@ def generate_plan(query: str, llm: ChatAnthropic) -> ResearchPlan:
                     expected_tools=["web_search", "wikipedia"],
                 )
             ],
+            depends_on={1: []},
         )

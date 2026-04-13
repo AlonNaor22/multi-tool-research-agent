@@ -9,75 +9,12 @@ Within each category, items are ordered by **importance** (highest first).
 
 ---
 
-## Architecture audit (latest pass)
-
-Dead code, missing wiring, and inconsistencies found across all three
-research modes.
-
-1. [x] **Delete dead `_build_plan_execute_graph()`** — `src/agent.py`
-   Removed 90 lines of unused LangGraph StateGraph + `StateGraph`/`END`/
-   `START` imports, `TypedDict`, `Annotated`, `operator`. The plan-execute
-   methods use their own inline loops and never called this graph.
-
-2. [x] **Delete dead `Supervisor.synthesize()`** — `src/multi_agent/supervisor.py`
-   Removed the method and its `SUPERVISOR_SYNTHESIZE_PROMPT` import.
-
-3. [x] **Wire `SUPERVISOR_SYNTHESIZE_PROMPT` into orchestrator synthesis** —
-   `src/multi_agent/orchestrator.py`
-   Synthesis now uses `[SystemMessage(SUPERVISOR_SYNTHESIZE_PROMPT),
-   HumanMessage(content)]` instead of a bare HumanMessage.
-
-4. [x] **Add metrics save to multi-agent mode** — `src/agent.py`
-   Both `multi_agent_query()` and `multi_agent_stream()` now reset
-   the observability callback before, and save metrics + record tokens
-   after execution.
-
-5. [x] **Add callbacks to plan-execute methods** — `src/agent.py`
-   Both `plan_and_execute()` and `plan_and_execute_stream()` now reset
-   the observability callback, pass it to agent calls, and save
-   metrics + record tokens after completion.
-
-6. [x] **Centralize mode selection into `route_query()`** — `src/agent.py`
-   New `route_query(query, mode)` sync generator routes to the correct
-   mode (multi-agent, plan-execute, or direct) based on mode string.
-   New `_direct_stream(query)` implements direct mode as a sync generator
-   yielding the same event types as other modes. `app.py` and `main.py`
-   can delegate to `route_query()` instead of duplicating routing logic.
-
-7. [x] **Add error handling to plan-execute** — `src/agent.py`
-   `plan_and_execute()` now wraps each step's `ainvoke` and the
-   synthesis `astream` in try/except, returning degraded error strings
-   instead of crashing the pipeline.
-
----
-
 ## LangGraph architecture & orchestration
 
-1. [ ] **Phases serial even when independent; prior context injected blindly**
-   (audit #2) — `src/multi_agent/orchestrator.py`
-   Add `depends_on: Dict[str, List[str]]` to `DelegationPlan`; inject
-   context only from declared dependencies.
-
-2. [ ] **Plan-execute runs steps strictly sequentially** (audit #4) —
+1. [ ] **Plan-execute runs steps strictly sequentially** (audit #4) —
    `src/agent.py`
    Add `depends_on` to `PlanStep`; use `asyncio.gather` to batch
    independent steps.
-
-3. [ ] **Pydantic `model_dump` round-trip on every node call** (audit #5) —
-   `src/agent.py`
-   Store plan data once; keep mutable step state as separate keys.
-
----
-
-## Context & token efficiency
-
-1. [ ] **`prior_context` truncates at 500 chars arbitrarily** (audit #6) —
-   `src/multi_agent/orchestrator.py`
-   Pass full prior outputs, or generate a supervisor-summarized rollup
-   per phase boundary.
-
-2. [ ] **`prior_context` grows quadratically** (audit #10) —
-   Same mitigation as above. Fix together.
 
 ---
 
@@ -94,11 +31,6 @@ research modes.
 3. [ ] **Timeout sentinel vs plain degraded string** —
    `src/multi_agent/specialists.py` + orchestrator
    Return a structured signal so synthesis can skip timed-out specialists.
-
-4. [ ] **Research agent prompt vague about tool names** —
-   `src/multi_agent/prompts.py`
-   `RESEARCH_AGENT_PROMPT` doesn't mention `parallel_search` or list
-   exact tool names matching `SPECIALIST_DEFINITIONS`.
 
 ---
 
@@ -127,34 +59,32 @@ research modes.
 
 ---
 
-## Recommended ordering (quick reference)
-
-Architecture audit fixes (do first — these are bugs/dead code):
-1. Architecture #1 — delete dead plan-execute graph
-2. Architecture #2 — delete dead Supervisor.synthesize()
-3. Architecture #3 — wire SUPERVISOR_SYNTHESIZE_PROMPT into orchestrator
-4. Architecture #4 — add metrics to multi-agent mode
-5. Architecture #5 — add callbacks to plan-execute
-6. Architecture #6 — centralize mode selection
-7. Architecture #7 — error handling for plan-execute + synthesis
-
-Then deeper improvements:
-8. LangGraph #1 — depends_on + fan-out
-9. Context #1+#2 — prior_context strategy
-10. Cleanup items
-
----
-
 ## Done (for context)
 
 ### Architecture audit
-- [x] **Unify orchestrator around single async event generator**
-  (audit #1, #7, #12) — `_astream_events` as single source of truth
+- [x] **Delete dead `_build_plan_execute_graph()`** — `src/agent.py`
+- [x] **Delete dead `Supervisor.synthesize()`** — `src/multi_agent/supervisor.py`
+- [x] **Wire `SUPERVISOR_SYNTHESIZE_PROMPT` into orchestrator synthesis** — `src/multi_agent/orchestrator.py`
+- [x] **Add metrics save to multi-agent mode** — `src/agent.py`
+- [x] **Add callbacks to plan-execute methods** — `src/agent.py`
+- [x] **Centralize mode selection into `route_query()`** — `src/agent.py`
+- [x] **Add error handling to plan-execute** — `src/agent.py`
+- [x] **Unify orchestrator around single async event generator** (audit #1, #7, #12)
 - [x] **Fold no-op `replan` node into `execute_step`** (audit #3, #13)
 - [x] **Async `create_delegation_plan`** (audit #8)
 - [x] **Per-specialist `recursion_limit` + `timeout_seconds`** (audit #9)
 - [x] **Consolidate content-block flattener** (audit #11)
 - [x] **Log supervisor fallback exceptions** (audit #14)
+
+### LangGraph architecture & orchestration
+- [x] **depends_on + fan-out for orchestrator phases** — wave-based parallel dispatch with `asyncio.gather`, context only from declared deps (commit 2d43a74)
+- [x] **Pydantic `model_dump` round-trip** — code already uses `model_copy()` efficiently; no round-trip issue exists
+
+### Context & token efficiency
+- [x] **`prior_context` truncation + quadratic growth** — resolved by `depends_on` approach; no 500-char truncation exists, context injected only from declared dependencies
+
+### Code cleanup
+- [x] **Research agent prompt vague about tool names** — prompt now lists specific tools (web_search, arxiv_search, google_scholar, etc.)
 
 ### Codebase improvements
 - [x] Migrate tools to `@tool` decorator + `BaseTool` subclass

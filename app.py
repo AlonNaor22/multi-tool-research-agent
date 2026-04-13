@@ -402,7 +402,9 @@ def _render_plan(plan: ResearchPlan) -> str:
     for step in plan.steps:
         icon = STATUS_ICON.get(step.status, "⏳")
         tools_hint = f" *(tools: {', '.join(step.expected_tools)})*" if step.expected_tools else ""
-        lines.append(f"{icon} **Step {step.step_number}**: {step.description}{tools_hint}")
+        deps = plan.depends_on.get(step.step_number, [])
+        dep_hint = f" *\u2192 depends on: {', '.join(f'Step {d}' for d in deps)}*" if deps else ""
+        lines.append(f"{icon} **Step {step.step_number}**: {step.description}{tools_hint}{dep_hint}")
         if step.status == STATUS_DONE and step.findings:
             short = step.findings[:200].replace("\n", " ")
             if len(step.findings) > 200:

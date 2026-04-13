@@ -112,6 +112,7 @@ EVENT_DONE = "done"
 EVENT_STEP_STARTED = "step_started"
 EVENT_STEP_TOOL = "step_tool"
 EVENT_STEP_DONE = "step_done"
+EVENT_WAVE_STARTED = "wave_started"
 
 # ---------------------------------------------------------------------------
 # Research modes (UI radio selection)
