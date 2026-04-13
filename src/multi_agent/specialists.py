@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from langchain_anthropic import ChatAnthropic
-from langchain.agents import create_agent
+from langchain.agents import create_agent, AgentState
 from langchain_core.messages import HumanMessage
 
 from src.constants import (
@@ -130,6 +130,7 @@ class SpecialistAgent:
                 model=llm,
                 tools=self.tools,
                 system_prompt=system_prompt,
+                state_schema=AgentState,
                 debug=False,
             )
 

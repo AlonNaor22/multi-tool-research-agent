@@ -8,7 +8,7 @@ import threading
 from typing import Dict, Generator, List, Optional
 
 from langchain_anthropic import ChatAnthropic
-from langchain.agents import create_agent
+from langchain.agents import create_agent, AgentState
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
@@ -174,6 +174,14 @@ def _build_system_prompt(disabled_tools: list = None) -> str:
 SYSTEM_PROMPT = _build_system_prompt()
 
 
+# Explicit state schema for the research agent graph.
+# Extends AgentState (messages + internal control fields).
+# Extension point for future fields (memory summary, plan data).
+class ResearchAgentState(AgentState):
+    """Typed state schema for the research agent LangGraph."""
+    pass
+
+
 class SimpleMemory:
     """Conversation memory storing all exchanges but prompting with only the last k."""
 
@@ -256,6 +264,7 @@ class ResearchAgent:
             model=self.llm,
             tools=self.tools,
             system_prompt=system_prompt,
+            state_schema=ResearchAgentState,
             debug=VERBOSE,
         )
 

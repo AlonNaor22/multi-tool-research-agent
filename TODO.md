@@ -11,10 +11,36 @@ Within each category, items are ordered by **importance** (highest first).
 
 ## LangGraph architecture & orchestration
 
-1. [ ] **Plan-execute runs steps strictly sequentially** (audit #4) —
+1. [x] **Plan-execute runs steps strictly sequentially** (audit #4) —
    `src/agent.py`
-   Add `depends_on` to `PlanStep`; use `asyncio.gather` to batch
-   independent steps.
+   Added `depends_on` to `ResearchPlan`; wave-based parallel execution
+   with `asyncio.gather` and async-to-sync bridge for Streamlit streaming.
+   (commit 3cac7e3)
+
+---
+
+## Agent state & graph improvements (from state audit)
+
+Do in this order — each builds on the previous:
+
+1. [x] **Explicit state schema** — `src/agent.py`
+   Defined `ResearchAgentState(AgentState)` and passed as `state_schema`
+   to `create_agent()`. Specialists use base `AgentState` explicitly.
+
+2. [ ] **Add LangGraph checkpointing** — `src/agent.py`
+   No `MemorySaver` or `SqliteSaver` is configured; state exists only
+   in-memory. Add `MemorySaver` to `create_agent()` for fault tolerance
+   on long queries. (depends on #1)
+
+3. [ ] **Inject dependency context as messages** — `src/agent.py`
+   Plan-execute steps receive prior findings as plain text in the task
+   string. Pass them as actual `AIMessage` objects so the agent can
+   reason about and follow up on prior findings naturally.
+
+4. [ ] **Memory as a LangGraph node** — `src/agent.py`
+   `SimpleMemory` is manually prepended in Python before each invoke.
+   Formalize as a graph node for LLM-aware summarization/pruning of
+   long conversation history. (depends on #1 and #2)
 
 ---
 
@@ -69,6 +95,7 @@ Within each category, items are ordered by **importance** (highest first).
 ### LangGraph architecture & orchestration
 - [x] **depends_on + fan-out for orchestrator phases** — wave-based parallel dispatch with `asyncio.gather`, context only from declared deps (commit 2d43a74)
 - [x] **Pydantic `model_dump` round-trip** — code already uses `model_copy()` efficiently; no round-trip issue exists
+- [x] **Plan-execute parallel steps** — added `depends_on` to `ResearchPlan`, wave-based execution with async-to-sync bridge (commit 3cac7e3)
 
 ### Context & token efficiency
 - [x] **`prior_context` truncation + quadratic growth** — resolved by `depends_on` approach; no 500-char truncation exists, context injected only from declared dependencies
