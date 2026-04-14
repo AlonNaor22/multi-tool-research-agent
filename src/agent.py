@@ -6,12 +6,15 @@ import os
 import queue
 import sys
 import threading
-from typing import Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional
+from typing_extensions import NotRequired
 
 import aiosqlite
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent, AgentState
-from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, RemoveMessage, ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately, trim_messages
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
@@ -31,6 +34,13 @@ logger = logging.getLogger(__name__)
 
 SESSIONS_DIR = "sessions"
 CHECKPOINTS_DB = os.path.join(SESSIONS_DIR, "checkpoints.db")
+
+# Trigger summarize-then-keep-recent trimming when the live message channel
+# exceeds this many approximate tokens. After trimming, the kept recent
+# portion fits within HISTORY_KEEP_RECENT_TOKENS. Conservative defaults so
+# the feature is testable on realistic conversations without needing 200k.
+HISTORY_TRIM_THRESHOLD_TOKENS = 8000
+HISTORY_KEEP_RECENT_TOKENS = 4000
 
 from src.observability import ObservabilityCallbackHandler, MetricsStore, format_query_metrics
 from src.rate_limiter import RateLimiter
@@ -182,11 +192,12 @@ SYSTEM_PROMPT = _build_system_prompt()
 
 
 # Explicit state schema for the research agent graph.
-# Extends AgentState (messages + internal control fields).
-# Extension point for future fields (memory summary, plan data).
+# Extends AgentState (messages + internal control fields). The
+# `summarized_message_count` field is telemetry only — the rolling
+# summary itself lives in the `messages` channel as a marked AIMessage.
 class ResearchAgentState(AgentState):
     """Typed state schema for the research agent LangGraph."""
-    pass
+    summarized_message_count: NotRequired[int]
 
 
 # Persistent daemon thread running an asyncio loop, used to initialize
@@ -214,6 +225,160 @@ class _PersistentLoopThread:
     def run(self, coro):
         """Submit coro to the loop thread and block for its result."""
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+
+
+# Middleware that summarizes the older portion of the message history
+# whenever it crosses a token threshold and keeps only the most recent turns
+# verbatim. The rolling summary lives in the messages channel as an
+# AIMessage marked with additional_kwargs={"history_summary": True}.
+class _HistorySummarizerMiddleware(AgentMiddleware):
+    """Summarize-then-keep-recent middleware to bound conversation history length."""
+
+    _SUMMARY_MARKER = "history_summary"
+    _SUMMARY_PROMPT = (
+        "You are summarizing an earlier portion of a research conversation so it can fit "
+        "inside the model's context window. Preserve:\n"
+        "- The user's questions and stated goals\n"
+        "- Key facts, numbers, and findings the assistant produced\n"
+        "- Tools that were used and their main outputs\n"
+        "- Any user preferences, constraints, or follow-up plans\n\n"
+        "Be concise — under 400 words. Plain prose, no markdown headers.\n\n"
+        "Conversation:\n{transcript}"
+    )
+
+    def __init__(self, llm, trim_threshold_tokens: int, keep_recent_tokens: int):
+        super().__init__()
+        self.llm = llm
+        self.trim_threshold_tokens = trim_threshold_tokens
+        self.keep_recent_tokens = keep_recent_tokens
+
+    # Sync hook fired before every model call on sync invocation paths
+    # (agent.stream / agent.invoke). Returns a state update or None.
+    def before_model(self, state, runtime) -> Optional[Dict[str, Any]]:
+        plan = self._compute_trim_plan(state.get("messages", []))
+        if plan is None:
+            return None
+        drop_msgs, keep_msgs, transcript = plan
+        try:
+            response = self.llm.invoke([HumanMessage(content=self._SUMMARY_PROMPT.format(transcript=transcript))])
+            summary_text = flatten_content(response.content, sep="\n") if not isinstance(response.content, str) else response.content
+        except Exception as exc:
+            logger.warning("History summarization failed; skipping trim this turn: %s", exc)
+            return None
+        return self._build_state_update(state, drop_msgs, keep_msgs, summary_text)
+
+    # Async hook fired before every model call on async invocation paths
+    # (agent.ainvoke / agent.astream). Returns a state update or None.
+    async def abefore_model(self, state, runtime) -> Optional[Dict[str, Any]]:
+        plan = self._compute_trim_plan(state.get("messages", []))
+        if plan is None:
+            return None
+        drop_msgs, keep_msgs, transcript = plan
+        try:
+            response = await self.llm.ainvoke([HumanMessage(content=self._SUMMARY_PROMPT.format(transcript=transcript))])
+            summary_text = flatten_content(response.content, sep="\n") if not isinstance(response.content, str) else response.content
+        except Exception as exc:
+            logger.warning("History summarization failed; skipping trim this turn: %s", exc)
+            return None
+        return self._build_state_update(state, drop_msgs, keep_msgs, summary_text)
+
+    # Takes (messages). Decides whether to trim and computes the drop/keep
+    # split + a rendered transcript of the drop portion. Returns None when
+    # the history is short enough to leave alone. Always preserves the
+    # "active turn" — from the last HumanMessage to the end — so the model
+    # never finds itself with no user question to respond to.
+    def _compute_trim_plan(self, messages: list):
+        """Return (drop_msgs, keep_msgs, transcript) or None when no trim needed."""
+        if not messages:
+            return None
+        total_tokens = count_tokens_approximately(messages)
+        if total_tokens <= self.trim_threshold_tokens:
+            return None
+
+        # Locate the start of the active turn: the LAST HumanMessage in history.
+        # Everything from there to the end is in-flight and must be kept verbatim.
+        last_human_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], HumanMessage):
+                last_human_idx = i
+                break
+        if last_human_idx == -1:
+            return None  # no user turn — nothing meaningful to anchor on
+
+        active_tail = messages[last_human_idx:]
+        earlier = messages[:last_human_idx]
+
+        # Try to also keep some earlier history within whatever budget remains
+        # after the (mandatory) active tail. trim_messages may return [].
+        active_tail_tokens = count_tokens_approximately(active_tail)
+        budget_for_earlier = max(0, self.keep_recent_tokens - active_tail_tokens)
+        if budget_for_earlier > 0 and earlier:
+            keep_earlier = trim_messages(
+                earlier,
+                max_tokens=budget_for_earlier,
+                strategy="last",
+                start_on="human",
+                token_counter=count_tokens_approximately,
+                allow_partial=False,
+                include_system=False,
+            )
+        else:
+            keep_earlier = []
+
+        keep_msgs = list(keep_earlier) + list(active_tail)
+        keep_ids = {m.id for m in keep_msgs if getattr(m, "id", None)}
+        drop_msgs = [m for m in messages if getattr(m, "id", None) not in keep_ids]
+        if not drop_msgs:
+            return None
+
+        transcript = self._render_transcript(drop_msgs)
+        logger.info(
+            "History trim: total~%d tokens, dropping %d msgs, keeping %d msgs (active tail=%d msgs)",
+            total_tokens, len(drop_msgs), len(keep_msgs), len(active_tail),
+        )
+        return drop_msgs, keep_msgs, transcript
+
+    # Takes (drop_msgs). Renders dropped messages as a plain-text transcript
+    # for the summarization LLM, marking any prior summary so it gets folded
+    # into the new one rather than starting an infinite chain.
+    def _render_transcript(self, drop_msgs: list) -> str:
+        """Flatten dropped messages to role-tagged plain text."""
+        lines = []
+        for msg in drop_msgs:
+            text = msg.content if isinstance(msg.content, str) else flatten_content(msg.content, sep=" ")
+            if not text:
+                continue
+            if isinstance(msg, AIMessage) and msg.additional_kwargs.get(self._SUMMARY_MARKER):
+                lines.append(f"Earlier summary: {text}")
+            elif isinstance(msg, HumanMessage):
+                lines.append(f"User: {text}")
+            elif isinstance(msg, AIMessage):
+                lines.append(f"Assistant: {text}")
+            elif isinstance(msg, ToolMessage):
+                lines.append(f"Tool[{msg.name or 'tool'}]: {text}")
+        return "\n".join(lines)
+
+    # Takes (state, drop_msgs, keep_msgs, summary_text). Builds the messages
+    # channel update: wipe everything, then re-add summary first followed by
+    # the kept recent turns in order. Wipe-and-rebuild is required because
+    # add_messages appends new messages to the end after RemoveMessages.
+    def _build_state_update(self, state, drop_msgs, keep_msgs, summary_text) -> Dict[str, Any]:
+        """Construct the messages-channel update that installs the new summary."""
+        all_msgs = drop_msgs + keep_msgs
+        summary_msg = AIMessage(
+            content=f"[Earlier conversation summary]\n{summary_text}",
+            additional_kwargs={self._SUMMARY_MARKER: True},
+        )
+        return {
+            "messages": (
+                [RemoveMessage(id=m.id) for m in all_msgs if getattr(m, "id", None)]
+                + [summary_msg]
+                + keep_msgs
+            ),
+            "summarized_message_count": (
+                state.get("summarized_message_count", 0) + len(drop_msgs)
+            ),
+        }
 
 
 class ResearchAgent:
@@ -268,6 +433,14 @@ class ResearchAgent:
 
         self._db_conn, self.checkpointer = self._io_loop.run(_build_checkpointer())
 
+        # History summarizer keeps the messages channel from growing unboundedly.
+        # No-op until token count crosses HISTORY_TRIM_THRESHOLD_TOKENS.
+        self._history_middleware = _HistorySummarizerMiddleware(
+            llm=self.llm,
+            trim_threshold_tokens=HISTORY_TRIM_THRESHOLD_TOKENS,
+            keep_recent_tokens=HISTORY_KEEP_RECENT_TOKENS,
+        )
+
         system_prompt = _build_system_prompt(disabled_tools=self.disabled_tools)
         self.agent = create_agent(
             model=self.llm,
@@ -275,6 +448,7 @@ class ResearchAgent:
             system_prompt=system_prompt,
             state_schema=ResearchAgentState,
             checkpointer=self.checkpointer,
+            middleware=[self._history_middleware],
             debug=VERBOSE,
         )
 

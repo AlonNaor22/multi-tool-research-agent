@@ -40,10 +40,19 @@ Do in this order — each builds on the previous:
    replaced sync `SqliteSaver` with `AsyncSqliteSaver` (bootstrapped
    on a persistent daemon loop) to unblock async `ainvoke`/`astream`.
 
-4. [ ] **Memory as a LangGraph node** — `src/agent.py`
-   `SimpleMemory` is manually prepended in Python before each invoke.
-   Formalize as a graph node for LLM-aware summarization/pruning of
-   long conversation history. (depends on #1 and #2)
+4. [x] **History management as agent middleware** — `src/agent.py`
+   Original framing was stale (`SimpleMemory` was already deleted by the
+   SqliteSaver migration). Reframed: SqliteSaver let history grow
+   without bound. Added `_HistorySummarizerMiddleware` (subclass of
+   `langchain.agents.middleware.AgentMiddleware`) with both
+   `before_model` and `abefore_model` hooks. When the messages channel
+   exceeds `HISTORY_TRIM_THRESHOLD_TOKENS` (8000), the middleware
+   summarizes the older portion via the LLM into one marked
+   `AIMessage` and keeps the active turn (last HumanMessage onward)
+   verbatim plus as much earlier history as fits in
+   `HISTORY_KEEP_RECENT_TOKENS` (4000). Tool-use/tool-result pairing
+   is preserved across the drop/keep split. Telemetry: new
+   `summarized_message_count` field on `ResearchAgentState`.
 
 ---
 
