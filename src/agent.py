@@ -4,15 +4,15 @@ import asyncio
 import logging
 import os
 import queue
-import sqlite3
 import sys
 import threading
 from typing import Dict, Generator, List, Optional
 
+import aiosqlite
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent, AgentState
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from src.callbacks import TimingCallbackHandler, StreamingCallbackHandler
 from src.constants import (
@@ -189,6 +189,33 @@ class ResearchAgentState(AgentState):
     pass
 
 
+# Persistent daemon thread running an asyncio loop, used to initialize
+# aiosqlite resources that can't be safely created in a transient loop.
+# Once the connection is built, aiosqlite's own background thread handles
+# all subsequent I/O — this loop just bootstraps it.
+class _PersistentLoopThread:
+    """Daemon thread with a forever-running asyncio loop for one-shot coroutine bootstrap."""
+
+    def __init__(self):
+        self._ready = threading.Event()
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread = threading.Thread(target=self._run, daemon=True, name="ResearchAgent-ioloop")
+        self._thread.start()
+        self._ready.wait()
+
+    def _run(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self._ready.set()
+        self.loop.run_forever()
+
+    # Runs (coro) on the persistent loop from any caller thread and blocks
+    # until it returns. Used only for one-shot init.
+    def run(self, coro):
+        """Submit coro to the loop thread and block for its result."""
+        return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+
+
 class ResearchAgent:
     """LangGraph-based research agent with SqliteSaver checkpointing and multi-agent modes."""
 
@@ -225,11 +252,21 @@ class ResearchAgent:
         self.metrics_store = MetricsStore()
         self.rate_limiter = RateLimiter()
 
-        # SqliteSaver auto-persists graph state after every node execution
+        # AsyncSqliteSaver auto-persists graph state after every node execution.
+        # It exposes both sync and async methods, so sync stream/invoke and
+        # async astream/ainvoke call paths both work. The aiosqlite connection
+        # is bootstrapped on a persistent helper loop; aiosqlite's own bg
+        # thread then services all subsequent I/O regardless of caller loop.
         os.makedirs(SESSIONS_DIR, exist_ok=True)
-        self._db_conn = sqlite3.connect(CHECKPOINTS_DB, check_same_thread=False)
-        self.checkpointer = SqliteSaver(conn=self._db_conn)
-        self.checkpointer.setup()
+        self._io_loop = _PersistentLoopThread()
+
+        async def _build_checkpointer():
+            conn = await aiosqlite.connect(CHECKPOINTS_DB)
+            saver = AsyncSqliteSaver(conn=conn)
+            await saver.setup()
+            return conn, saver
+
+        self._db_conn, self.checkpointer = self._io_loop.run(_build_checkpointer())
 
         system_prompt = _build_system_prompt(disabled_tools=self.disabled_tools)
         self.agent = create_agent(
@@ -455,31 +492,42 @@ class ResearchAgent:
         self.rate_limiter.record_tokens(metrics.total_tokens)
 
     # Takes (step, plan, completed_findings). Executes a single plan step,
-    # injecting context from declared dependency steps.
+    # replaying declared dependencies as prior Human/AI turns so the agent
+    # sees them as real conversation history, not pasted context.
     async def _run_step(
         self,
         step,
         plan,
         completed_findings: Dict[int, str],
     ) -> str:
-        """Execute a single plan step, injecting context from declared dependencies."""
+        """Execute a single plan step, injecting dependencies as prior messages."""
         task = f"Research task: {step.description}\n\nFocus specifically on this task. Be thorough but concise."
 
+        # Replay each declared dependency as a (HumanMessage, AIMessage) pair so
+        # prior findings arrive as real assistant turns the agent can reason over.
+        # Pairs preserve Anthropic's required user/assistant alternation.
+        messages = []
         deps = plan.depends_on.get(step.step_number, [])
         if deps:
-            dep_parts = [
-                f"[Step {d} findings]: {completed_findings[d]}"
-                for d in deps if d in completed_findings
-            ]
-            if dep_parts:
-                task += "\n\nContext from prior steps:\n" + "\n".join(dep_parts)
+            step_by_number = {s.step_number: s for s in plan.steps}
+            for d in deps:
+                if d not in completed_findings or d not in step_by_number:
+                    continue
+                dep_step = step_by_number[d]
+                dep_task = (
+                    f"Research task: {dep_step.description}\n\n"
+                    f"Focus specifically on this task. Be thorough but concise."
+                )
+                messages.append(HumanMessage(content=dep_task))
+                messages.append(AIMessage(content=completed_findings[d]))
+        messages.append(HumanMessage(content=task))
 
         step_config = self._agent_config(
             recursion_limit=20,
             configurable={"thread_id": f"{self.current_session_id}__step_{step.step_number}"},
         )
         result = await self.agent.ainvoke(
-            {"messages": [HumanMessage(content=task)]},
+            {"messages": messages},
             step_config,
         )
         return extract_ai_answer(result)

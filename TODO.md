@@ -33,10 +33,12 @@ Do in this order — each builds on the previous:
    graph state after every node. Sessions listed/loaded/deleted from
    SQLite. No manual "Save" button needed.
 
-3. [ ] **Inject dependency context as messages** — `src/agent.py`
-   Plan-execute steps receive prior findings as plain text in the task
-   string. Pass them as actual `AIMessage` objects so the agent can
-   reason about and follow up on prior findings naturally.
+3. [x] **Inject dependency context as messages** — `src/agent.py`
+   `_run_step` now replays each declared dependency as a
+   `(HumanMessage, AIMessage)` pair before the current step's task,
+   so prior findings arrive as real prior assistant turns. Also
+   replaced sync `SqliteSaver` with `AsyncSqliteSaver` (bootstrapped
+   on a persistent daemon loop) to unblock async `ainvoke`/`astream`.
 
 4. [ ] **Memory as a LangGraph node** — `src/agent.py`
    `SimpleMemory` is manually prepended in Python before each invoke.
