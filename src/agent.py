@@ -596,9 +596,11 @@ class ResearchAgent:
             yield from self._direct_stream(query)
 
     # Takes (inputs, config). Drives agent.astream(..., stream_mode="messages")
-    # on a background thread via queue so sync callers get (chunk, metadata) tuples.
+    # on the persistent IO loop via queue so sync callers get (chunk, metadata) tuples.
     # Required because tools are async-only StructuredTools that don't support
     # sync invocation — sync stream() would raise "does not support sync invocation".
+    # Uses self._io_loop (not asyncio.run) so the AsyncSqliteSaver checkpointer's
+    # aiosqlite connection stays on its owning loop, preventing cross-loop errors.
     def _sync_messages_stream(self, inputs: dict, config: dict):
         """Sync generator bridging async astream(stream_mode='messages') to sync callers."""
         _SENTINEL = object()
@@ -613,19 +615,16 @@ class ResearchAgent:
                 return
             q.put(("done", _SENTINEL))
 
-        worker = threading.Thread(target=lambda: asyncio.run(_drive()), daemon=True)
-        worker.start()
+        asyncio.run_coroutine_threadsafe(_drive(), self._io_loop.loop)
 
         while True:
             msg = q.get()
             if msg[0] == "item":
                 yield msg[1]
             elif msg[0] == "error":
-                worker.join()
                 raise msg[1]
             else:
                 break
-        worker.join()
 
     # Takes (query). Sync generator for direct single-agent mode,
     # yielding synthesis tokens and tool events matching other modes' format.
@@ -916,27 +915,26 @@ class ResearchAgent:
 
                 wave += 1
 
-        def _runner() -> None:
+        # Submit _drive() to the persistent IO loop (same loop the AsyncSqliteSaver
+        # checkpointer was initialised on) so aiosqlite cross-loop errors are avoided.
+        async def _drive_safe() -> None:
             try:
-                asyncio.run(_drive())
+                await _drive()
             except BaseException as exc:
                 q.put(("error", exc))
                 return
             q.put(("done", _SENTINEL))
 
-        worker = threading.Thread(target=_runner, daemon=True)
-        worker.start()
+        asyncio.run_coroutine_threadsafe(_drive_safe(), self._io_loop.loop)
 
         while True:
             item = q.get()
             if isinstance(item, dict):
                 yield item
             elif isinstance(item, tuple) and item[0] == "error":
-                worker.join()
                 raise item[1]
             else:
                 break
-        worker.join()
 
         # --- Synthesis phase (sync, same as before) ---
         steps_text = "\n\n".join(
