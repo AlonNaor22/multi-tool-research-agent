@@ -595,6 +595,38 @@ class ResearchAgent:
         else:
             yield from self._direct_stream(query)
 
+    # Takes (inputs, config). Drives agent.astream(..., stream_mode="messages")
+    # on a background thread via queue so sync callers get (chunk, metadata) tuples.
+    # Required because tools are async-only StructuredTools that don't support
+    # sync invocation — sync stream() would raise "does not support sync invocation".
+    def _sync_messages_stream(self, inputs: dict, config: dict):
+        """Sync generator bridging async astream(stream_mode='messages') to sync callers."""
+        _SENTINEL = object()
+        q: queue.Queue = queue.Queue()
+
+        async def _drive():
+            try:
+                async for item in self.agent.astream(inputs, config, stream_mode="messages"):
+                    q.put(("item", item))
+            except BaseException as exc:
+                q.put(("error", exc))
+                return
+            q.put(("done", _SENTINEL))
+
+        worker = threading.Thread(target=lambda: asyncio.run(_drive()), daemon=True)
+        worker.start()
+
+        while True:
+            msg = q.get()
+            if msg[0] == "item":
+                yield msg[1]
+            elif msg[0] == "error":
+                worker.join()
+                raise msg[1]
+            else:
+                break
+        worker.join()
+
     # Takes (query). Sync generator for direct single-agent mode,
     # yielding synthesis tokens and tool events matching other modes' format.
     def _direct_stream(self, query: str):
@@ -603,10 +635,9 @@ class ResearchAgent:
         self.observability_callback.reset(question=query)
 
         final_answer = ""
-        for chunk, metadata in self.agent.stream(
+        for chunk, metadata in self._sync_messages_stream(
             {"messages": [HumanMessage(content=query)]},
-            config=self._agent_config(),
-            stream_mode="messages",
+            self._agent_config(),
         ):
             node = metadata.get("langgraph_node", "")
             if node == "model" and isinstance(chunk, AIMessageChunk):
@@ -822,10 +853,9 @@ class ResearchAgent:
 
         if plan.is_simple:
             final_answer = ""
-            for chunk, metadata in self.agent.stream(
+            for chunk, metadata in self._sync_messages_stream(
                 {"messages": [HumanMessage(content=query)]},
-                config=self._agent_config(recursion_limit=20),
-                stream_mode="messages",
+                self._agent_config(recursion_limit=20),
             ):
                 node = metadata.get("langgraph_node", "")
                 if node == "model" and isinstance(chunk, AIMessageChunk):

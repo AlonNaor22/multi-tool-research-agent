@@ -792,10 +792,9 @@ with chat_col:
                         "message": UI.inbox.thinking, "is_error": False,
                     })
 
-                    for chunk, metadata in agent.agent.stream(
+                    for chunk, metadata in agent._sync_messages_stream(
                         {"messages": messages},
-                        config=agent._agent_config(),
-                        stream_mode="messages",
+                        agent._agent_config(),
                     ):
                         node = metadata.get("langgraph_node", "")
 
