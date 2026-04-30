@@ -35,23 +35,21 @@ RULES:
 run in parallel automatically — you don't need to group them.
 4. The fact_checker (if needed) will be added automatically as the last step.
 5. For simple single-domain queries, use just ONE specialist.
+6. Math/calculus/graphing queries → math (NOT research). The math specialist \
+owns calculator, equation_solver, and create_chart; the research specialist has none of these.
 
-Respond with ONLY valid JSON (no markdown fences, no commentary):
-{
-  "specialists": ["research", "math", "analysis"],
-  "specialist_tasks": {
-    "research": "specific task description for the research agent",
-    "math": "specific task description for the math agent",
-    "analysis": "analyze and compare the research and math findings"
-  },
-  "depends_on": {
-    "research": [],
-    "math": [],
-    "analysis": ["research", "math"]
-  },
-  "needs_fact_check": false,
-  "rationale": "brief explanation of why you chose this delegation strategy"
-}
+EXAMPLE (multi-domain query — adapt to fit the actual question):
+  specialists: ["research", "math", "analysis"]
+  specialist_tasks:
+    research: "specific task for the research agent"
+    math:     "specific task for the math agent"
+    analysis: "analyze and compare the research and math findings"
+  depends_on:
+    research: []
+    math:     []
+    analysis: ["research", "math"]
+  needs_fact_check: false
+  rationale: "brief explanation of the delegation strategy"
 """
 
 SUPERVISOR_SYNTHESIZE_PROMPT = """\

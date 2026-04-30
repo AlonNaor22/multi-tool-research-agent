@@ -1,16 +1,33 @@
 """Tests for the multi-agent orchestration system.
 
 Tests cover:
-- Supervisor delegation plan generation and parsing
+- Supervisor delegation plan generation via structured outputs
 - DelegationPlan model validation
 - Specialist agent definitions and tool mapping
 - Orchestrator graph structure
 """
 
-import json
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from pydantic import ValidationError
+
+
+# Helper: build a mocked LLM whose with_structured_output(_) returns a runnable
+# whose .invoke() emits the given _PlanResponse (or raises if exc is provided).
+def _mock_planner_llm(plan_response=None, exc=None):
+    from src.multi_agent.supervisor import _PlanResponse  # noqa: F401
+
+    structured_runnable = MagicMock()
+    if exc is not None:
+        structured_runnable.invoke.side_effect = exc
+        structured_runnable.ainvoke = AsyncMock(side_effect=exc)
+    else:
+        structured_runnable.invoke.return_value = plan_response
+        structured_runnable.ainvoke = AsyncMock(return_value=plan_response)
+
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value = structured_runnable
+    return mock_llm
 
 
 # ---------------------------------------------------------------------------
@@ -144,48 +161,41 @@ class TestSpecialistDefinitions:
 class TestSupervisor:
     """Tests for the Supervisor class."""
 
-    def test_delegation_plan_parsing(self):
-        """Test that the supervisor correctly parses LLM JSON output."""
-        from src.multi_agent.supervisor import Supervisor
+    def test_delegation_plan_basic(self):
+        """Structured-output planner returns a typed plan that flows through unchanged."""
+        from src.multi_agent.supervisor import Supervisor, _PlanResponse
 
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "specialists": ["research", "math", "analysis"],
-            "specialist_tasks": {
+        plan_response = _PlanResponse(
+            specialists=["research", "math", "analysis"],
+            specialist_tasks={
                 "research": "find data",
                 "math": "calculate",
                 "analysis": "chart it",
             },
-            "depends_on": {"research": [], "math": [], "analysis": ["research", "math"]},
-            "needs_fact_check": False,
-            "rationale": "multi-domain query",
-        })
-        mock_llm.invoke.return_value = mock_response
-
-        supervisor = Supervisor(mock_llm)
+            depends_on={"research": [], "math": [], "analysis": ["research", "math"]},
+            needs_fact_check=False,
+            rationale="multi-domain query",
+        )
+        supervisor = Supervisor(_mock_planner_llm(plan_response))
         plan = supervisor.create_delegation_plan("test query")
 
         assert plan.specialists == ["research", "math", "analysis"]
         assert plan.depends_on == {"research": [], "math": [], "analysis": ["research", "math"]}
         assert not plan.needs_fact_check
+        assert plan.query == "test query"
 
     def test_fact_check_appended_as_final_phase(self):
         """When needs_fact_check=True, fact_checker should be the last phase."""
-        from src.multi_agent.supervisor import Supervisor
+        from src.multi_agent.supervisor import Supervisor, _PlanResponse
 
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "specialists": ["research"],
-            "specialist_tasks": {"research": "find info"},
-            "depends_on": {"research": []},
-            "needs_fact_check": True,
-            "rationale": "verification needed",
-        })
-        mock_llm.invoke.return_value = mock_response
-
-        supervisor = Supervisor(mock_llm)
+        plan_response = _PlanResponse(
+            specialists=["research"],
+            specialist_tasks={"research": "find info"},
+            depends_on={"research": []},
+            needs_fact_check=True,
+            rationale="verification needed",
+        )
+        supervisor = Supervisor(_mock_planner_llm(plan_response))
         plan = supervisor.create_delegation_plan("verify this claim")
 
         assert plan.needs_fact_check
@@ -193,87 +203,85 @@ class TestSupervisor:
         assert plan.depends_on["fact_checker"] == ["research"]
         assert "fact_checker" in plan.specialist_tasks
 
-    def test_fallback_on_invalid_json(self):
-        """Supervisor should fall back to research-only on parse failure."""
+    def test_fallback_on_api_failure_routes_math_query_to_math(self):
+        """When the structured-output call raises, the heuristic routes math queries to math — not research."""
         from src.multi_agent.supervisor import Supervisor
 
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = "this is not valid json!!"
-        mock_llm.invoke.return_value = mock_response
+        supervisor = Supervisor(_mock_planner_llm(exc=RuntimeError("api down")))
+        plan = supervisor.create_delegation_plan(
+            "Find the derivative of x^3 - 6x^2 and graph it"
+        )
 
-        supervisor = Supervisor(mock_llm)
-        plan = supervisor.create_delegation_plan("some query")
+        assert plan.specialists == ["math"]
+        assert plan.specialist_tasks == {
+            "math": "Find the derivative of x^3 - 6x^2 and graph it"
+        }
+
+    def test_fallback_on_api_failure_routes_general_query_to_research(self):
+        """When no domain keyword matches, the heuristic falls back to research."""
+        from src.multi_agent.supervisor import Supervisor
+
+        supervisor = Supervisor(_mock_planner_llm(exc=RuntimeError("api down")))
+        plan = supervisor.create_delegation_plan("Who won the 2022 World Cup?")
 
         assert plan.specialists == ["research"]
-        assert plan.specialist_tasks == {"research": "some query"}
 
     def test_invalid_specialist_names_filtered(self):
         """Unknown specialist names in the LLM output should be filtered out."""
-        from src.multi_agent.supervisor import Supervisor
+        from src.multi_agent.supervisor import Supervisor, _PlanResponse
 
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "specialists": ["research", "nonexistent_agent", "math"],
-            "specialist_tasks": {
+        plan_response = _PlanResponse(
+            specialists=["research", "nonexistent_agent", "math"],
+            specialist_tasks={
                 "research": "r",
                 "nonexistent_agent": "n",
                 "math": "m",
             },
-            "depends_on": {"research": [], "nonexistent_agent": [], "math": []},
-            "needs_fact_check": False,
-        })
-        mock_llm.invoke.return_value = mock_response
-
-        supervisor = Supervisor(mock_llm)
+            depends_on={"research": [], "nonexistent_agent": [], "math": []},
+            needs_fact_check=False,
+        )
+        supervisor = Supervisor(_mock_planner_llm(plan_response))
         plan = supervisor.create_delegation_plan("test")
 
-        # nonexistent_agent should be filtered out
         assert "nonexistent_agent" not in plan.specialists
         assert "research" in plan.specialists
         assert "math" in plan.specialists
 
-    def test_empty_phases_fallback(self):
-        """If all specialist names are invalid, fall back to research."""
-        from src.multi_agent.supervisor import Supervisor
+    def test_empty_specialists_falls_back(self):
+        """If all specialist names are invalid, the heuristic fallback runs."""
+        from src.multi_agent.supervisor import Supervisor, _PlanResponse
 
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "specialists": ["bogus1", "bogus2"],
-            "specialist_tasks": {},
-            "depends_on": {"bogus1": [], "bogus2": []},
-            "needs_fact_check": False,
-        })
-        mock_llm.invoke.return_value = mock_response
-
-        supervisor = Supervisor(mock_llm)
+        plan_response = _PlanResponse(
+            specialists=["bogus1", "bogus2"],
+            specialist_tasks={},
+            depends_on={"bogus1": [], "bogus2": []},
+            needs_fact_check=False,
+        )
+        supervisor = Supervisor(_mock_planner_llm(plan_response))
         plan = supervisor.create_delegation_plan("test")
 
-        # Should fall back
+        # Heuristic on "test" matches no math keyword → research.
         assert plan.specialists == ["research"]
 
-    def test_list_content_handling(self):
-        """Test that list-format content blocks are handled correctly."""
-        from src.multi_agent.supervisor import Supervisor
 
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = [
-            {"type": "text", "text": json.dumps({
-                "specialists": ["research"],
-                "specialist_tasks": {"research": "task"},
-                "depends_on": {"research": []},
-                "needs_fact_check": False,
-            })}
-        ]
-        mock_llm.invoke.return_value = mock_response
+class TestHeuristicSpecialist:
+    """Tests for the keyword-based fallback router."""
 
-        supervisor = Supervisor(mock_llm)
-        plan = supervisor.create_delegation_plan("test")
-
-        assert plan.specialists == ["research"]
+    @pytest.mark.parametrize("query, expected", [
+        ("Find the derivative of x^3", "math"),
+        ("Plot sin(x) from -pi to pi", "math"),
+        ("Solve the equation x^2 - 4 = 0", "math"),
+        ("Compute eigenvalues of this matrix", "math"),
+        ("Convert 100 USD to EUR", "math"),
+        ("Translate this paragraph to french", "translation"),
+        ("Analyze this csv dataset", "analysis"),
+        ("Run a regression on housing prices", "analysis"),
+        ("Who is the president of France?", "research"),
+        ("What's the latest news about AI?", "research"),
+    ])
+    def test_routing(self, query, expected):
+        from src.multi_agent.supervisor import _heuristic_specialist
+        assert _heuristic_specialist(query) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -303,11 +311,11 @@ class TestPrompts:
             assert isinstance(p, str)
             assert len(p) > 100, "Prompt too short to be useful"
 
-    def test_supervisor_plan_prompt_mentions_json(self):
+    def test_supervisor_plan_prompt_mentions_schema_fields(self):
         from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT
-        assert "JSON" in SUPERVISOR_PLAN_PROMPT
         assert "specialists" in SUPERVISOR_PLAN_PROMPT
         assert "depends_on" in SUPERVISOR_PLAN_PROMPT
+        assert "specialist_tasks" in SUPERVISOR_PLAN_PROMPT
 
     def test_supervisor_plan_lists_all_specialists(self):
         from src.multi_agent.prompts import SUPERVISOR_PLAN_PROMPT
