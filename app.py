@@ -96,41 +96,29 @@ def _render_agent_content(text: str, container=None):
     if 'MATH_STRUCTURED:' in text:
         text = _auto_format_math_structured(text)
 
-    # --- Convert markdown image syntax to st.image for local files ---
-    # The agent may use ![alt](output/chart.png) which st.markdown can't render locally
-    img_pattern = r'!\[[^\]]*\]\((output[/\\][^\)]+\.png)\)'
-    if _re.search(img_pattern, text):
-        parts = _re.split(f'({img_pattern})', text)
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            if _re.match(r'output[/\\].*\.png$', part):
-                filepath = part.replace('\\', '/')
-                if os.path.exists(filepath):
-                    container.image(filepath, use_container_width=True)
-            elif _re.match(img_pattern, part):
-                pass  # Skip the full ![...]() match (already handled the path)
-            else:
-                container.markdown(part)
-        return
-
-    # --- Detect chart file paths (CHART_FILE: markers or bare paths) ---
-    chart_pattern = r'(?:CHART_FILE:)?(output[/\\]chart[^\s\)\"\']+\.png)'
-    if _re.search(chart_pattern, text):
-        parts = _re.split(f'({chart_pattern})', text)
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            if _re.match(r'output[/\\]chart.*\.png$', part):
-                filepath = part.replace('\\', '/')
-                if os.path.exists(filepath):
-                    container.image(filepath, use_container_width=True)
-            else:
-                cleaned = part.replace('CHART_FILE:', '').strip()
-                if cleaned:
-                    container.markdown(cleaned)
+    # --- Render chart references inline ---
+    # Matches three flavors the agent may emit:
+    #   ![alt](output/chart.png)       — markdown image
+    #   CHART_FILE:output/chart.png    — explicit marker
+    #   output/chart_*.png             — bare path
+    chart_ref_pattern = (
+        r'!\[[^\]]*\]\((output[/\\][^\)]+\.png)\)'
+        r'|CHART_FILE:(output[/\\][^\s\)\"\']+\.png)'
+        r'|(output[/\\]chart[^\s\)\"\']+\.png)'
+    )
+    if _re.search(chart_ref_pattern, text):
+        last = 0
+        for m in _re.finditer(chart_ref_pattern, text):
+            prefix = text[last:m.start()]
+            if prefix.strip():
+                container.markdown(prefix)
+            filepath = (m.group(1) or m.group(2) or m.group(3)).replace('\\', '/')
+            if os.path.exists(filepath):
+                container.image(filepath, use_container_width=True)
+            last = m.end()
+        tail = text[last:]
+        if tail.strip():
+            container.markdown(tail)
         return
 
     container.markdown(text)
