@@ -1,12 +1,12 @@
 """Parallel search meta-tool — runs multiple searches concurrently via asyncio.gather."""
 
-import json
 import asyncio
-from typing import Dict
-from src.constants import TRUNCATION_PRESERVE_RATIO
-from langchain_core.tools import tool
+from typing import Dict, List, Literal, Type
 
-# Import the async search functions from our tools
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+
+from src.constants import TRUNCATION_PRESERVE_RATIO
 from src.tools.search_tool import web_search
 from src.tools.wikipedia_tool import wikipedia
 from src.tools.news_tool import news_search
@@ -15,6 +15,7 @@ from src.tools.arxiv_tool import arxiv_search
 # ─── Module overview ───────────────────────────────────────────────
 # Meta-tool that dispatches multiple search queries (web, wikipedia,
 # news, arxiv) concurrently via asyncio.gather and merges results.
+# Schema is enforced by Anthropic's tool-use API via args_schema.
 # ───────────────────────────────────────────────────────────────────
 
 
@@ -53,12 +54,10 @@ def truncate_result(result: str, search_type: str) -> str:
     if len(result) <= limit:
         return result
 
-    # Try to truncate at a sentence boundary
     truncated = result[:limit]
     last_period = truncated.rfind('.')
     last_newline = truncated.rfind('\n')
 
-    # Use the later of period or newline as cut point
     cut_point = max(last_period, last_newline)
 
     # Only use the sentence/line boundary if it preserves at least 70% of
@@ -105,47 +104,12 @@ async def execute_single_search(search_spec: Dict) -> Dict:
         }
 
 
-# Tool entry point. Takes a JSON string with a "searches" array.
-# Runs all searches concurrently, truncates each result, and returns
-# a combined summary with per-source status.
-async def parallel_search(input_str: str) -> str:
-    """Execute multiple searches in parallel for faster results. Use this when you need to gather information from multiple sources at once.
-
-    SUPPORTED TYPES: web, wikipedia, news, arxiv
-
-    FORMAT:
-    {"searches": [{"type": "web", "query": "..."}, {"type": "arxiv", "query": "..."}]}
-
-    EXAMPLE:
-    {"searches": [{"type": "web", "query": "Tesla stock 2024"}, {"type": "wikipedia", "query": "Tesla Inc"}, {"type": "news", "query": "Tesla"}, {"type": "arxiv", "query": "electric vehicle battery"}]}
-
-    LIMITS: Maximum 10 searches per call. All run simultaneously."""
-    # Parse input
+# Takes a list of search specs. Dispatches all concurrently with a wall-clock
+# timeout, formats per-source status, and returns a combined summary string.
+async def parallel_search(searches: List[Dict]) -> str:
+    """Dispatch a list of search specs concurrently; return a formatted summary."""
     try:
-        spec = json.loads(input_str)
-    except json.JSONDecodeError as e:
-        return (
-            f"Error: Invalid JSON. {e}\n\n"
-            "Expected format:\n"
-            '{\"searches\": [{\"type\": \"web\", \"query\": \"...\"}, ...]}'
-        )
-
-    searches = spec.get("searches", [])
-
-    if not searches:
-        return "Error: No searches provided. Include a 'searches' array."
-
-    if len(searches) > 10:
-        return "Error: Maximum 10 parallel searches allowed."
-
-    # Validate each search
-    for i, s in enumerate(searches):
-        if "query" not in s:
-            return f"Error: Search {i+1} is missing 'query' field."
-
-    # Execute all searches concurrently with asyncio.gather
-    try:
-        tasks = [execute_single_search(search) for search in searches]
+        tasks = [execute_single_search(s) for s in searches]
         results = await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
             timeout=PARALLEL_TIMEOUT,
@@ -153,7 +117,6 @@ async def parallel_search(input_str: str) -> str:
     except asyncio.TimeoutError:
         return f"Error: Parallel search timed out after {PARALLEL_TIMEOUT}s"
 
-    # Process results (gather with return_exceptions may return Exception objects)
     processed = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
@@ -161,24 +124,20 @@ async def parallel_search(input_str: str) -> str:
                 "type": searches[i].get("type", "unknown"),
                 "query": searches[i].get("query", ""),
                 "result": f"Execution error: {str(result)}",
-                "success": False
+                "success": False,
             })
         else:
             processed.append(result)
 
-    # Count successes
     success_count = sum(1 for r in processed if r["success"])
 
-    # Format the results
     output_lines = [
         f"Parallel search completed: {success_count}/{len(processed)} successful\n"
     ]
 
-    for i, r in enumerate(processed, 1):
+    for r in processed:
         status = "SUCCESS" if r["success"] else "FAILED"
         search_type = r["type"].upper()
-
-        # Truncate result smartly
         truncated_result = truncate_result(r["result"], r["type"])
 
         output_lines.append(
@@ -190,4 +149,43 @@ async def parallel_search(input_str: str) -> str:
     return "\n".join(output_lines)
 
 
-parallel_tool = tool(parallel_search)
+class SearchSpec(BaseModel):
+    """A single parallel search specification."""
+    type: Literal["web", "wikipedia", "news", "arxiv"] = Field(
+        default="web",
+        description="Search backend to use.",
+    )
+    query: str = Field(description="Search query string.")
+
+
+class ParallelSearchInput(BaseModel):
+    """Inputs for the parallel_search tool."""
+    searches: List[SearchSpec] = Field(
+        min_length=1,
+        max_length=10,
+        description="1 to 10 searches to dispatch concurrently.",
+    )
+
+
+class ParallelSearchTool(BaseTool):
+    name: str = "parallel_search"
+    description: str = (
+        "Execute multiple searches in parallel for faster results. "
+        "Use when you need to gather information from multiple sources at once."
+        "\n\nSUPPORTED TYPES: web, wikipedia, news, arxiv"
+        "\n\nEXAMPLE: searches=[{\"type\":\"web\",\"query\":\"Tesla 2024\"}, "
+        "{\"type\":\"wikipedia\",\"query\":\"Tesla Inc\"}]"
+        "\n\nLIMITS: 1–10 searches per call. All run simultaneously."
+    )
+    args_schema: Type[BaseModel] = ParallelSearchInput
+
+    # LangChain validates kwargs through args_schema and passes SearchSpec
+    # instances. Normalize to dicts so parallel_search stays Pydantic-agnostic.
+    async def _arun(self, searches: List[SearchSpec]) -> str:
+        return await parallel_search([s.model_dump() for s in searches])
+
+    def _run(self, **kwargs) -> str:
+        return asyncio.run(self._arun(**kwargs))
+
+
+parallel_tool = ParallelSearchTool()

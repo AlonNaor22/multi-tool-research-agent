@@ -25,15 +25,20 @@ definitions that take a single `query: str` and parse it as JSON inside the func
    typed dict directly (Pydantic handled the `int(key)` parsing). Fallback path now logs
    a warning, matching the supervisor pattern.
 
-2. [ ] **Migrate tools that REQUIRE JSON input to `BaseTool` + `args_schema`** —
+2. [x] **Migrate tools that REQUIRE JSON input to `BaseTool` + `args_schema`** —
    `src/tools/parallel_tool.py`, `src/tools/datetime_tool.py`
-   These fail loudest because the LLM has no string fallback — it MUST construct correct
-   JSON. Both expose `@tool` on `async def f(query: str)` then `json.loads(query)` inside.
-   - `parallel_tool.py:111` — replace `input_str` with `searches: list[SearchSpec]` where
-     `SearchSpec` is a Pydantic model `{type: Literal["web","wikipedia","news","arxiv"], query: str}`.
-   - `datetime_tool.py:103` — replace with named params + `operation: Literal["now","add","diff","convert","info","business_days"]`.
-   Reference pattern: `WeatherTool` / `EquationSolverTool` / `VisualizationTool` already
-   do this correctly.
+   - `parallel_tool.py`: now `ParallelSearchTool(BaseTool)` with `ParallelSearchInput`
+     (`searches: List[SearchSpec]`, `min_length=1`, `max_length=10`); `SearchSpec.type`
+     is `Literal["web","wikipedia","news","arxiv"]`. `_arun` normalizes validated
+     `SearchSpec` instances to dicts so the inner `parallel_search(searches)` stays
+     Pydantic-agnostic.
+   - `datetime_tool.py`: now `DatetimeTool(BaseTool)` with `DatetimeInput`; `operation`
+     is `Literal["now","add","diff","convert","info","business_days"]`. Renamed JSON
+     keys to Python-safe params (`from`→`date_from`, `to`→`date_to`,
+     `datetime`→`convert_datetime`).
+   - Tests rewritten: dropped JSON-parsing fixtures, added `TestParallelSearchSchema` /
+     `TestDatetimeSchema` for Pydantic boundary validation. End-to-end `tool.ainvoke({...})`
+     verified — schema rejects bad operations and out-of-range list sizes.
 
 3. [ ] **Migrate string-or-JSON tools to `BaseTool` + `args_schema`** —
    `src/tools/search_tool.py`, `wikipedia_tool.py`, `news_tool.py`, `arxiv_tool.py`,

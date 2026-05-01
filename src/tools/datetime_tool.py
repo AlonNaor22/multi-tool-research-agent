@@ -1,13 +1,18 @@
 """Date/Time calculator — arithmetic, timezone conversion, business days."""
 
-import json
+import asyncio
 from datetime import datetime, timedelta, timezone
-from langchain_core.tools import tool
+from typing import Literal, Type
+
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+
 from src.utils import safe_tool_call
 
 # ─── Module overview ───────────────────────────────────────────────
 # Date/time operations: arithmetic, timezone conversion, business-day
-# counting, and date info lookups. All input is JSON-based.
+# counting, and date info lookups. Schema is enforced by Anthropic's
+# tool-use API via args_schema; the tool dispatches by `operation`.
 # ───────────────────────────────────────────────────────────────────
 
 # Common timezone offsets (no pytz dependency needed)
@@ -97,49 +102,34 @@ def _add_business_days(start: datetime, days: int) -> datetime:
     return current
 
 
-# Takes (query) as JSON. Dispatches to now/add/diff/convert/info/business_days.
-# Returns a formatted date/time result string.
+# Dispatches to now/add/diff/convert/info/business_days based on `operation`.
+# Returns a formatted result string. Errors are caught by safe_tool_call.
 @safe_tool_call("calculating date/time")
-async def datetime_calculator(query: str) -> str:
-    """Perform date/time calculations: arithmetic, timezone conversion, business days, and date info. All input is JSON.
-
-    USE FOR:
-    - Current time: '{"operation": "now", "timezone": "EST"}'
-    - Add days: '{"operation": "add", "date": "2024-01-15", "days": 30}'
-    - Date diff: '{"operation": "diff", "from": "2024-01-01", "to": "2024-12-31"}'
-    - Timezone: '{"operation": "convert", "datetime": "2024-01-15 14:00", "from_tz": "EST", "to_tz": "JST"}'
-    - Date info: '{"operation": "info", "date": "2024-07-04"}'
-    - Business days: '{"operation": "business_days", "from": "2024-01-01", "to": "2024-01-31"}'
-
-    Supports: days, weeks, months, years, business_days in 'add' operation
-
-    DO NOT USE FOR: simple arithmetic (use calculator), recurring schedules"""
-    try:
-        if query.strip().startswith("{"):
-            params = json.loads(query)
-        else:
-            # Try to interpret as a simple query
-            return (
-                "Please provide a JSON input. Examples:\n"
-                '- Current time: {"operation": "now", "timezone": "EST"}\n'
-                '- Add days: {"operation": "add", "date": "2024-01-15", "days": 30}\n'
-                '- Difference: {"operation": "diff", "from": "2024-01-01", "to": "2024-12-31"}\n'
-                '- Convert TZ: {"operation": "convert", "datetime": "2024-01-15 14:00", "from_tz": "EST", "to_tz": "JST"}\n'
-                '- Date info: {"operation": "info", "date": "2024-07-04"}\n'
-                '- Business days: {"operation": "business_days", "from": "2024-01-01", "to": "2024-01-31"}'
-            )
-    except json.JSONDecodeError:
-        return "Error: Invalid JSON input. See tool description for examples."
-
-    operation = params.get("operation", "").lower()
+async def datetime_calculator(
+    operation: str,
+    timezone: str = "UTC",
+    date: str = "",
+    days: int = 0,
+    weeks: int = 0,
+    months: int = 0,
+    years: int = 0,
+    business_days: int = 0,
+    date_from: str = "",
+    date_to: str = "",
+    convert_datetime: str = "",
+    from_tz: str = "UTC",
+    to_tz: str = "UTC",
+) -> str:
+    """Run a single date/time operation with typed parameters."""
+    op = operation.lower()
+    biz_days = business_days  # avoid shadowing the parameter inside add-result text
 
     try:
-        if operation == "now":
-            tz_name = params.get("timezone", "UTC")
-            tz = _get_tz(tz_name)
+        if op == "now":
+            tz = _get_tz(timezone)
             now = datetime.now(tz)
             return (
-                f"**Current Date/Time ({tz_name})**\n"
+                f"**Current Date/Time ({timezone})**\n"
                 f"Date: {now.strftime('%Y-%m-%d')}\n"
                 f"Time: {now.strftime('%H:%M:%S')}\n"
                 f"Day: {DAY_NAMES[now.weekday()]}\n"
@@ -147,15 +137,9 @@ async def datetime_calculator(query: str) -> str:
                 f"Quarter: Q{(now.month - 1) // 3 + 1}"
             )
 
-        elif operation == "add":
-            date = _parse_date(params.get("date", ""))
-            days = params.get("days", 0)
-            weeks = params.get("weeks", 0)
-            months = params.get("months", 0)
-            years = params.get("years", 0)
-            biz_days = params.get("business_days", 0)
-
-            result = date
+        elif op == "add":
+            d = _parse_date(date)
+            result = d
             if years:
                 result = _add_months(result, years * 12)
             if months:
@@ -176,42 +160,38 @@ async def datetime_calculator(query: str) -> str:
 
             return (
                 f"**Date Arithmetic**\n"
-                f"Start: {date.strftime('%Y-%m-%d')} ({DAY_NAMES[date.weekday()]})\n"
+                f"Start: {d.strftime('%Y-%m-%d')} ({DAY_NAMES[d.weekday()]})\n"
                 f"Added: {', '.join(parts_added)}\n"
                 f"Result: {result.strftime('%Y-%m-%d')} ({DAY_NAMES[result.weekday()]})"
             )
 
-        elif operation == "diff":
-            date_from = _parse_date(params.get("from", ""))
-            date_to = _parse_date(params.get("to", ""))
-            delta = date_to - date_from
+        elif op == "diff":
+            df = _parse_date(date_from)
+            dt = _parse_date(date_to)
+            delta = dt - df
 
             total_days = abs(delta.days)
-            years = total_days // 365
+            yrs = total_days // 365
             remaining = total_days % 365
-            months = remaining // 30
-            days = remaining % 30
-            weeks = total_days // 7
-            biz_days = _business_days_between(date_from, date_to)
+            mos = remaining // 30
+            dys = remaining % 30
+            wks = total_days // 7
+            biz_count = _business_days_between(df, dt)
 
             direction = "later" if delta.days >= 0 else "earlier"
 
             return (
                 f"**Date Difference**\n"
-                f"From: {date_from.strftime('%Y-%m-%d')} ({DAY_NAMES[date_from.weekday()]})\n"
-                f"To: {date_to.strftime('%Y-%m-%d')} ({DAY_NAMES[date_to.weekday()]})\n"
+                f"From: {df.strftime('%Y-%m-%d')} ({DAY_NAMES[df.weekday()]})\n"
+                f"To: {dt.strftime('%Y-%m-%d')} ({DAY_NAMES[dt.weekday()]})\n"
                 f"Total: {total_days} days ({direction})\n"
-                f"Approx: {years}y {months}m {days}d\n"
-                f"Weeks: {weeks}\n"
-                f"Business days: {biz_days}"
+                f"Approx: {yrs}y {mos}m {dys}d\n"
+                f"Weeks: {wks}\n"
+                f"Business days: {biz_count}"
             )
 
-        elif operation == "convert":
-            dt_str = params.get("datetime", "")
-            from_tz = params.get("from_tz", "UTC")
-            to_tz = params.get("to_tz", "UTC")
-
-            dt = _parse_date(dt_str)
+        elif op == "convert":
+            dt = _parse_date(convert_datetime)
             src_tz = _get_tz(from_tz)
             dst_tz = _get_tz(to_tz)
 
@@ -225,33 +205,33 @@ async def datetime_calculator(query: str) -> str:
                 f"Offset: {TIMEZONE_OFFSETS.get(to_tz.upper(), 0) - TIMEZONE_OFFSETS.get(from_tz.upper(), 0):+.1f} hours"
             )
 
-        elif operation == "info":
-            date = _parse_date(params.get("date", ""))
-            iso = date.isocalendar()
+        elif op == "info":
+            d = _parse_date(date)
+            iso = d.isocalendar()
 
             return (
-                f"**Date Info: {date.strftime('%Y-%m-%d')}**\n"
-                f"Day of week: {DAY_NAMES[date.weekday()]}\n"
-                f"Day of year: {date.timetuple().tm_yday}\n"
+                f"**Date Info: {d.strftime('%Y-%m-%d')}**\n"
+                f"Day of week: {DAY_NAMES[d.weekday()]}\n"
+                f"Day of year: {d.timetuple().tm_yday}\n"
                 f"Week number: {iso[1]}\n"
-                f"Quarter: Q{(date.month - 1) // 3 + 1}\n"
-                f"Is weekend: {'Yes' if date.weekday() >= 5 else 'No'}\n"
-                f"ISO format: {date.isoformat()}"
+                f"Quarter: Q{(d.month - 1) // 3 + 1}\n"
+                f"Is weekend: {'Yes' if d.weekday() >= 5 else 'No'}\n"
+                f"ISO format: {d.isoformat()}"
             )
 
-        elif operation == "business_days":
-            date_from = _parse_date(params.get("from", ""))
-            date_to = _parse_date(params.get("to", ""))
-            biz_days = _business_days_between(date_from, date_to)
-            total_days = abs((date_to - date_from).days)
+        elif op == "business_days":
+            df = _parse_date(date_from)
+            dt = _parse_date(date_to)
+            biz_count = _business_days_between(df, dt)
+            total_days = abs((dt - df).days)
 
             return (
                 f"**Business Days**\n"
-                f"From: {date_from.strftime('%Y-%m-%d')} ({DAY_NAMES[date_from.weekday()]})\n"
-                f"To: {date_to.strftime('%Y-%m-%d')} ({DAY_NAMES[date_to.weekday()]})\n"
-                f"Business days: {biz_days}\n"
+                f"From: {df.strftime('%Y-%m-%d')} ({DAY_NAMES[df.weekday()]})\n"
+                f"To: {dt.strftime('%Y-%m-%d')} ({DAY_NAMES[dt.weekday()]})\n"
+                f"Business days: {biz_count}\n"
                 f"Calendar days: {total_days}\n"
-                f"Weekend days: {total_days - biz_days}"
+                f"Weekend days: {total_days - biz_count}"
             )
 
         else:
@@ -264,4 +244,71 @@ async def datetime_calculator(query: str) -> str:
         return f"Error: {str(e)}"
 
 
-datetime_tool = tool(datetime_calculator)
+class DatetimeInput(BaseModel):
+    """Inputs for the datetime_calculator tool."""
+    operation: Literal["now", "add", "diff", "convert", "info", "business_days"] = Field(
+        description="Which date/time operation to perform.",
+    )
+    timezone: str = Field(
+        default="UTC",
+        description="Timezone abbreviation for 'now' (e.g. UTC, EST, JST). Defaults to UTC.",
+    )
+    date: str = Field(
+        default="",
+        description="Date for 'add' or 'info' (YYYY-MM-DD or other common formats).",
+    )
+    days: int = Field(default=0, description="Days to add (negative subtracts). Used by 'add'.")
+    weeks: int = Field(default=0, description="Weeks to add. Used by 'add'.")
+    months: int = Field(default=0, description="Months to add. Used by 'add'.")
+    years: int = Field(default=0, description="Years to add. Used by 'add'.")
+    business_days: int = Field(
+        default=0,
+        description="Business days to add (skips weekends). Used by 'add'.",
+    )
+    date_from: str = Field(
+        default="",
+        description="Start date for 'diff' or 'business_days' (YYYY-MM-DD).",
+    )
+    date_to: str = Field(
+        default="",
+        description="End date for 'diff' or 'business_days' (YYYY-MM-DD).",
+    )
+    convert_datetime: str = Field(
+        default="",
+        description="Datetime string to convert (e.g. '2024-01-15 14:00'). Used by 'convert'.",
+    )
+    from_tz: str = Field(
+        default="UTC",
+        description="Source timezone abbreviation for 'convert'.",
+    )
+    to_tz: str = Field(
+        default="UTC",
+        description="Target timezone abbreviation for 'convert'.",
+    )
+
+
+class DatetimeTool(BaseTool):
+    name: str = "datetime_calculator"
+    description: str = (
+        "Perform date/time calculations: arithmetic, timezone conversion, business days, "
+        "and date info."
+        "\n\nOPERATIONS:"
+        "\n- now: Current time. Optional: timezone (default UTC)."
+        "\n- add: Add days/weeks/months/years/business_days to `date`."
+        "\n- diff: Days between `date_from` and `date_to`."
+        "\n- convert: Convert `convert_datetime` from `from_tz` to `to_tz`."
+        "\n- info: Day-of-week, week number, quarter, weekend status of `date`."
+        "\n- business_days: Count business days between `date_from` and `date_to`."
+        "\n\nDO NOT USE FOR: simple arithmetic (use calculator), recurring schedules."
+    )
+    args_schema: Type[BaseModel] = DatetimeInput
+
+    # Forwards every validated parameter to datetime_calculator.
+    async def _arun(self, **kwargs) -> str:
+        return await datetime_calculator(**kwargs)
+
+    def _run(self, **kwargs) -> str:
+        return asyncio.run(self._arun(**kwargs))
+
+
+datetime_tool = DatetimeTool()
