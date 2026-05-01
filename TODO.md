@@ -9,6 +9,61 @@ Within each category, items are ordered by **importance** (highest first).
 
 ---
 
+## Structured output & tool-schema enforcement (audit)
+
+Background: `src/multi_agent/supervisor.py` was converted from `json.loads(llm.invoke(...))` to
+`llm.with_structured_output(_PlanResponse)` so Anthropic's tool-use API enforces the Pydantic
+schema. The same fragile pattern exists elsewhere — both in direct LLM calls and in tool
+definitions that take a single `query: str` and parse it as JSON inside the function.
+
+1. [x] **Convert `src/planner.py` to `with_structured_output`** —
+   `src/planner.py`
+   Replaced `llm.invoke()` + `json.loads()` with `llm.with_structured_output(_PlanResponse).invoke()`.
+   Added LLM-facing `_StepResponse` / `_PlanResponse` schemas separate from the runtime
+   `ResearchStep` / `ResearchPlan` (so the LLM never sees `status`/`findings`). Trimmed
+   the JSON-formatting block from `_PLANNER_SYSTEM`. `_parse_depends_on` now takes the
+   typed dict directly (Pydantic handled the `int(key)` parsing). Fallback path now logs
+   a warning, matching the supervisor pattern.
+
+2. [ ] **Migrate tools that REQUIRE JSON input to `BaseTool` + `args_schema`** —
+   `src/tools/parallel_tool.py`, `src/tools/datetime_tool.py`
+   These fail loudest because the LLM has no string fallback — it MUST construct correct
+   JSON. Both expose `@tool` on `async def f(query: str)` then `json.loads(query)` inside.
+   - `parallel_tool.py:111` — replace `input_str` with `searches: list[SearchSpec]` where
+     `SearchSpec` is a Pydantic model `{type: Literal["web","wikipedia","news","arxiv"], query: str}`.
+   - `datetime_tool.py:103` — replace with named params + `operation: Literal["now","add","diff","convert","info","business_days"]`.
+   Reference pattern: `WeatherTool` / `EquationSolverTool` / `VisualizationTool` already
+   do this correctly.
+
+3. [ ] **Migrate string-or-JSON tools to `BaseTool` + `args_schema`** —
+   `src/tools/search_tool.py`, `wikipedia_tool.py`, `news_tool.py`, `arxiv_tool.py`,
+   `google_scholar_tool.py`, `reddit_tool.py`, `github_tool.py`, `csv_tool.py`, `scraper_tool.py`
+   All nine use `parse_tool_input(query, defaults)` to extract optional args from a
+   JSON-encoded query string. The LLM is told the tool takes a string but the docstring
+   sometimes also tells it to pass JSON — schema is enforced nowhere. Convert each to
+   named typed parameters (e.g. `web_search(query: str, max_results: int = 5, region: Optional[str] = None)`).
+   After all nine are migrated, delete `parse_tool_input` from `src/utils.py:218`.
+
+4. [ ] **Eliminate the `MATH_STRUCTURED:` text-channel** —
+   `app.py:130-183`, `main.py:79`, `src/tools/math_formatter.py`
+   `_auto_format_math_structured()` brace-counts to find a JSON blob inside LLM-streamed
+   text, with `json.loads` as fallback. Same class as the recent `2772300 "chart path
+   leaks as text"` bug — the agent sometimes echoes the raw `MATH_STRUCTURED:{…}` instead
+   of routing it through `math_formatter`. Proper fix: either `calculator_tool` returns
+   formatted output directly, or make `math_formatter` a guaranteed pipeline stage instead
+   of an optional tool the LLM may forget to call.
+
+5. [ ] **Structured fact-checker output** (optional, only if surfacing in UI) —
+   `src/multi_agent/prompts.py:160-166`, `src/multi_agent/orchestrator.py:119-120`
+   `FACT_CHECKER_PROMPT` asks for free-text `CONFIRMED:` / `CONTRADICTED:` / `UNVERIFIABLE:`
+   lines. The fact-checker is a tool-using agent so its main call can't use
+   `with_structured_output` directly, but a one-shot post-pass via
+   `llm.with_structured_output(FactCheckReport)` (list of `{claim, verdict: Literal[...], source}`)
+   would unlock per-verdict UI badges, telemetry on confidence ratios, and reliable
+   downstream consumption by the synthesizer.
+
+---
+
 ## LangGraph architecture & orchestration
 
 1. [x] **Plan-execute runs steps strictly sequentially** (audit #4) —
