@@ -575,6 +575,12 @@ class ResearchAgent:
         self.current_session_id = session_id
         return True
 
+    # Sets the active thread_id without requiring an existing checkpoint.
+    # Used by the REST API to scope each request to a caller-supplied session.
+    def set_session_id(self, session_id: str) -> None:
+        """Set the active session_id directly (no checkpoint lookup)."""
+        self.current_session_id = session_id
+
 
     # Takes (query, mode). Routes to multi-agent, plan-and-execute, or direct mode
     # based on the mode flag (or auto-detection). Yields typed events.

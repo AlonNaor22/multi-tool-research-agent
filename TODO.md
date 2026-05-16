@@ -155,7 +155,43 @@ Do in this order — each builds on the previous:
 
 ## Deployment & production readiness
 
-1. [ ] FastAPI wrapper exposing the agent as a REST API
+1. [x] **FastAPI wrapper exposing the agent as a REST API** —
+   `src/api/`, `serve.py`
+   Built a FastAPI app with `lifespan`-managed `ResearchAgent` singleton and a
+   per-app `asyncio.Lock` that serializes mutating operations (the agent has
+   mutable state — `current_session_id`, callbacks, rate limiter — so concurrent
+   requests need to queue).
+
+   Endpoints: `GET /health` (status + enabled/disabled tool lists),
+   `POST /query` (blocking, returns answer + tokens_used + duration),
+   `POST /query/stream` (SSE via `sse-starlette`, emits typed events including
+   `synthesis_token`, `step_tool`, `phase_started`, `done`),
+   `GET /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}` (all backed by
+   the AsyncSqliteSaver checkpoint DB).
+
+   Mode parameter: `auto | direct | plan | multi` (lowercase, REST-idiomatic).
+   The dependency module maps these to the internal `MODE_*` constants so
+   the route handlers never see unknown values.
+
+   New `ResearchAgent.set_session_id()` lets the API scope each request to a
+   caller-supplied thread without requiring an existing checkpoint
+   (cf. `load_session()` which expects one). `serve.py` wraps uvicorn with
+   `--host/--port/--reload` flags. Swagger UI auto-served at `/docs`.
+
+   18 new tests in `tests/test_api.py` use FastAPI's `TestClient` over a
+   stub agent (no LLM, no SQLite, no tool probes) and cover: health
+   ok/degraded; direct/plan/multi dispatch; caller-supplied session_id;
+   Pydantic 422 on invalid mode / empty query; 429 on RateLimitExceeded;
+   500 on unexpected exceptions; SSE typed events terminated by `done`;
+   stream error becomes `error` event; sessions list/get/delete + 404 paths.
+
+   Drive-by fix: rewrote `tests/test_news.py` to patch
+   `src.tools.news_tool.DDGS` per-test instead of mutating
+   `sys.modules['duckduckgo_search']` (matching `test_search.py`'s pattern) —
+   the module-level mock was racing with `test_search.py` /
+   `test_parallel.py` under `pytest-xdist` and producing 2-3 flaky failures.
+   Full suite now 508/508, stable across reruns.
+
 2. [ ] Dockerfile + docker-compose for containerized deployment
 3. [ ] CI/CD pipeline (GitHub Actions) for tests, linting, build validation
 4. [ ] Environment-based configuration (dev / staging / prod)

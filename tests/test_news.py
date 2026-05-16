@@ -2,20 +2,24 @@
 
 import sys
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import patch, MagicMock
 from pydantic import ValidationError
 
 # Mock duckduckgo_search before importing the tool
 if "duckduckgo_search" not in sys.modules:
     sys.modules["duckduckgo_search"] = MagicMock()
 
-mock_ddgs = sys.modules["duckduckgo_search"]
-
 from src.tools.news_tool import news_search, news_tool, NewsSearchInput
 
 
 class TestNewsSearch:
-    """Test news search with mocked DuckDuckGo News API."""
+    """Test news search with mocked DuckDuckGo News API.
+
+    Each test patches `src.tools.news_tool.DDGS` locally (rather than
+    mutating sys.modules['duckduckgo_search']) so news tests don't fight
+    over the shared mock with test_search.py and test_parallel.py under
+    pytest-xdist parallel execution.
+    """
 
     async def test_returns_formatted_results(self):
         mock_results = [
@@ -35,23 +39,25 @@ class TestNewsSearch:
             },
         ]
 
-        mock_instance = MagicMock()
-        mock_instance.news.return_value = mock_results
-        mock_ddgs.DDGS.return_value = mock_instance
+        with patch("src.tools.news_tool.DDGS") as mock_ddgs_cls:
+            mock_instance = MagicMock()
+            mock_instance.news.return_value = mock_results
+            mock_ddgs_cls.return_value = mock_instance
 
-        result = await news_search("AI news")
+            result = await news_search("AI news")
 
-        assert "AI Breakthrough" in result
-        assert "Market Update" in result
+            assert "AI Breakthrough" in result
+            assert "Market Update" in result
 
     async def test_no_results(self):
-        mock_instance = MagicMock()
-        mock_instance.news.return_value = []
-        mock_ddgs.DDGS.return_value = mock_instance
+        with patch("src.tools.news_tool.DDGS") as mock_ddgs_cls:
+            mock_instance = MagicMock()
+            mock_instance.news.return_value = []
+            mock_ddgs_cls.return_value = mock_instance
 
-        result = await news_search("obscure topic no results")
+            result = await news_search("obscure topic no results")
 
-        assert "No news" in result or "no" in result.lower()
+            assert "No news" in result or "no" in result.lower()
 
     async def test_timelimit_kwarg(self):
         mock_results = [{
@@ -62,28 +68,30 @@ class TestNewsSearch:
             "source": "Source",
         }]
 
-        mock_instance = MagicMock()
-        mock_instance.news.return_value = mock_results
-        mock_ddgs.DDGS.return_value = mock_instance
+        with patch("src.tools.news_tool.DDGS") as mock_ddgs_cls:
+            mock_instance = MagicMock()
+            mock_instance.news.return_value = mock_results
+            mock_ddgs_cls.return_value = mock_instance
 
-        result = await news_search("tech", timelimit="d")
+            result = await news_search("tech", timelimit="d")
 
-        assert "Recent News" in result
-        call_kwargs = mock_instance.news.call_args[1]
-        assert call_kwargs["timelimit"] == "d"
+            assert "Recent News" in result
+            call_kwargs = mock_instance.news.call_args[1]
+            assert call_kwargs["timelimit"] == "d"
 
     async def test_empty_query(self):
         result = await news_search("")
         assert "Error" in result or "No" in result
 
     async def test_handles_api_error(self):
-        mock_instance = MagicMock()
-        mock_instance.news.side_effect = Exception("API error")
-        mock_ddgs.DDGS.return_value = mock_instance
+        with patch("src.tools.news_tool.DDGS") as mock_ddgs_cls:
+            mock_instance = MagicMock()
+            mock_instance.news.side_effect = Exception("API error")
+            mock_ddgs_cls.return_value = mock_instance
 
-        result = await news_search("test")
+            result = await news_search("test")
 
-        assert "Error" in result or "error" in result.lower()
+            assert "Error" in result or "error" in result.lower()
 
 
 class TestNewsSearchSchema:

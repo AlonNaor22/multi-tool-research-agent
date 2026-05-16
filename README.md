@@ -110,6 +110,22 @@ streamlit run app.py
 
 Features: chat interface, streaming feedback, tool health status, query metrics, performance history, rate limiting controls, session management.
 
+### REST API (FastAPI)
+```bash
+python serve.py                # binds 127.0.0.1:8000
+python serve.py --reload       # auto-reload on code changes (dev only)
+```
+
+Endpoints (interactive docs at `http://127.0.0.1:8000/docs`):
+- `GET /health` — service status plus enabled/disabled tool lists
+- `POST /query` — run a query to completion; body `{query, mode, session_id?}`
+- `POST /query/stream` — same input, streams typed events as Server-Sent Events
+- `GET /sessions` — list saved conversation threads
+- `GET /sessions/{id}` — load full Q/A history
+- `DELETE /sessions/{id}` — drop a thread's checkpoints
+
+Modes: `auto` (routes simple → direct, complex → plan), `direct`, `plan`, `multi`.
+
 ## Example Queries
 
 - "What is 15% of 250?" (calculator)
@@ -126,6 +142,7 @@ Features: chat interface, streaming feedback, tool health status, query metrics,
 multi-tool-research-agent/
 ├── main.py                        # Async CLI entry point
 ├── app.py                         # Streamlit web UI
+├── serve.py                       # FastAPI REST + SSE entry point (src.api.app:app)
 ├── config.py                      # Configuration (model, API keys, limits)
 ├── requirements.txt               # Python dependencies
 ├── pytest.ini                     # Test configuration
