@@ -2,242 +2,275 @@
 
 [![CI](https://github.com/AlonNaor22/multi-tool-research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AlonNaor22/multi-tool-research-agent/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-516%20passing-brightgreen.svg)](#testing)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 
-An AI-powered research agent that autonomously selects and uses 20 tools (web search, Wikipedia, academic papers, Reddit, Wikidata, translation, code execution, and more) to gather information and answer complex questions. Built with Claude and LangGraph using native async tool calling.
+An AI research agent that picks between **three execution strategies** — single-shot, plan-and-execute, or multi-specialist orchestration — and drives **24 typed tools** (web search, Wikipedia, ArXiv, GitHub, Reddit, Wikidata, code execution, charting, and more) to answer complex questions. Built on Claude + LangGraph with end-to-end async I/O, schema-enforced tool inputs, and SQLite-backed session persistence.
 
-## Features
+> Three interfaces — **CLI**, **Streamlit web UI**, and **FastAPI REST + SSE service** — all share one async agent and one checkpointed conversation store.
 
-### Core Features
-- **Native Tool Calling**: Uses Claude's structured tool-use API via LangGraph for reliable tool selection
-- **Fully Async**: All I/O uses aiohttp and asyncio for non-blocking execution
-- **Conversation Memory**: Remembers all exchanges for follow-up questions
-- **Session Persistence**: Save and load research sessions with schema versioning
-- **Observability**: Token tracking, cost estimation, tool success rates, and query timing
-- **Rate Limiting**: Optional per-session token budget with real-time UI controls
-- **Web UI**: Streamlit chat interface with streaming feedback and performance dashboard
+---
 
-### Available Tools (20 Total)
+## At a glance
 
-| Category | Tool | Description |
-|----------|------|-------------|
-| **Math & Computation** | `calculator` | Arithmetic, algebra, math functions with variables |
-| | `unit_converter` | Convert between measurement units (8 categories) |
-| | `equation_solver` | Symbolic math via SymPy |
-| | `currency_converter` | Real-time exchange rates (Frankfurter API) |
-| | `wolfram_alpha` | Computational knowledge engine |
-| **Information Retrieval** | `web_search` | Web search via DuckDuckGo |
-| | `wikipedia` | Encyclopedic content |
-| | `news_search` | Recent news articles |
-| | `arxiv_search` | STEM/AI/ML academic preprints |
-| | `youtube_search` | Video search via yt-dlp |
-| | `google_scholar` | Academic papers via Semantic Scholar API |
-| **Web Content** | `fetch_url` | Extract content from web pages |
-| | `pdf_reader` | PDF text extraction via pdfplumber |
-| **Social & Discussion** | `reddit_search` | Reddit posts and discussions |
-| **Knowledge Base** | `wikidata` | Structured facts via SPARQL |
-| **Translation** | `translate` | 100+ languages via Google Translate |
-| **Code Execution** | `python_repl` | Sandboxed Python execution |
-| **Visualization** | `create_chart` | Bar, line, and pie charts |
-| **Multi-Source** | `parallel_search` | Run multiple searches concurrently with asyncio.gather |
-| **Weather** | `weather` | Current conditions and forecasts |
+- **Three execution modes** auto-routed by question complexity: `Direct` (single ReAct loop), `Plan-and-Execute` (LLM-generated plan with dependency-driven parallel steps), `Multi-Agent` (specialist orchestrator: research, math, analysis, fact-checker, translation).
+- **24 production tools** with Pydantic `args_schema` — Anthropic's tool-use API enforces every input at the schema boundary, no JSON parsing in user space.
+- **SQLite checkpointing** (`AsyncSqliteSaver`) auto-persists full graph state after every node; sessions resume mid-conversation across processes.
+- **History summarizer middleware** trims the messages channel via the LLM when token count crosses a threshold — conversations never blow up the context window.
+- **Production-ready**: bearer-token auth, per-endpoint slowapi rate limits with `Retry-After`, multi-stage Docker (~250 MB, non-root), GitHub Actions CI on every push.
+- **Observability**: per-query token & cost tracking, tool success rates, timing breakdown, JSONL metrics store.
 
-### Engineering Highlights
-- **Custom tool implementations** over LangChain community built-ins — adds async retry with rate-limit detection, timeout protection, structured output formatting, JSON input parsing with advanced options (category filtering, region, sorting), and help commands that the built-in tools lack
-- **283 tests** with pytest-asyncio
-- **Evaluation suite** with tool selection accuracy and answer quality scoring
-- **TTL caching** on search tools to reduce redundant API calls
-- **Tool health checks** at startup with automatic fallback guidance
-- **Rate-limit-aware retries** (detects HTTP 429, backs off aggressively)
-- **Cost tracking** with model-aware pricing tables
+---
 
-## How It Works
+## Quickstart
 
-The agent uses Claude as a reasoning engine with LangGraph's native tool-calling loop:
+```bash
+git clone https://github.com/AlonNaor22/multi-tool-research-agent.git
+cd multi-tool-research-agent
+python -m venv venv
+# Pick the one for your shell:
+venv\Scripts\Activate.ps1                     # Windows PowerShell
+# venv\Scripts\activate.bat                   # Windows cmd
+# source venv/bin/activate                    # macOS / Linux
 
-1. **Analyze** the question and identify which category of tool is needed
-2. **Select** the most appropriate tool based on system prompt guidance
-3. **Execute** the tool call asynchronously (via `ainvoke`)
-4. **Synthesize** results from multiple tool calls into a coherent answer
+pip install -r requirements.txt
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-The agent's system prompt includes hierarchical tool categories with guidance on when to use each tool, error recovery strategies, and fallback options.
+python main.py                # CLI
+# or
+streamlit run app.py          # web UI
+# or
+python serve.py               # REST API on :8000, docs at /docs
+# or
+docker compose up --build     # containerized API on :8000
+```
 
-## Installation
+---
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/AlonNaor22/multi-tool-research-agent.git
-   cd multi-tool-research-agent
-   ```
+## Architecture
 
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
+```mermaid
+flowchart TB
+    subgraph Interfaces
+        CLI[main.py CLI]
+        UI[Streamlit Web UI]
+        REST[FastAPI REST + SSE]
+    end
 
-   # Windows
-   venv\Scripts\activate
+    CLI --> Agent
+    UI --> Agent
+    REST --> Agent
 
-   # macOS/Linux
-   source venv/bin/activate
-   ```
+    Agent[ResearchAgent] --> Router{Mode router}
+    Router -->|simple| Direct[Direct<br/>single ReAct loop]
+    Router -->|complex| Plan[Plan-and-Execute<br/>depends_on waves<br/>asyncio.gather]
+    Router -->|cross-domain| Multi[Multi-Agent Orchestrator]
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+    Multi --> Specs[Specialists:<br/>research / math / analysis<br/>fact-checker / translation]
 
-4. **Set up API keys**
+    Direct --> Tools
+    Plan --> Tools
+    Specs --> Tools
 
-   Create a `.env` file with your API keys:
-   ```
-   ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
-   OPENWEATHER_API_KEY=your-openweather-key-here      # Optional (weather tool)
-   WOLFRAM_ALPHA_APP_ID=your-wolfram-app-id-here       # Optional (wolfram tool)
-   ```
+    Tools[24 typed async tools<br/>Pydantic args_schema]
 
-   Required: [Anthropic](https://console.anthropic.com/)
-   Optional: [OpenWeatherMap](https://openweathermap.org/api), [Wolfram Alpha](https://developer.wolframalpha.com/)
+    Agent <--> Saver[(AsyncSqliteSaver<br/>checkpoints.db)]
+    Agent --> Obs[Observability<br/>tokens / cost / timing]
+    Agent --> RL[Rate limiter<br/>per-session budget]
 
-## Usage
+    History[History summarizer<br/>middleware] -.before_model.- Agent
+```
+
+**Execution modes**
+
+| Mode | When | How |
+|---|---|---|
+| **Direct** | Simple lookups, single tool sufficient | One `create_agent` ReAct loop. Streams tokens via `astream(stream_mode="messages")`. |
+| **Plan-and-Execute** | Multi-step research questions | `llm.with_structured_output(ResearchPlan)` generates ordered steps with `depends_on` edges; the executor runs each wave concurrently via `asyncio.gather`. Dependencies replay as prior `(HumanMessage, AIMessage)` pairs so the agent reasons over real conversation turns rather than pasted context. |
+| **Multi-Agent** | Cross-domain queries (e.g. "compute X, verify against research") | Supervisor delegates to specialist agents (research / math / analysis / fact-checker / translation), each with its own tool subset and prompt. Findings synthesized via a structured-output supervisor call. |
+
+`auto` mode (the default) inspects the query with a lightweight classifier and routes to Direct or Plan-and-Execute. Multi-Agent is opt-in.
+
+---
+
+## Tools (24)
+
+| Category | Tools |
+|---|---|
+| **Math & computation** | `calculator` (arithmetic + step-by-step calculus, equations, matrix ops with KaTeX markdown output), `unit_converter`, `equation_solver` (SymPy), `currency_converter` (Frankfurter API), `wolfram_alpha`, `datetime_calculator` |
+| **Information retrieval** | `web_search` (DuckDuckGo), `wikipedia`, `news_search`, `arxiv_search`, `youtube_search` (yt-dlp), `google_scholar` (Semantic Scholar), `github_search` |
+| **Web content** | `fetch_url`, `pdf_reader` (pdfplumber), `web_scraper` (tables, lists, links, headings) |
+| **Knowledge & social** | `wikidata` (SPARQL), `reddit_search` |
+| **Code & data** | `python_repl` (sandboxed), `csv_reader` (pandas: filter, groupby, stats) |
+| **Output** | `create_chart` (bar / line / pie / function plots), `translate` (deep-translator, 100+ languages) |
+| **Multi-source** | `parallel_search` (web + wikipedia + news + arxiv concurrently) |
+| **Weather** | `weather` (OpenWeatherMap) |
+
+Every tool subclasses `BaseTool` with a Pydantic `args_schema` — the LLM never sees free-form JSON, every parameter is type-validated by Anthropic's tool-use API before it reaches Python code.
+
+---
+
+## Interfaces
 
 ### CLI
 ```bash
-python main.py
+python main.py                   # direct mode
+python main.py --plan            # plan-and-execute
+python main.py --multi-agent     # multi-agent orchestrator
 ```
+REPL commands: `clear` (new thread), `save`, `load`, `sessions`, `stats`, `quit`.
 
-Commands: `clear`, `save`, `load`, `sessions`, `stats`, `quit`
-
-### Web UI (Streamlit)
+### Streamlit web UI
 ```bash
 streamlit run app.py
 ```
+Chat interface with streaming feedback, callback inbox (tool calls / plan steps), session browser, tool-health panel, per-query metrics, performance history charts, optional token-budget controls.
 
-Features: chat interface, streaming feedback, tool health status, query metrics, performance history, rate limiting controls, session management.
-
-### REST API (FastAPI)
+### FastAPI REST + SSE
 ```bash
-python serve.py                # binds 127.0.0.1:8000
-python serve.py --reload       # auto-reload on code changes (dev only)
+python serve.py                  # binds 127.0.0.1:8000
+python serve.py --reload         # dev mode
 ```
+Interactive docs at `http://127.0.0.1:8000/docs`. Request body for query endpoints: `{ "query": "...", "mode": "auto|direct|plan|multi", "session_id": "optional" }`.
 
-Endpoints (interactive docs at `http://127.0.0.1:8000/docs`):
-- `GET /health` — service status plus enabled/disabled tool lists
-- `POST /query` — run a query to completion; body `{query, mode, session_id?}`
-- `POST /query/stream` — same input, streams typed events as Server-Sent Events
-- `GET /sessions` — list saved conversation threads
-- `GET /sessions/{id}` — load full Q/A history
-- `DELETE /sessions/{id}` — drop a thread's checkpoints
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | Service status, enabled/disabled tool lists (always open for k8s/Docker probes) |
+| POST | `/query` | Run to completion; returns `{answer, session_id, tokens_used, duration_seconds}` |
+| POST | `/query/stream` | Same input, streams typed SSE events (`synthesis_token`, `step_tool`, `phase_started`, `done`) |
+| GET | `/sessions` | List saved threads |
+| GET | `/sessions/{id}` | Load Q/A history |
+| DELETE | `/sessions/{id}` | Drop a thread's checkpoints |
 
-Modes: `auto` (routes simple → direct, complex → plan), `direct`, `plan`, `multi`.
+**Authentication**: set `API_AUTH_TOKEN` in `.env` and every protected endpoint requires `Authorization: Bearer <token>`. Unset = dev mode (warns at startup). `/health` always open.
 
-**Authentication**: set `API_AUTH_TOKEN=<your-secret>` in `.env` and every protected endpoint requires `Authorization: Bearer <your-secret>`. When unset, auth is disabled (dev mode) and the server logs a warning at startup. `/health` is always open so Docker/k8s liveness probes work.
+**Rate limits** (per-IP, in-memory; swap to Redis URI for multi-worker):
 
-**Rate limits** (per remote IP, in-memory):
-- `POST /query`, `POST /query/stream` — 10 / minute (LLM-expensive)
-- `GET /sessions`, `GET /sessions/{id}` — 60 / minute
-- `DELETE /sessions/{id}` — 30 / minute
+| Endpoint | Limit |
+|---|---|
+| `POST /query`, `POST /query/stream` | 10 / minute |
+| `GET /sessions`, `GET /sessions/{id}` | 60 / minute |
+| `DELETE /sessions/{id}` | 30 / minute |
 
-A 429 response includes a `Retry-After` header and the slowapi `X-RateLimit-*` headers so clients can back off cleanly.
+A 429 includes `Retry-After` plus slowapi's `X-RateLimit-*` headers.
 
 ### Docker
 ```bash
-docker compose up --build           # build & run the API on :8000
+docker compose up --build           # build + run on :8000
 docker compose up -d                # detached
 docker compose logs -f api          # tail logs
 curl http://localhost:8000/health   # smoke test
-docker compose down                 # stop & remove
+docker compose down                 # stop + remove
 ```
+Multi-stage build: `python:3.12-slim` builder installs deps into `/opt/venv`, runtime stage copies just the venv + source. Final image ~250 MB, runs as non-root `app` (UID 1000). Bind-mounts `sessions/`, `output/`, `observability/` so SQLite checkpoints, chart PNGs, and metrics survive `docker compose down`. `HEALTHCHECK` probes `/health` via stdlib `urllib` (no `curl` baked into the image).
 
-Multi-stage build produces a ~250 MB image running as a non-root user. The
-container reads `ANTHROPIC_API_KEY` (and optional keys) from the host's `.env`
-file, and bind-mounts `sessions/`, `output/`, and `observability/` so SQLite
-checkpoints, chart PNGs, and metrics survive `docker compose down`. The
-included `HEALTHCHECK` probes `/health` every 30s; `docker compose ps` shows
-the container as `healthy` once the agent is ready.
+---
 
-## Example Queries
+## Engineering highlights
 
-- "What is 15% of 250?" (calculator)
-- "Find papers about transformers on ArXiv" (arxiv_search)
-- "Translate 'hello world' to japanese" (translate)
-- "What do people on Reddit think about Python vs Rust?" (reddit_search)
-- "What's the population of Tokyo?" (wikidata)
-- "Search for Tesla on web, wikipedia, and news at the same time" (parallel_search)
-- "What is the population of France?" then "How does that compare to Germany?" (follow-up with memory)
+- **Schema-enforced tool inputs**. Every tool is a `BaseTool` subclass with a Pydantic `args_schema`. The LLM passes typed parameters; Anthropic's tool-use API rejects bad input at the boundary. Migrated 10 string-or-JSON tools off `parse_tool_input(query, defaults)` to typed params in a single refactor.
+- **Structured outputs everywhere**. `llm.with_structured_output(_PlanResponse)` for the planner, `with_structured_output(DelegationPlan)` for the multi-agent supervisor — Pydantic schemas enforce shape; no JSON string parsing in hot paths.
+- **Dependency-driven plan execution**. `ResearchPlan` carries a `depends_on` graph; the executor groups steps into waves and runs each wave via `asyncio.gather`, with prior findings replayed as `(HumanMessage, AIMessage)` pairs into the dependent step's context.
+- **Unified persistence**. `AsyncSqliteSaver` checkpoints full graph state (messages, summarizer counts, plan progress) after every node. Sessions are SQLite threads — list, load, resume, or delete via the same API the Streamlit UI uses.
+- **History summarizer middleware**. Custom `AgentMiddleware` with `before_model` / `abefore_model` hooks. When the messages channel exceeds `HISTORY_TRIM_THRESHOLD_TOKENS` (8k), the older portion is summarized into one marked `AIMessage`; the active turn (last `HumanMessage` onward) stays verbatim. Tool-use / tool-result pairing is preserved across the drop/keep split.
+- **Rate-limit-aware retries** in tool code (HTTP 429 detected, exponential backoff) plus a session-level token budget enforced by `RateLimiter`.
+- **Observability**: per-query token counts (input/output), cost estimation against model-aware pricing tables, tool success rates, timing breakdown. Metrics appended to `observability/metrics.jsonl` for later analysis.
+- **Tool health checks** at startup. Each tool reports availability; disabled tools are pruned from the agent's tool list AND from the system prompt's tool catalog so the LLM never even tries them.
 
-## Project Structure
+---
+
+## Project structure
 
 ```
 multi-tool-research-agent/
-├── main.py                        # Async CLI entry point
-├── app.py                         # Streamlit web UI
-├── serve.py                       # FastAPI REST + SSE entry point (src.api.app:app)
-├── Dockerfile                     # Multi-stage build for the REST API
-├── docker-compose.yml             # One-command stack: build + run + volumes
-├── config.py                      # Configuration (model, API keys, limits)
-├── requirements.txt               # Python dependencies
-├── pytest.ini                     # Test configuration
-├── IMPROVEMENTS.md                # Improvement roadmap (all items done)
+├── main.py                         # CLI entry point
+├── app.py                          # Streamlit web UI
+├── serve.py                        # FastAPI server (uvicorn entry point)
+├── Dockerfile                      # Multi-stage build for the REST API
+├── docker-compose.yml              # One-command stack with volumes + env
+├── .github/workflows/ci.yml        # pytest + docker-build on push/PR
+├── config.py                       # Model, keys, limits (reads .env)
+├── requirements.txt
+├── pytest.ini
+├── TODO.md                         # Implementation roadmap
 ├── src/
-│   ├── agent.py                   # ResearchAgent with async ainvoke/astream
-│   ├── callbacks.py               # Timing and streaming callback handlers
-│   ├── observability.py           # Token tracking, cost estimation, metrics store
-│   ├── rate_limiter.py            # Optional per-session token budget
-│   ├── session_manager.py         # Session save/load with schema versioning
-│   ├── tool_health.py             # Startup health checks and fallback guidance
-│   ├── constants.py               # Shared constants (timeouts, URLs, limits)
-│   ├── utils.py                   # Async retry, timeout, aiohttp session, TTL cache
-│   └── tools/                     # 20 tools (all async with aiohttp/asyncio)
-│       ├── calculator_tool.py
-│       ├── unit_converter_tool.py
-│       ├── equation_solver_tool.py
-│       ├── currency_tool.py
-│       ├── wolfram_tool.py
-│       ├── wikipedia_tool.py
-│       ├── search_tool.py
-│       ├── news_tool.py
-│       ├── arxiv_tool.py
-│       ├── youtube_tool.py
-│       ├── google_scholar_tool.py
-│       ├── url_tool.py
-│       ├── pdf_tool.py
-│       ├── reddit_tool.py
-│       ├── wikidata_tool.py
-│       ├── translation_tool.py
-│       ├── python_repl_tool.py
-│       ├── visualization_tool.py
-│       ├── parallel_tool.py
-│       └── weather_tool.py
-├── tests/                         # 283 async tests
-├── evals/                         # Evaluation framework
-├── sessions/                      # Saved research sessions
-└── observability/                 # Query metrics (JSONL)
+│   ├── agent.py                    # ResearchAgent + ResearchAgentState + middleware
+│   ├── planner.py                  # generate_plan with_structured_output
+│   ├── session_manager.py          # Session list/load/delete on SqliteSaver
+│   ├── callbacks.py                # Timing, streaming, observability handlers
+│   ├── observability.py            # Token tracking, cost estimation, metrics store
+│   ├── rate_limiter.py             # Per-session token budget
+│   ├── tool_health.py              # Startup probes + fallback guidance
+│   ├── constants.py                # Shared constants (timeouts, modes, events)
+│   ├── utils.py                    # Async retry, timeout, aiohttp session, TTL cache
+│   ├── api/                        # FastAPI REST + SSE service
+│   │   ├── app.py                  # App factory + lifespan + middleware
+│   │   ├── auth.py                 # Bearer-token dependency
+│   │   ├── rate_limit.py           # slowapi limiter + custom 429 handler
+│   │   ├── dependencies.py         # DI providers, API_MODE_TO_INTERNAL
+│   │   ├── models.py               # Pydantic request/response schemas
+│   │   └── routes/                 # health, query, sessions
+│   ├── multi_agent/                # Multi-agent orchestrator + specialists
+│   └── tools/                      # 24 async tools (Pydantic args_schema)
+├── tests/                          # 516 tests, runs in ~15s (pytest-xdist)
+├── sessions/                       # SQLite checkpoint DB (gitignored)
+├── output/                         # Chart PNGs (gitignored)
+└── observability/                  # Metrics JSONL (gitignored)
 ```
 
-## Technologies
+---
 
-- **LangGraph** / **LangChain** - Async agent orchestration with native tool calling
-- **Claude (Anthropic)** - LLM for reasoning and tool selection
-- **aiohttp** - Async HTTP client (replaces requests)
-- **DuckDuckGo** - Free web and news search
-- **Semantic Scholar API** - Academic paper search across all fields
-- **yt-dlp** - YouTube video search
-- **pdfplumber** - High-quality PDF text extraction
-- **deep-translator** - Translation (100+ languages)
-- **Wikidata SPARQL** - Structured knowledge queries
-- **Streamlit** - Web UI with chat interface
-- **pytest-asyncio** - Async test framework
+## Testing
+
+```bash
+pytest                              # full suite, ~15s parallel
+pytest tests/test_api.py            # one module
+pytest -k auth                      # filter by name
+```
+
+516 tests covering: every tool's happy path + error path, agent mode routing, plan/dependency execution, multi-agent orchestration, session manager, rate limiter, observability, REST API (auth/rate-limit/SSE), Pydantic schema validation at every tool boundary.
+
+CI runs the same `pytest` + a Docker build smoke check on every push and PR — see `.github/workflows/ci.yml`.
+
+---
 
 ## Configuration
 
-Edit `config.py` or set environment variables:
+Edit `.env` or set environment variables directly:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `MODEL_NAME` | claude-sonnet-4-5-20250929 | Claude model to use |
-| `TEMPERATURE` | 0.2 | Lower = more focused reasoning |
-| `MAX_TOKENS` | 2000 | Maximum response length |
-| `MAX_ITERATIONS` | 10 | Max reasoning steps per query |
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | **Required.** Anthropic API key. |
+| `MODEL_NAME` | `claude-sonnet-4-5-20250929` | Claude model. |
+| `TEMPERATURE` | `0.2` | Sampling temperature. |
+| `MAX_TOKENS` | `2000` | Per-response cap. |
+| `API_AUTH_TOKEN` | — | Bearer token for the REST API. Unset = dev mode. |
+| `OPENWEATHER_API_KEY` | — | Enables the `weather` tool. |
+| `WOLFRAM_ALPHA_APP_ID` | — | Enables the `wolfram_alpha` tool. |
+
+---
+
+## Example queries
+
+- "What is 15% of 250?" → calculator (direct)
+- "Find papers about transformers on ArXiv from 2023" → arxiv_search with typed `year_from`
+- "Compare Python vs Rust for systems programming, with both web sentiment and benchmark data" → multi-agent (research + analysis + fact-checker)
+- "Plot f(x) = x² − 4 and find its roots" → calculator + create_chart
+- "What is the population of France? How does that compare to Germany?" → follow-up with session memory
+- "Search Tesla on web, wikipedia, and news at the same time" → parallel_search
+
+---
+
+## Tech stack
+
+**Core**: LangGraph, LangChain, Claude (Anthropic), Pydantic, aiohttp, asyncio
+**Persistence**: AsyncSqliteSaver, aiosqlite
+**Tools**: DuckDuckGo Search, wikipedia-api, arxiv, Semantic Scholar API, yt-dlp, pdfplumber, deep-translator, SymPy, pandas, matplotlib, BeautifulSoup
+**Interfaces**: FastAPI, uvicorn, sse-starlette, slowapi, Streamlit
+**Testing**: pytest, pytest-asyncio, pytest-xdist
+**Packaging**: multi-stage Docker, docker-compose, GitHub Actions
+
+---
 
 ## License
 
