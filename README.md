@@ -1,5 +1,9 @@
 # Multi-Tool Research Agent
 
+[![CI](https://github.com/AlonNaor22/multi-tool-research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AlonNaor22/multi-tool-research-agent/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#)
+
 An AI-powered research agent that autonomously selects and uses 20 tools (web search, Wikipedia, academic papers, Reddit, Wikidata, translation, code execution, and more) to gather information and answer complex questions. Built with Claude and LangGraph using native async tool calling.
 
 ## Features

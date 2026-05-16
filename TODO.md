@@ -217,7 +217,24 @@ Do in this order — each builds on the previous:
 
    Not smoke-tested in this sandbox (Docker daemon unavailable here).
    Verify locally with `docker compose up --build` + `curl localhost:8000/health`.
-3. [ ] CI/CD pipeline (GitHub Actions) for tests, linting, build validation
+3. [x] **CI/CD pipeline (GitHub Actions) for tests, linting, build validation** —
+   `.github/workflows/ci.yml`
+   Single workflow, two parallel jobs on every push + PR to master:
+
+   - **test** — Ubuntu + Python 3.12, pip cache keyed on requirements.txt,
+     runs the full pytest suite (516 tests). `ANTHROPIC_API_KEY` set to a
+     placeholder so any import-time env read doesn't trip a NoneType.
+
+   - **docker-build** — sets up Buildx, builds the Dockerfile (`push: false`,
+     `load: true`), uses GHA cache (`type=gha`) so subsequent runs finish
+     in ~30s. Smoke-checks the image by running
+     `python -c "from src.api.app import create_app; create_app()"` inside
+     the built image — proves every production dep made it in, without
+     needing a real Anthropic key.
+
+   `concurrency.cancel-in-progress: true` kills stale runs on the same branch
+   when a new push lands. 10-min timeout per job. README updated with the
+   passing-build badge and Python-version / license shields.
 4. [ ] Environment-based configuration (dev / staging / prod)
 5. [x] **API authentication and rate limiting at the endpoint level** —
    `src/api/auth.py`, `src/api/rate_limit.py`, `config.py`,
