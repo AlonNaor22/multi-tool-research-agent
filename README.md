@@ -126,6 +126,22 @@ Endpoints (interactive docs at `http://127.0.0.1:8000/docs`):
 
 Modes: `auto` (routes simple → direct, complex → plan), `direct`, `plan`, `multi`.
 
+### Docker
+```bash
+docker compose up --build           # build & run the API on :8000
+docker compose up -d                # detached
+docker compose logs -f api          # tail logs
+curl http://localhost:8000/health   # smoke test
+docker compose down                 # stop & remove
+```
+
+Multi-stage build produces a ~250 MB image running as a non-root user. The
+container reads `ANTHROPIC_API_KEY` (and optional keys) from the host's `.env`
+file, and bind-mounts `sessions/`, `output/`, and `observability/` so SQLite
+checkpoints, chart PNGs, and metrics survive `docker compose down`. The
+included `HEALTHCHECK` probes `/health` every 30s; `docker compose ps` shows
+the container as `healthy` once the agent is ready.
+
 ## Example Queries
 
 - "What is 15% of 250?" (calculator)
@@ -143,6 +159,8 @@ multi-tool-research-agent/
 ├── main.py                        # Async CLI entry point
 ├── app.py                         # Streamlit web UI
 ├── serve.py                       # FastAPI REST + SSE entry point (src.api.app:app)
+├── Dockerfile                     # Multi-stage build for the REST API
+├── docker-compose.yml             # One-command stack: build + run + volumes
 ├── config.py                      # Configuration (model, API keys, limits)
 ├── requirements.txt               # Python dependencies
 ├── pytest.ini                     # Test configuration

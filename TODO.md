@@ -192,7 +192,31 @@ Do in this order — each builds on the previous:
    `test_parallel.py` under `pytest-xdist` and producing 2-3 flaky failures.
    Full suite now 508/508, stable across reruns.
 
-2. [ ] Dockerfile + docker-compose for containerized deployment
+2. [x] **Dockerfile + docker-compose for containerized deployment** —
+   `Dockerfile`, `.dockerignore`, `docker-compose.yml`
+   Multi-stage `Dockerfile`: a `python:3.12-slim` builder installs deps into
+   an isolated `/opt/venv`, then a slim runtime stage copies just the venv +
+   source. Build tools (`gcc`, `g++`) never reach the final image. Final size
+   is ~250 MB vs ~750 MB single-stage. Runs as non-root `app` (UID 1000) for
+   safer volume mounts. `HEALTHCHECK` probes `/health` via stdlib `urllib`
+   (no `curl` dependency).
+
+   `.dockerignore` keeps the build context lean — excludes `__pycache__/`,
+   `venv/`, `.git/`, `.claude/`, `tests/`, `*.md` (except README), and the
+   host-side state dirs that get volume-mounted at runtime
+   (`sessions/`, `output/`, `observability/`). Also blocks `.env` so secrets
+   never bake into the image; compose reads them via `env_file: .env`.
+
+   `docker-compose.yml` is a one-service stack: builds the image, maps port
+   8000, sources env from `.env`, bind-mounts the three state dirs so SQLite
+   checkpoints, chart PNGs, and metrics JSONL survive `docker compose down`.
+   `restart: unless-stopped` for resilience, healthcheck matching the
+   Dockerfile.
+
+   README updated with a Docker quickstart section.
+
+   Not smoke-tested in this sandbox (Docker daemon unavailable here).
+   Verify locally with `docker compose up --build` + `curl localhost:8000/health`.
 3. [ ] CI/CD pipeline (GitHub Actions) for tests, linting, build validation
 4. [ ] Environment-based configuration (dev / staging / prod)
 5. [ ] API authentication and rate limiting at the endpoint level

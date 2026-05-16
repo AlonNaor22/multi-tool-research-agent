@@ -1,0 +1,70 @@
+# Files excluded from the docker build context.
+# Keeps the image small and avoids leaking host-side state into builds.
+
+# ─── Python build artifacts ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── Virtual environments ─────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ─── Host-side persistent state (volume-mounted at runtime) ───────────
+sessions/
+output/
+observability/
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Secrets / local config ───────────────────────────────────────────
+.env
+.env.local
+*.pem
+*.key
+
+# ─── Editor / VCS / tooling ───────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+.github/
+.idea/
+.vscode/
+.claude/
+.cursor/
+*.swp
+*.swo
+
+# ─── Tests not needed at runtime (keep image lean) ────────────────────
+tests/
+pytest.ini
+.coverage
+htmlcov/
+
+# ─── Docs (skip everything except top-level README) ───────────────────
+docs/
+*.md
+!README.md
+
+# ─── Docker meta ──────────────────────────────────────────────────────
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
+# ─── OS / misc ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+nul
