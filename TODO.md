@@ -55,14 +55,24 @@ definitions that take a single `query: str` and parse it as JSON inside the func
    `Test<Tool>Tool` class asserting the `name` and `args_schema` wiring. Full suite:
    489/489 passing.
 
-4. [ ] **Eliminate the `MATH_STRUCTURED:` text-channel** —
-   `app.py:130-183`, `main.py:79`, `src/tools/math_formatter.py`
-   `_auto_format_math_structured()` brace-counts to find a JSON blob inside LLM-streamed
-   text, with `json.loads` as fallback. Same class as the recent `2772300 "chart path
-   leaks as text"` bug — the agent sometimes echoes the raw `MATH_STRUCTURED:{…}` instead
-   of routing it through `math_formatter`. Proper fix: either `calculator_tool` returns
-   formatted output directly, or make `math_formatter` a guaranteed pipeline stage instead
-   of an optional tool the LLM may forget to call.
+4. [x] **Eliminate the `MATH_STRUCTURED:` text-channel** —
+   `app.py`, `main.py`, `src/tools/math_formatter.py`, `src/tools/calculator_tool.py`
+   Chose option A: `calculator_tool` now calls `format_math_from_dict()` directly
+   and returns ready-to-display KaTeX markdown. The `"MATH_STRUCTURED:" + json.dumps(...)`
+   prefix channel is gone, and with it the brittle `_auto_format_math_structured()`
+   brace-counter in `app.py`, the mid-stream MATH_STRUCTURED interception in
+   `_stream_display()`, and `main.py`'s `_clean_math_output()`. `math_formatter.py`
+   is now a private helper module (no LangChain tool); `math_formatter` was removed
+   from the agent's tool list, the multi-agent math specialist's tool list, and
+   `src/tools/__init__.py`. Prompts updated: "When calculator returns
+   MATH_STRUCTURED:, ALWAYS pass to math_formatter" → "calculator output is already
+   formatted KaTeX markdown — include it verbatim." Dead-code cleanup: removed the
+   `<!-- MATH_HTML -->` HTML-sentinel stripper that nothing produced, and the
+   now-unused `UI.status.formatting_math` string. Tests rewritten for the
+   `format_math_from_dict(dict)` signature, plus a new
+   `TestCalculatorReturnsFormattedMarkdown` class verifying calculator output
+   contains no `MATH_STRUCTURED` prefix and is renderable markdown. Full suite:
+   490/490 passing.
 
 5. [ ] **Structured fact-checker output** (optional, only if surfacing in UI) —
    `src/multi_agent/prompts.py:160-166`, `src/multi_agent/orchestrator.py:119-120`

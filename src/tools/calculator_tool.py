@@ -1,6 +1,5 @@
 """Calculator tool — safe math evaluation with variables and step-by-step solutions."""
 
-import json
 import math
 import re
 from typing import Dict, Optional, Type
@@ -8,6 +7,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from src.tools.step_solver import detect_operation, StepByStepSolver
+from src.tools.math_formatter import format_math_from_dict
 
 # ─── Module overview ───────────────────────────────────────────────
 # Safe math evaluation with variable storage, step-by-step solutions,
@@ -190,14 +190,11 @@ class AdvancedCalculator:
         # Check for step-by-step operations (calculus, matrix, complex arithmetic)
         operation, cleaned = detect_operation(input_str)
         if operation not in ("simple", "passthrough"):
-            # Return structured JSON for the math_formatter tool to render
             structured = _step_solver.solve_structured(operation, cleaned)
             if structured.get("error") and not structured.get("steps"):
                 return f"Error: {structured['error']}"
-            # Also include the plain-text version as fallback
-            plain_text = _step_solver.solve(operation, cleaned)
-            structured["plain_text"] = plain_text
-            return "MATH_STRUCTURED:" + json.dumps(structured, default=str)
+            # Format inline — the agent receives ready-to-display KaTeX markdown.
+            return format_math_from_dict(structured)
 
         # Otherwise, evaluate as expression
         try:

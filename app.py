@@ -43,31 +43,14 @@ from src.constants import (
 # Smart content renderer — handles math formatting and chart images
 # ---------------------------------------------------------------------------
 
-# Takes (text, placeholder). Shows streaming text in the placeholder,
-# substituting a clean status line when math content is mid-generation.
+# Takes (text, placeholder). Streams text to the placeholder, hiding incomplete
+# LaTeX expressions (odd `$` count) so users don't see half-rendered equations.
 def _stream_display(text: str, placeholder) -> None:
-    """Display streaming text, hiding raw math content during token generation.
-
-    While the LLM is generating tokens, MATH_STRUCTURED: JSON and LaTeX
-    ($...$) look ugly as raw text. This function shows a clean placeholder
-    whenever math content is detected mid-stream.
-    """
-    # Detect raw structured JSON
-    if 'MATH_STRUCTURED:' in text:
-        idx = text.index('MATH_STRUCTURED:')
-        before = text[:idx].strip()
-        if before:
-            placeholder.markdown(before + "\n\n" + UI.status.formatting_math)
-        else:
-            placeholder.markdown(UI.status.formatting_math)
-        return
-
-    # Detect LaTeX with unclosed delimiters (partial streaming of $...$)
-    # Count $ signs — odd count means we're mid-LaTeX expression
-    dollar_count = text.count('$') - text.count('\\$')  # exclude escaped
+    """Display streaming text, hiding incomplete LaTeX delimiters mid-stream."""
+    # Detect LaTeX with unclosed delimiters (partial streaming of $...$).
+    # Odd count of unescaped $ means we're mid-expression.
+    dollar_count = text.count('$') - text.count('\\$')
     if dollar_count > 0 and dollar_count % 2 != 0:
-        # We're mid-LaTeX — show text up to the last complete expression
-        # Find the last unmatched $
         last_dollar = text.rfind('$')
         safe_text = text[:last_dollar].strip()
         if safe_text:
@@ -78,23 +61,12 @@ def _stream_display(text: str, placeholder) -> None:
 
     placeholder.markdown(text + "▌")
 
-# Takes (text, container). Renders final agent output: auto-formats
-# MATH_STRUCTURED JSON, embeds local chart PNGs, and falls back to
-# st.markdown for everything else.
+# Takes (text, container). Renders final agent output: embeds local chart PNGs,
+# falls back to st.markdown for everything else (KaTeX $...$ renders natively).
 def _render_agent_content(text: str, container=None):
-    """Render agent output with math formatting and chart embedding.
-
-    - Auto-formats any raw MATH_STRUCTURED: JSON the agent passed through
-    - Detects chart file paths (output/*.png) and renders images inline
-    - Detects CHART_FILE:path markers and renders images inline
-    - Passes text through st.markdown() (supports KaTeX $...$ natively)
-    """
+    """Render agent output with chart embedding and KaTeX markdown."""
     if container is None:
         container = st
-
-    # --- Fallback: auto-format any MATH_STRUCTURED: the agent didn't format ---
-    if 'MATH_STRUCTURED:' in text:
-        text = _auto_format_math_structured(text)
 
     # --- Render chart references inline ---
     # Matches three flavors the agent may emit:
@@ -122,66 +94,6 @@ def _render_agent_content(text: str, container=None):
         return
 
     container.markdown(text)
-
-
-# Takes raw text containing MATH_STRUCTURED: JSON blocks.
-# Replaces each block with formatted HTML/markdown via math_formatter.
-# Returns the cleaned string.
-def _auto_format_math_structured(text: str) -> str:
-    """Find raw MATH_STRUCTURED: JSON in text and replace with formatted markdown.
-
-    This is the safety net for direct mode: if the LLM includes raw
-    MATH_STRUCTURED:{...} in its response instead of calling math_formatter,
-    we format it automatically so the user never sees raw JSON.
-    """
-    import json as _json
-    from src.tools.math_formatter import format_math
-
-    result_parts = []
-    remaining = text
-
-    while 'MATH_STRUCTURED:' in remaining:
-        prefix_marker = 'MATH_STRUCTURED:'
-        idx = remaining.index(prefix_marker)
-
-        # Add the text before the marker
-        result_parts.append(remaining[:idx])
-
-        # Find the JSON object by counting braces
-        json_start = idx + len(prefix_marker)
-        if json_start >= len(remaining) or remaining[json_start] != '{':
-            result_parts.append(remaining[idx:])
-            remaining = ""
-            break
-
-        depth = 0
-        json_end = json_start
-        for i in range(json_start, len(remaining)):
-            if remaining[i] == '{':
-                depth += 1
-            elif remaining[i] == '}':
-                depth -= 1
-                if depth == 0:
-                    json_end = i + 1
-                    break
-
-        raw_block = remaining[idx:json_end]
-        try:
-            html = format_math(raw_block)
-            result_parts.append(html)
-        except Exception:
-            # Fallback: try to extract plain_text from the JSON
-            try:
-                data = _json.loads(remaining[json_start:json_end])
-                result_parts.append(data.get("plain_text", raw_block))
-            except Exception:
-                result_parts.append(raw_block)
-
-        remaining = remaining[json_end:]
-
-    result_parts.append(remaining)
-    return "".join(result_parts)
-
 
 
 # ---------------------------------------------------------------------------

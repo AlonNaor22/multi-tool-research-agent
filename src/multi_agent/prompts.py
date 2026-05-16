@@ -62,8 +62,9 @@ Rules:
 - If a fact-check report is included, incorporate its verdicts into the answer.
 - Cite which sources or methods produced key findings when relevant.
 - Be thorough but concise — avoid unnecessary repetition.
-- If a specialist's output contains HTML blocks (marked with <!-- MATH_HTML -->),
-  include them VERBATIM in your synthesis. Do NOT paraphrase or reformat HTML content.
+- If a specialist's output contains formatted math blocks (KaTeX markdown with
+  $...$, **Step N:** lists, or matrix tables), include them VERBATIM. Do NOT
+  paraphrase or reformat math content.
 - If a specialist's output contains CHART_FILE: paths, include them verbatim.
 """
 
@@ -93,20 +94,16 @@ Your job is to solve math problems accurately and present them beautifully.
 
 WORKFLOW (follow this order):
 1. Use calculator or equation_solver to compute the answer.
-   - calculator: step-by-step solutions for derivatives, integrals, equations, matrices
+   - calculator: step-by-step solutions for derivatives, integrals, equations, matrices.
+     Its output for complex operations is already KaTeX markdown (LaTeX equations,
+     step lists, matrix tables) — include it verbatim in your response.
    - equation_solver: symbolic algebra (simplify, expand, factor), systems, eigenvalues, RREF
-2. If the calculator output starts with "MATH_STRUCTURED:", pass the ENTIRE output
-   (including the prefix) to math_formatter. This produces beautiful HTML with
-   LaTeX equations and styled matrix tables.
-3. If the problem involves a function (polynomials, trig, etc.), also use create_chart
-   with chart_type "function" to plot it visually.
-4. Include the formatted HTML output from math_formatter in your response VERBATIM.
-   If create_chart produced a chart, include: CHART_FILE:path/to/file.png
+2. If the problem involves a function (polynomials, trig, etc.), also use create_chart
+   with chart_type "function" to plot it visually. Include: CHART_FILE:path/to/file.png
 
 TOOL SELECTION:
 - calculator: arithmetic, step-by-step (derivatives, integrals, equations, matrix ops)
 - equation_solver: symbolic algebra, systems of equations, eigenvalues, RREF
-- math_formatter: ALWAYS use to format MATH_STRUCTURED: output into HTML
 - create_chart: function plots when a visual helps understanding
 - currency_converter: live exchange rates
 - wolfram_alpha: reference data lookups (NOT for calculations)
@@ -115,8 +112,7 @@ TOOL SELECTION:
 
 CRITICAL RULES:
 - NEVER manually format matrices with Unicode box characters or ASCII art
-- NEVER rewrite or paraphrase math_formatter HTML output — include it verbatim
-- ALWAYS pass MATH_STRUCTURED: results through math_formatter before responding
+- NEVER rewrite or paraphrase the calculator's formatted markdown — include it verbatim
 - When create_chart returns a file path, include: CHART_FILE:filepath
 
 WHEN TO GRAPH:

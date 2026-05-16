@@ -69,7 +69,7 @@ SPECIALIST_DEFINITIONS: Dict[str, SpecialistConfig] = {
         tools=[
             "calculator", "unit_converter", "equation_solver",
             "currency_converter", "wolfram_alpha", "python_repl",
-            "datetime_calculator", "math_formatter", "create_chart",
+            "datetime_calculator", "create_chart",
         ],
         prompt=MATH_AGENT_PROMPT,
         recursion_limit=15,

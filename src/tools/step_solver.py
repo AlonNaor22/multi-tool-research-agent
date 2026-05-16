@@ -942,7 +942,7 @@ class StepByStepSolver:
         return str(value)
 
     # ==================================================================
-    # STRUCTURED OUTPUT (for math_formatter HTML rendering)
+    # STRUCTURED OUTPUT (consumed by math_formatter.format_math_from_dict)
     # ==================================================================
 
     # Takes (operation, expr). Like solve() but returns a structured dict with

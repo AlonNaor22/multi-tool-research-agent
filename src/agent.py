@@ -78,15 +78,14 @@ from src.tools.github_tool import github_tool
 from src.tools.scraper_tool import scraper_tool
 from src.tools.csv_tool import csv_tool
 from src.tools.datetime_tool import datetime_tool
-from src.tools.math_formatter import math_formatter_tool
 
 
 # Tool categories for hierarchical selection — included in the system prompt
 # so the LLM can navigate 20 tools effectively.
 TOOL_CATEGORIES = {
     "MATH & COMPUTATION": {
-        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator", "math_formatter", "create_chart"],
-        "guidance": "Use calculator for arithmetic, step-by-step solutions (derivatives, integrals, equations, matrix ops). When calculator returns MATH_STRUCTURED: output, ALWAYS pass it to math_formatter. When the user asks to graph/plot a function or when a visual would help, use create_chart with chart_type 'function'. Use equation_solver for symbolic algebra, systems, eigenvalues, RREF. unit_converter for unit changes, currency_converter for exchange rates, datetime_calculator for date arithmetic. wolfram_alpha is for REFERENCE DATA lookups only."
+        "tools": ["calculator", "unit_converter", "equation_solver", "currency_converter", "wolfram_alpha", "datetime_calculator", "create_chart"],
+        "guidance": "Use calculator for arithmetic and step-by-step solutions (derivatives, integrals, equations, matrix ops) — its output is already formatted KaTeX markdown, include it verbatim in your response. When the user asks to graph/plot a function or when a visual would help, use create_chart with chart_type 'function'. Use equation_solver for symbolic algebra, systems, eigenvalues, RREF. unit_converter for unit changes, currency_converter for exchange rates, datetime_calculator for date arithmetic. wolfram_alpha is for REFERENCE DATA lookups only."
     },
     "INFORMATION RETRIEVAL": {
         "tools": ["web_search", "wikipedia", "news_search", "arxiv_search", "youtube_search", "google_scholar", "github_search"],
@@ -169,7 +168,7 @@ def _build_system_prompt(disabled_tools: list = None) -> str:
         "- Synthesize information from multiple sources into a coherent answer",
         "",
         "MATH WORKFLOW:",
-        "- When calculator returns output starting with MATH_STRUCTURED:, pass the ENTIRE output to math_formatter",
+        "- The calculator's output for complex operations is already formatted KaTeX markdown — include it verbatim in your response (do not rewrite or paraphrase).",
         "- MANDATORY: If the user says 'graph', 'plot', 'show', 'visualize', or asks to SEE a function, you MUST call create_chart. Do NOT just describe the graph in words.",
         "- MANDATORY: When solving equations with roots (e.g. x^2 - 4 = 0), also graph the function to show where it crosses the x-axis.",
         "- create_chart example: {\"chart_type\":\"function\",\"data\":{\"expression\":\"x**2 - 4\",\"x_range\":[-5,5]},\"title\":\"f(x) = x^2 - 4\"}",
@@ -397,7 +396,7 @@ class ResearchAgent:
 
         all_tools = [
             calculator_tool, unit_converter_tool, equation_solver_tool,
-            currency_tool, wolfram_tool, math_formatter_tool,
+            currency_tool, wolfram_tool,
             wikipedia_tool, search_tool, news_tool, arxiv_tool,
             youtube_tool, google_scholar_tool,
             url_tool, pdf_tool, reddit_tool, wikidata_tool,

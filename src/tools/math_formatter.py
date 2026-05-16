@@ -1,28 +1,30 @@
-"""Math formatter — renders MATH_STRUCTURED JSON as Streamlit-compatible KaTeX markdown."""
+"""Math formatter — renders solver structured dicts as Streamlit-compatible KaTeX markdown."""
 
-import json
 from typing import Optional
-from langchain_core.tools import tool
 
 # ─── Module overview ───────────────────────────────────────────────
-# Renders MATH_STRUCTURED JSON payloads (from the calculator tool)
-# into Streamlit-compatible KaTeX markdown with LaTeX equations,
-# step-by-step solutions, and matrix tables.
+# Library helpers (no LangChain tool) that turn the step solver's
+# structured dict into Streamlit-compatible KaTeX markdown: LaTeX
+# equations, step lists, and matrix tables. Imported directly by
+# calculator_tool so its returned output is already formatted.
 # ───────────────────────────────────────────────────────────────────
 
 
-# ---------------------------------------------------------------------------
-# Markdown generation helpers
-# ---------------------------------------------------------------------------
+def _fmt_num(v) -> str:
+    """Format a numeric value as a clean string."""
+    if isinstance(v, float):
+        if v == int(v):
+            return str(int(v))
+        return f"{v:.6g}"
+    return str(v)
+
 
 # Takes a 2D list and optional caption. Renders a centered markdown table.
-# Returns the table as a multi-line string.
 def _matrix_to_markdown(data: list, caption: Optional[str] = None) -> str:
     """Render a 2D list as a centered markdown table."""
     if not data:
         return ""
     cols = len(data[0])
-    # Header row (column indices)
     header = "| " + " | ".join(f"C{j+1}" for j in range(cols)) + " |"
     separator = "|" + "|".join(" :---: " for _ in range(cols)) + "|"
     rows = []
@@ -36,15 +38,6 @@ def _matrix_to_markdown(data: list, caption: Optional[str] = None) -> str:
     return "\n".join(parts)
 
 
-def _fmt_num(v) -> str:
-    """Format a numeric value as a clean string."""
-    if isinstance(v, float):
-        if v == int(v):
-            return str(int(v))
-        return f"{v:.6g}"
-    return str(v)
-
-
 # Wraps a LaTeX expression in inline KaTeX delimiters ($...$).
 def _latex_inline(expr: str) -> str:
     """Wrap expr in KaTeX inline delimiters ($...$)."""
@@ -53,40 +46,16 @@ def _latex_inline(expr: str) -> str:
     return f"${expr}$"
 
 
-# Wraps a LaTeX expression in block KaTeX delimiters ($$...$$).
-def _latex_block(expr: str) -> str:
-    """Wrap expr in KaTeX block delimiters ($$...$$)."""
-    if not expr:
-        return ""
-    return f"\n\n$${expr}$$\n\n"
-
-
-# ---------------------------------------------------------------------------
-# Main formatter
-# ---------------------------------------------------------------------------
-
-# Takes a MATH_STRUCTURED JSON string. Assembles title, steps, matrices, and result
-# into a single KaTeX markdown document. Returns the formatted string.
-def format_math(input_str: str) -> str:
-    """Convert a MATH_STRUCTURED JSON string into Streamlit-compatible KaTeX markdown."""
-    # Strip the prefix if present
-    if input_str.startswith("MATH_STRUCTURED:"):
-        json_str = input_str[len("MATH_STRUCTURED:"):]
-    else:
-        json_str = input_str
-
-    try:
-        data = json.loads(json_str)
-    except json.JSONDecodeError:
-        return "**Error:** Invalid math data format"
-
+# Takes the step solver's structured dict directly.
+# Returns Streamlit-compatible KaTeX markdown (title, steps, matrices, result).
+def format_math_from_dict(data: dict) -> str:
+    """Convert a solver structured dict into KaTeX markdown."""
     if data.get("error") and not data.get("steps"):
         return f"**Error:** {data['error']}"
 
     operation = data.get("operation", "")
     lines = []
 
-    # Title
     title = data.get("title", "")
     if title:
         if "\\" in title:
@@ -101,8 +70,7 @@ def format_math(input_str: str) -> str:
         lines.append("")
 
     # Steps
-    steps = data.get("steps", [])
-    for step in steps:
+    for step in data.get("steps", []) or []:
         num = step.get("num", "")
         desc = step.get("desc", "")
         expr_latex = step.get("expr_latex", "")
@@ -129,24 +97,8 @@ def format_math(input_str: str) -> str:
         lines.append(f"**Result:** {result_text}")
 
     # Error note (non-fatal, e.g., singular matrix with steps)
-    if data.get("error") and steps:
+    if data.get("error") and data.get("steps"):
         lines.append("")
         lines.append(f"> **Note:** {data['error']}")
 
     return "\n".join(lines)
-
-
-# Tool entry point. Takes raw calculator output (MATH_STRUCTURED: prefix + JSON).
-# Returns formatted KaTeX markdown ready for Streamlit display.
-async def math_formatter(input_str: str) -> str:
-    """Format mathematical results with properly rendered equations and matrices.
-
-    Input: A string from calculator tool that starts with 'MATH_STRUCTURED:' followed by JSON data.
-
-    Output: Clean formatted text with LaTeX equations and matrix tables.
-
-    ALWAYS use this tool to format calculator output that starts with 'MATH_STRUCTURED:' before presenting results to the user. Pass the ENTIRE calculator output (including the 'MATH_STRUCTURED:' prefix) as input to this tool."""
-    return format_math(input_str)
-
-
-math_formatter_tool = tool(math_formatter)

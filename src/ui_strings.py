@@ -120,7 +120,6 @@ class UI:
             "*\U0001f504 Phase {phase_number}{note}: {specialists}*"
         )
         used_tool_fmt = "*\U0001f527 Used {tool_name}*"
-        formatting_math = "*Formatting math solution...*"
         rendering_math = "*Rendering math...*"
 
     # -- Callback inbox (right sidebar panel) ---------------------------------

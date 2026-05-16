@@ -1,8 +1,9 @@
 """Tests for src/tools/math_formatter.py — markdown rendering of math output."""
 
-import json
 import pytest
-from src.tools.math_formatter import format_math, _matrix_to_markdown, _latex_inline
+from src.tools.math_formatter import (
+    format_math_from_dict, _matrix_to_markdown, _latex_inline,
+)
 
 
 class TestHelpers:
@@ -25,8 +26,8 @@ class TestHelpers:
         assert _matrix_to_markdown([]) == ""
 
 
-class TestFormatMath:
-    """Test the main format_math function."""
+class TestFormatMathFromDict:
+    """Test format_math_from_dict against representative solver payloads."""
 
     def test_derivative_output(self):
         data = {
@@ -44,7 +45,7 @@ class TestFormatMath:
             "expression_str": "x**3",
             "error": None,
         }
-        result = format_math("MATH_STRUCTURED:" + json.dumps(data))
+        result = format_math_from_dict(data)
         assert "Step 1" in result
         assert "power rule" in result
         assert "Result" in result
@@ -66,7 +67,7 @@ class TestFormatMath:
             "expression_str": None,
             "error": None,
         }
-        result = format_math("MATH_STRUCTURED:" + json.dumps(data))
+        result = format_math_from_dict(data)
         assert "|" in result  # matrix rendered as markdown table
         assert "Step 1" in result
         assert "Result" in result
@@ -85,28 +86,14 @@ class TestFormatMath:
             "expression_str": None,
             "error": None,
         }
-        result = format_math("MATH_STRUCTURED:" + json.dumps(data))
+        result = format_math_from_dict(data)
         assert "19" in result
         assert "|" in result  # markdown table
 
     def test_error_only(self):
-        data = {"error": "Division by zero", "steps": None}
-        result = format_math(json.dumps(data))
+        result = format_math_from_dict({"error": "Division by zero", "steps": None})
         assert "Division by zero" in result
         assert "Error" in result
-
-    def test_invalid_json(self):
-        result = format_math("not valid json")
-        assert "Error" in result
-
-    def test_with_prefix(self):
-        data = {"operation": "solve", "title": "Solve", "steps": [],
-                "result": "x = 2", "result_latex": "x = 2",
-                "matrix_data": None, "result_matrix_data": None,
-                "has_function": False, "expression_str": None, "error": None,
-                "input_latex": ""}
-        result = format_math("MATH_STRUCTURED:" + json.dumps(data))
-        assert "x = 2" in result
 
     def test_singular_matrix_error_with_steps(self):
         data = {
@@ -117,7 +104,7 @@ class TestFormatMath:
             "has_function": False, "expression_str": None,
             "error": "Matrix is singular",
         }
-        result = format_math(json.dumps(data))
+        result = format_math_from_dict(data)
         assert "singular" in result.lower()
         assert "Step 1" in result
 
@@ -127,12 +114,12 @@ class TestFormatMath:
                 "matrix_data": None, "result_matrix_data": None,
                 "has_function": False, "expression_str": None,
                 "error": None, "input_latex": ""}
-        result = format_math(json.dumps(data))
+        result = format_math_from_dict(data)
         assert "$" in result  # KaTeX inline delimiters
 
 
 class TestStructuredSolverIntegration:
-    """Test solve_structured() output works with format_math()."""
+    """Test solve_structured() output works with format_math_from_dict()."""
 
     def test_derivative_roundtrip(self):
         from src.tools.step_solver import StepByStepSolver
@@ -142,7 +129,7 @@ class TestStructuredSolverIntegration:
         assert structured["result_latex"]
         assert len(structured["steps"]) > 0
 
-        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        md = format_math_from_dict(structured)
         assert "Step 1" in md
         assert "$" in md
 
@@ -152,7 +139,7 @@ class TestStructuredSolverIntegration:
         structured = solver.solve_structured("matrix_det", "[[3,7],[1,-4]]")
         assert structured.get("result") == str(-19)
 
-        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        md = format_math_from_dict(structured)
         assert "|" in md  # markdown table
         assert "-19" in md
 
@@ -162,7 +149,7 @@ class TestStructuredSolverIntegration:
         structured = solver.solve_structured("integral", "x^2 from 0 to 3")
         assert structured.get("error") is None
 
-        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        md = format_math_from_dict(structured)
         assert "Step" in md
         assert "9" in md
 
@@ -172,5 +159,31 @@ class TestStructuredSolverIntegration:
         structured = solver.solve_structured("solve", "x^2 - 4 = 0")
         assert structured.get("error") is None
 
-        md = format_math("MATH_STRUCTURED:" + json.dumps(structured, default=str))
+        md = format_math_from_dict(structured)
         assert "Step" in md
+
+
+class TestCalculatorReturnsFormattedMarkdown:
+    """The calculator tool now returns ready-to-display markdown for complex ops."""
+
+    def test_derivative_returns_markdown_not_json(self):
+        from src.tools.calculator_tool import calculate
+        output = calculate("derivative of x^3 + 2x")
+        # No JSON envelope, no MATH_STRUCTURED prefix — just formatted markdown.
+        assert "MATH_STRUCTURED" not in output
+        assert not output.lstrip().startswith("{")
+        # Should contain step-by-step structure and KaTeX delimiters.
+        assert "Step" in output
+        assert "$" in output
+
+    def test_matrix_det_returns_markdown_table(self):
+        from src.tools.calculator_tool import calculate
+        output = calculate("determinant [[1,2],[3,4]]")
+        assert "MATH_STRUCTURED" not in output
+        assert "|" in output  # markdown table for input matrix
+        assert "-2" in output  # determinant result
+
+    def test_simple_arithmetic_unchanged(self):
+        from src.tools.calculator_tool import calculate
+        # Simple expressions still return plain numeric strings.
+        assert calculate("2 + 2") == "4"
