@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from pydantic import ValidationError
 from tests.conftest import AsyncMockResponse
 
 
@@ -81,7 +82,7 @@ class TestRedditSearch:
 
             assert "Error" in result
 
-    async def test_subreddit_filter(self):
+    async def test_subreddit_kwarg(self):
         mock_resp = AsyncMockResponse(json_data=REDDIT_API_RESPONSE, status=200)
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
@@ -89,11 +90,26 @@ class TestRedditSearch:
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.reddit_tool import reddit_search, _cache
             _cache.clear()
-            await reddit_search("r/Python: best libraries")
+            await reddit_search("best libraries", subreddit="Python")
 
             call_args = mock_session.get.call_args
             call_url = call_args[0][0] if call_args[0] else ""
             assert "r/Python" in call_url
+
+    async def test_sort_and_time_filter_passed(self):
+        mock_resp = AsyncMockResponse(json_data=REDDIT_API_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+            from src.tools.reddit_tool import reddit_search, _cache
+            _cache.clear()
+            await reddit_search("ai", sort="top", time_filter="week")
+
+            call_args = mock_session.get.call_args
+            params = call_args[1].get("params", {}) if call_args[1] else {}
+            assert params.get("sort") == "top"
+            assert params.get("t") == "week"
 
     async def test_empty_query(self):
         from src.tools.reddit_tool import reddit_search
@@ -103,7 +119,7 @@ class TestRedditSearch:
     async def test_help_command(self):
         from src.tools.reddit_tool import reddit_search
         result = await reddit_search("help")
-        assert "FORMAT" in result
+        assert "PARAMETERS" in result
 
     def test_score_formatting(self):
         from src.tools.reddit_tool import _format_score
@@ -122,3 +138,41 @@ class TestRedditSearch:
             await reddit_search("cache test query")  # Should hit cache
 
             assert mock_session.get.call_count == 1
+
+
+class TestRedditSearchSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_query_rejected(self):
+        from src.tools.reddit_tool import RedditSearchInput
+        with pytest.raises(ValidationError):
+            RedditSearchInput()
+
+    def test_invalid_sort_rejected(self):
+        from src.tools.reddit_tool import RedditSearchInput
+        with pytest.raises(ValidationError):
+            RedditSearchInput(query="test", sort="upvotes")
+
+    def test_invalid_time_filter_rejected(self):
+        from src.tools.reddit_tool import RedditSearchInput
+        with pytest.raises(ValidationError):
+            RedditSearchInput(query="test", time_filter="hour")
+
+    def test_valid_input_parses(self):
+        from src.tools.reddit_tool import RedditSearchInput
+        parsed = RedditSearchInput(
+            query="python", subreddit="learnpython",
+            sort="top", time_filter="month", max_results=3,
+        )
+        assert parsed.subreddit == "learnpython"
+        assert parsed.sort == "top"
+        assert parsed.time_filter == "month"
+
+
+class TestRedditTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        from src.tools.reddit_tool import reddit_tool, RedditSearchInput
+        assert reddit_tool.name == "reddit_search"
+        assert reddit_tool.args_schema is RedditSearchInput

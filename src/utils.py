@@ -1,7 +1,6 @@
 """Shared utility functions: retry, timeout, HTTP, caching, tool helpers."""
 
 import asyncio
-import json
 import re
 import time
 import functools
@@ -213,22 +212,6 @@ class TTLCache:
 # ---------------------------------------------------------------------------
 # Tool-input parsing
 # ---------------------------------------------------------------------------
-
-# Takes (raw, defaults). Parses raw string or JSON into (query, options_dict).
-def parse_tool_input(raw: str, defaults: Optional[Dict] = None) -> Tuple[str, Dict]:
-    """Takes raw tool input (string or JSON), returns (query, options_dict)."""
-    opts: Dict[str, Any] = dict(defaults or {})
-    raw = raw.strip()
-    if raw.startswith("{"):
-        try:
-            parsed = json.loads(raw)
-            query = parsed.pop("query", raw)
-            opts.update(parsed)
-            return query, opts
-        except json.JSONDecodeError:
-            pass
-    return raw, opts
-
 
 # Takes (query, default, max_allowed). Extracts "N results: query" prefix.
 # Returns (clean_query, clamped_count).

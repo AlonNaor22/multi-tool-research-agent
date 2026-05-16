@@ -1,8 +1,13 @@
 """GitHub search tool via the public REST API."""
 
-from langchain_core.tools import tool
+import asyncio
+from typing import Literal, Type
+
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+
 from src.utils import (
-    async_retry_on_error, async_fetch, parse_tool_input, truncate,
+    async_retry_on_error, async_fetch, truncate,
     safe_tool_call, require_input,
 )
 from src.constants import (
@@ -12,14 +17,16 @@ from src.constants import (
 
 # ─── Module overview ───────────────────────────────────────────────
 # Searches GitHub via the public REST API for repositories, code,
-# issues, or users. Supports sorting and result-count limits.
+# issues, or users. Schema is enforced via args_schema.
 # ───────────────────────────────────────────────────────────────────
 
 GITHUB_API_BASE = "https://api.github.com"
 
+SearchType = Literal["repositories", "code", "issues", "users"]
+SortOrder = Literal["stars", "forks", "updated"]
+
 
 # Takes (endpoint, params). Calls the GitHub REST API with retry logic.
-# Returns the parsed JSON response dict.
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
 async def _github_api_request(endpoint: str, params: dict) -> dict:
     """Make a request to the GitHub REST API and return the JSON response."""
@@ -38,36 +45,25 @@ async def _github_api_request(endpoint: str, params: dict) -> dict:
         raise
 
 
-# Takes a query string (plain text or JSON with options). Searches GitHub.
-# Returns formatted results for repos, code, issues, or users.
+# Takes (query, search_type, sort, max_results). Returns formatted results
+# for repos, code, issues, or users.
 @safe_tool_call("searching GitHub")
-async def github_search(query: str) -> str:
-    """Search GitHub for repositories, code, issues, or users. Use for finding open-source projects, code examples, libraries, and developer tools.
+async def github_search(
+    query: str,
+    type: SearchType = "repositories",
+    sort: SortOrder = "stars",
+    max_results: int = DEFAULT_MAX_RESULTS,
+) -> str:
+    """Search GitHub with typed parameters and return formatted results."""
+    err = require_input(query, "search query")
+    if err:
+        return err
 
-USE FOR:
-- Finding libraries: 'python web scraping framework'
-- Code examples: '{"query": "async retry decorator", "type": "code"}'
-- Issues/bugs: '{"query": "memory leak react", "type": "issues"}'
-- Developers: '{"query": "machine learning", "type": "users"}'
-
-SIMPLE: 'search query' (searches repos by stars)
-
-ADVANCED: {"query": "...", "type": "repositories|code|issues|users", "sort": "stars|forks|updated", "max_results": 5}"""
-    # Parse input
-    search_query, opts = parse_tool_input(query, {
-        "max_results": DEFAULT_MAX_RESULTS,
-        "type": "repositories",
-        "sort": "stars",
-    })
-    search_type = opts.get("type", "repositories")
-    sort = opts.get("sort", "stars")
-    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
-
-    err = require_input(search_query, "search query")
-    if err: return err
+    max_results = min(int(max_results), MAX_SEARCH_RESULTS)
+    search_type = type
 
     params = {
-        "q": search_query,
+        "q": query,
         "per_page": max_results,
     }
     if sort and search_type == "repositories":
@@ -83,9 +79,8 @@ ADVANCED: {"query": "...", "type": "repositories|code|issues|users", "sort": "st
     total_count = data.get("total_count", 0)
 
     if not items:
-        return f"No GitHub {search_type} found for '{search_query}'"
+        return f"No GitHub {search_type} found for '{query}'"
 
-    # Format results based on type
     formatted = []
     for i, item in enumerate(items, 1):
         if search_type == "repositories":
@@ -130,8 +125,48 @@ ADVANCED: {"query": "...", "type": "repositories|code|issues|users", "sort": "st
                 f"   URL: {url}"
             )
 
-    header = f"Found {total_count:,} {search_type} for '{search_query}' (showing top {len(items)}):\n"
+    header = f"Found {total_count:,} {search_type} for '{query}' (showing top {len(items)}):\n"
     return header + "\n\n".join(formatted)
 
 
-github_tool = tool(github_search)
+class GithubSearchInput(BaseModel):
+    """Inputs for the github_search tool."""
+    query: str = Field(description="GitHub search query string.")
+    type: SearchType = Field(
+        default="repositories",
+        description="What to search: repositories, code, issues, or users.",
+    )
+    sort: SortOrder = Field(
+        default="stars",
+        description="Sort order for repository results: stars, forks, or updated.",
+    )
+    max_results: int = Field(
+        default=DEFAULT_MAX_RESULTS,
+        ge=1,
+        le=MAX_SEARCH_RESULTS,
+        description=f"Number of results to return (1-{MAX_SEARCH_RESULTS}).",
+    )
+
+
+class GithubSearchTool(BaseTool):
+    name: str = "github_search"
+    description: str = (
+        "Search GitHub for repositories, code, issues, or users. Use for finding "
+        "open-source projects, code examples, libraries, and developer tools."
+        "\n\nUSE FOR:"
+        "\n- Finding libraries: query='python web scraping framework'"
+        "\n- Code examples: query='async retry decorator', type='code'"
+        "\n- Issues/bugs: query='memory leak react', type='issues'"
+        "\n- Developers: query='machine learning', type='users'"
+    )
+    args_schema: Type[BaseModel] = GithubSearchInput
+
+    # Forwards every validated parameter to github_search.
+    async def _arun(self, **kwargs) -> str:
+        return await github_search(**kwargs)
+
+    def _run(self, **kwargs) -> str:
+        return asyncio.run(self._arun(**kwargs))
+
+
+github_tool = GithubSearchTool()

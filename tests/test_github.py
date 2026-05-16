@@ -1,8 +1,8 @@
 """Tests for the GitHub search tool."""
 
-import json
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
+from pydantic import ValidationError
 
 
 @pytest.fixture
@@ -49,13 +49,12 @@ class TestGithubSearch:
         assert "Python" in result
 
     @pytest.mark.asyncio
-    async def test_advanced_json_input(self, mock_github_response):
+    async def test_typed_kwargs(self, mock_github_response):
         from src.tools.github_tool import github_search
 
         with patch("src.tools.github_tool._github_api_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = mock_github_response
-            query = json.dumps({"query": "langchain", "type": "repositories", "sort": "stars"})
-            result = await github_search(query)
+            result = await github_search("langchain", type="repositories", sort="stars")
 
         assert "langchain-ai/langchain" in result
         mock_req.assert_called_once()
@@ -78,8 +77,7 @@ class TestGithubSearch:
         }
         with patch("src.tools.github_tool._github_api_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = code_response
-            query = json.dumps({"query": "retry decorator", "type": "code"})
-            result = await github_search(query)
+            result = await github_search("retry decorator", type="code")
 
         assert "user/repo" in result
         assert "src/utils.py" in result
@@ -127,13 +125,41 @@ class TestGithubSearch:
         }
         with patch("src.tools.github_tool._github_api_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = issue_response
-            query = json.dumps({"query": "memory leak", "type": "issues"})
-            result = await github_search(query)
+            result = await github_search("memory leak", type="issues")
 
         assert "Memory leak" in result
         assert "open" in result
 
-    def test_tool_wrapper_exists(self):
-        from src.tools.github_tool import github_tool
+
+class TestGithubSearchSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_query_rejected(self):
+        from src.tools.github_tool import GithubSearchInput
+        with pytest.raises(ValidationError):
+            GithubSearchInput()
+
+    def test_invalid_type_rejected(self):
+        from src.tools.github_tool import GithubSearchInput
+        with pytest.raises(ValidationError):
+            GithubSearchInput(query="test", type="commits")
+
+    def test_invalid_sort_rejected(self):
+        from src.tools.github_tool import GithubSearchInput
+        with pytest.raises(ValidationError):
+            GithubSearchInput(query="test", sort="downloads")
+
+    def test_valid_input_parses(self):
+        from src.tools.github_tool import GithubSearchInput
+        parsed = GithubSearchInput(query="ml", type="code", sort="updated", max_results=3)
+        assert parsed.type == "code"
+        assert parsed.sort == "updated"
+
+
+class TestGithubTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        from src.tools.github_tool import github_tool, GithubSearchInput
         assert github_tool.name == "github_search"
-        assert github_tool.coroutine is not None
+        assert github_tool.args_schema is GithubSearchInput

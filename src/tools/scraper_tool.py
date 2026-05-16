@@ -1,15 +1,22 @@
 """Web scraper tool — extracts structured data (tables, lists, links, headings) from web pages."""
 
+import asyncio
+from typing import List, Literal, Optional, Type
+
 from bs4 import BeautifulSoup
-from langchain_core.tools import tool
-from src.utils import async_retry_on_error, async_fetch, parse_tool_input, safe_tool_call, require_input
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+
+from src.utils import async_retry_on_error, async_fetch, safe_tool_call, require_input
 from src.constants import DEFAULT_USER_AGENT, DEFAULT_HTTP_TIMEOUT, DEFAULT_MAX_CONTENT_CHARS
 
 # ─── Module overview ───────────────────────────────────────────────
 # Scrapes web pages and extracts structured data: tables (as markdown),
-# lists, links, and heading outlines. Supports CSS selectors for targeting
-# specific page regions.
+# lists, links, and heading outlines. Schema is enforced via args_schema.
 # ───────────────────────────────────────────────────────────────────
+
+ExtractKind = Literal["tables", "lists", "links", "headings", "all"]
+
 
 # Fetches raw HTML from a URL with retry logic.
 @async_retry_on_error(max_retries=2, delay=1.0, exceptions=(Exception,))
@@ -23,8 +30,7 @@ async def _fetch_html(url: str) -> str:
     )
 
 
-# Takes (soup, max_tables). Finds <table> elements and converts rows/cells to markdown.
-# Returns a markdown string with up to max_tables tables.
+# Takes (soup, max_tables). Returns markdown of up to max_tables tables.
 def _extract_tables(soup: BeautifulSoup, max_tables: int = 5) -> str:
     """Extract tables as markdown."""
     tables = soup.find_all("table")
@@ -61,8 +67,7 @@ def _extract_tables(soup: BeautifulSoup, max_tables: int = 5) -> str:
     return "\n\n".join(results)
 
 
-# Takes (soup, max_lists). Extracts <ul> and <ol> elements as formatted text.
-# Returns numbered or bulleted list items.
+# Takes (soup, max_lists). Returns formatted ordered/unordered list items.
 def _extract_lists(soup: BeautifulSoup, max_lists: int = 5) -> str:
     """Extract ordered and unordered lists."""
     all_lists = soup.find_all(["ul", "ol"])
@@ -88,8 +93,7 @@ def _extract_lists(soup: BeautifulSoup, max_lists: int = 5) -> str:
     return "\n\n".join(results)
 
 
-# Takes (soup, max_links). Collects unique <a> elements with text and href.
-# Returns markdown-formatted link list, skipping anchors and javascript: hrefs.
+# Takes (soup, max_links). Returns markdown-formatted unique <a> elements.
 def _extract_links(soup: BeautifulSoup, max_links: int = 20) -> str:
     """Extract links with text and URLs."""
     links = soup.find_all("a", href=True)
@@ -114,7 +118,6 @@ def _extract_links(soup: BeautifulSoup, max_links: int = 20) -> str:
 
 
 # Takes (soup). Builds an indented outline from h1-h4 headings.
-# Returns the page structure as a tree of heading text.
 def _extract_headings(soup: BeautifulSoup) -> str:
     """Extract page structure from headings."""
     headings = soup.find_all(["h1", "h2", "h3", "h4"])
@@ -131,41 +134,23 @@ def _extract_headings(soup: BeautifulSoup) -> str:
     return "**Page Structure:**\n" + "\n".join(lines)
 
 
-# Takes a URL (or JSON with url/extract/selector). Fetches HTML, strips noise,
-# extracts selected structured data types, and returns formatted markdown.
-# Returns combined headings, tables, lists, and links as a single string.
+# Takes (url, extract, selector). Fetches HTML, strips noise, extracts
+# selected structured data types, returns formatted markdown.
 @safe_tool_call("scraping webpage")
-async def web_scraper(query: str) -> str:
-    """Extract structured data from web pages — tables, lists, links, and headings. Use this instead of fetch_url when you need organized data, not raw text.
-
-    USE FOR:
-    - Tables: statistics pages, comparison charts, data tables
-    - Lists: product features, ranked items, requirements
-    - Links: resource pages, directories, navigation structure
-    - Page structure: understand how content is organized
-
-    SIMPLE: 'https://example.com' (extracts all structured data)
-
-    ADVANCED: {"url": "...", "extract": ["tables", "links"]}
-
-    CSS SELECTOR: {"url": "...", "selector": "div.main-content"}
-
-    DO NOT USE FOR: raw text reading (use fetch_url), PDF files (use pdf_reader)"""
-    # Parse input
-    extract_types = ["tables", "lists", "links", "headings"]
-    css_selector = None
-
-    url, opts = parse_tool_input(query, {"extract": ["all"], "selector": None})
-    if "url" in opts:
-        url = opts["url"]
-    css_selector = opts.get("selector")
-    extract = opts.get("extract", ["all"])
-    if "all" not in extract:
-        extract_types = extract
-
+async def web_scraper(
+    url: str,
+    extract: Optional[List[ExtractKind]] = None,
+    selector: Optional[str] = None,
+) -> str:
+    """Scrape a URL and return structured tables, lists, links, and/or headings."""
     err = require_input(url, "URL")
     if err:
         return err
+
+    extract = extract or ["all"]
+    extract_types: List[str] = (
+        ["tables", "lists", "links", "headings"] if "all" in extract else list(extract)
+    )
 
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
@@ -177,15 +162,13 @@ async def web_scraper(query: str) -> str:
     for tag in soup(["script", "style", "nav", "footer", "noscript"]):
         tag.decompose()
 
-    # Apply CSS selector if provided
-    if css_selector:
-        target = soup.select_one(css_selector)
+    if selector:
+        target = soup.select_one(selector)
         if target:
             soup = BeautifulSoup(str(target), "html.parser")
         else:
-            return f"CSS selector '{css_selector}' not found on {url}"
+            return f"CSS selector '{selector}' not found on {url}"
 
-    # Get page title
     title = soup.find("title")
     title_text = title.get_text(strip=True) if title else url
 
@@ -222,4 +205,42 @@ async def web_scraper(query: str) -> str:
     return result
 
 
-scraper_tool = tool(web_scraper)
+class WebScraperInput(BaseModel):
+    """Inputs for the web_scraper tool."""
+    url: str = Field(description="URL of the page to scrape.")
+    extract: Optional[List[ExtractKind]] = Field(
+        default=None,
+        description=(
+            "Which data types to extract: any of 'tables', 'lists', 'links', 'headings', "
+            "or 'all'. Defaults to all."
+        ),
+    )
+    selector: Optional[str] = Field(
+        default=None,
+        description="Optional CSS selector to limit extraction to one page region.",
+    )
+
+
+class WebScraperTool(BaseTool):
+    name: str = "web_scraper"
+    description: str = (
+        "Extract structured data from web pages — tables, lists, links, and headings. "
+        "Use this instead of fetch_url when you need organized data, not raw text."
+        "\n\nUSE FOR:"
+        "\n- Tables: statistics pages, comparison charts, data tables"
+        "\n- Lists: product features, ranked items, requirements"
+        "\n- Links: resource pages, directories, navigation structure"
+        "\n- Page structure: understand how content is organized"
+        "\n\nDO NOT USE FOR: raw text reading (use fetch_url), PDF files (use pdf_reader)"
+    )
+    args_schema: Type[BaseModel] = WebScraperInput
+
+    # Forwards every validated parameter to web_scraper.
+    async def _arun(self, **kwargs) -> str:
+        return await web_scraper(**kwargs)
+
+    def _run(self, **kwargs) -> str:
+        return asyncio.run(self._arun(**kwargs))
+
+
+scraper_tool = WebScraperTool()

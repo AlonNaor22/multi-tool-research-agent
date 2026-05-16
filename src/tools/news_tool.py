@@ -1,10 +1,15 @@
 """News search tool using DuckDuckGo News."""
 
+import asyncio
+from typing import Literal, Optional, Type
+
 from duckduckgo_search import DDGS
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+
 from src.utils import (
     async_retry_on_error, async_run_with_timeout,
-    parse_tool_input, truncate, safe_tool_call, require_input,
+    truncate, safe_tool_call, require_input,
 )
 from src.constants import (
     DEFAULT_SEARCH_TIMEOUT, DEFAULT_MAX_RESULTS, MAX_SEARCH_RESULTS,
@@ -13,19 +18,25 @@ from src.constants import (
 
 # ─── Module overview ───────────────────────────────────────────────
 # Searches recent news articles via the DuckDuckGo News API.
-# Supports time-range filtering (day/week/month) and region scoping.
+# Schema is enforced via args_schema; supports time-range filtering.
 # ───────────────────────────────────────────────────────────────────
 
-
-# Configuration
 DEFAULT_TIMELIMIT = "w"  # Past week
 
+TimeLimit = Literal["d", "w", "m"]
 
-# Takes a query string, result count, time limit, and optional region.
-# Returns a list of raw article dicts from DuckDuckGo News.
+TIME_DESC = {"d": "past day", "w": "past week", "m": "past month"}
+TIME_SHORT = {"d": "day", "w": "week", "m": "month"}
+
+
+# Takes (query, max_results, timelimit, region). Returns raw article dicts.
 @async_retry_on_error(max_retries=2, delay=2.0, exceptions=(Exception,))
-async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
-                            timelimit: str = DEFAULT_TIMELIMIT, region: str = None):
+async def async_search_news(
+    query: str,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    timelimit: str = DEFAULT_TIMELIMIT,
+    region: Optional[str] = None,
+):
     """Perform a DuckDuckGo news search asynchronously and return a list of result dicts."""
     ddgs = DDGS()
 
@@ -34,7 +45,6 @@ async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
         "max_results": max_results,
         "timelimit": timelimit,
     }
-
     if region:
         search_kwargs["region"] = region
 
@@ -47,63 +57,42 @@ async def async_search_news(query: str, max_results: int = DEFAULT_MAX_RESULTS,
     return results
 
 
-# Tool entry point. Parses input options, runs the news search, and formats
-# results with title, source, date, body snippet, and URL.
-# Returns a formatted multi-article string or an error/empty message.
+# Takes (query, max_results, timelimit, region). Returns formatted article list
+# with title, source, date, body snippet, and URL.
 @safe_tool_call("searching news")
-async def news_search(query: str) -> str:
-    """Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, magazines, and news sites — with publication dates and source names.
+async def news_search(
+    query: str,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    timelimit: TimeLimit = DEFAULT_TIMELIMIT,
+    region: Optional[str] = None,
+) -> str:
+    """Search DuckDuckGo News and return formatted article results."""
+    err = require_input(query, "search query")
+    if err:
+        return err
 
-USE FOR:
-- Breaking news: 'earthquake today', 'election results'
-- Journalism coverage: 'AI regulation debate', 'climate policy changes'
-- Time-filtered stories: what happened in the past day/week/month
-
-DO NOT USE FOR:
-- General web info (use web_search — broader, not limited to news sources)
-- Established facts or history (use wikipedia)
-- Opinions/discussions (use reddit_search)
-
-SIMPLE: 'artificial intelligence' | ADVANCED: {"query": "climate", "timelimit": "d", "max_results": 5}
-
-TIMELIMIT: 'd' (past day), 'w' (past week, default), 'm' (past month)
-
-RULE: Need NEWS ARTICLES with sources/dates? -> news_search. Need general web results? -> web_search."""
-    # Parse input
-    search_query, opts = parse_tool_input(query, {
-        "max_results": DEFAULT_MAX_RESULTS,
-        "timelimit": DEFAULT_TIMELIMIT,
-    })
-    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
-    timelimit = opts.get("timelimit", DEFAULT_TIMELIMIT)
-    region = opts.get("region")
-
-    err = require_input(search_query, "search query")
-    if err: return err
-
-    # Validate timelimit
-    if timelimit not in ("d", "w", "m"):
+    max_results = min(int(max_results), MAX_SEARCH_RESULTS)
+    if timelimit not in TIME_DESC:
         timelimit = DEFAULT_TIMELIMIT
 
-    results = await async_search_news(search_query, max_results, timelimit, region)
+    results = await async_search_news(query, max_results, timelimit, region)
 
     if not results:
-        time_desc = {"d": "past day", "w": "past week", "m": "past month"}[timelimit]
-        return f"No news found for '{search_query}' in the {time_desc}. Try broader terms or a longer time range."
+        return (
+            f"No news found for '{query}' in the {TIME_DESC[timelimit]}. "
+            "Try broader terms or a longer time range."
+        )
 
-    # Format the results
-    time_desc = {"d": "day", "w": "week", "m": "month"}[timelimit]
-    formatted_results = [f"Found {len(results)} news articles for '{search_query}' (past {time_desc}):\n"]
+    formatted_results = [
+        f"Found {len(results)} news articles for '{query}' (past {TIME_SHORT[timelimit]}):\n"
+    ]
 
     for i, article in enumerate(results, 1):
         title = article.get('title', 'No title')
         source = article.get('source', 'Unknown source')
         date = article.get('date', 'Unknown date')
-        body = article.get('body', 'No description')
+        body = truncate(article.get('body', 'No description'), ARTICLE_BODY_MAX_CHARS)
         url = article.get('url', '')
-
-        # Truncate body if too long
-        body = truncate(body, ARTICLE_BODY_MAX_CHARS)
 
         formatted_results.append(
             f"{i}. **{title}**\n"
@@ -115,4 +104,49 @@ RULE: Need NEWS ARTICLES with sources/dates? -> news_search. Need general web re
     return "\n\n".join(formatted_results)
 
 
-news_tool = tool(news_search)
+class NewsSearchInput(BaseModel):
+    """Inputs for the news_search tool."""
+    query: str = Field(description="News search query string.")
+    max_results: int = Field(
+        default=DEFAULT_MAX_RESULTS,
+        ge=1,
+        le=MAX_SEARCH_RESULTS,
+        description=f"Number of articles to return (1-{MAX_SEARCH_RESULTS}).",
+    )
+    timelimit: TimeLimit = Field(
+        default=DEFAULT_TIMELIMIT,
+        description="Time range: 'd' (past day), 'w' (past week), 'm' (past month).",
+    )
+    region: Optional[str] = Field(
+        default=None,
+        description="Region code (e.g. 'us-en', 'uk-en'). Optional.",
+    )
+
+
+class NewsSearchTool(BaseTool):
+    name: str = "news_search"
+    description: str = (
+        "Search NEWS ARTICLES from journalism sources. Returns articles from newspapers, "
+        "magazines, and news sites — with publication dates and source names."
+        "\n\nUSE FOR:"
+        "\n- Breaking news: 'earthquake today', 'election results'"
+        "\n- Journalism coverage: 'AI regulation debate', 'climate policy changes'"
+        "\n- Time-filtered stories: what happened in the past day/week/month"
+        "\n\nDO NOT USE FOR:"
+        "\n- General web info (use web_search — broader, not limited to news sources)"
+        "\n- Established facts or history (use wikipedia)"
+        "\n- Opinions/discussions (use reddit_search)"
+        "\n\nTIMELIMIT: 'd' (past day), 'w' (past week, default), 'm' (past month)"
+        "\n\nRULE: Need NEWS ARTICLES with sources/dates? -> news_search. Need general web results? -> web_search."
+    )
+    args_schema: Type[BaseModel] = NewsSearchInput
+
+    # Forwards every validated parameter to news_search.
+    async def _arun(self, **kwargs) -> str:
+        return await news_search(**kwargs)
+
+    def _run(self, **kwargs) -> str:
+        return asyncio.run(self._arun(**kwargs))
+
+
+news_tool = NewsSearchTool()

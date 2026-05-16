@@ -3,6 +3,7 @@
 import sys
 import pytest
 from unittest.mock import MagicMock
+from pydantic import ValidationError
 
 # Mock duckduckgo_search before importing the tool
 if "duckduckgo_search" not in sys.modules:
@@ -10,7 +11,7 @@ if "duckduckgo_search" not in sys.modules:
 
 mock_ddgs = sys.modules["duckduckgo_search"]
 
-from src.tools.news_tool import news_search
+from src.tools.news_tool import news_search, news_tool, NewsSearchInput
 
 
 class TestNewsSearch:
@@ -52,7 +53,7 @@ class TestNewsSearch:
 
         assert "No news" in result or "no" in result.lower()
 
-    async def test_json_input_with_timelimit(self):
+    async def test_timelimit_kwarg(self):
         mock_results = [{
             "title": "Recent News",
             "url": "https://example.com",
@@ -65,9 +66,11 @@ class TestNewsSearch:
         mock_instance.news.return_value = mock_results
         mock_ddgs.DDGS.return_value = mock_instance
 
-        result = await news_search('{"query": "tech", "timelimit": "d"}')
+        result = await news_search("tech", timelimit="d")
 
         assert "Recent News" in result
+        call_kwargs = mock_instance.news.call_args[1]
+        assert call_kwargs["timelimit"] == "d"
 
     async def test_empty_query(self):
         result = await news_search("")
@@ -81,3 +84,32 @@ class TestNewsSearch:
         result = await news_search("test")
 
         assert "Error" in result or "error" in result.lower()
+
+
+class TestNewsSearchSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_query_rejected(self):
+        with pytest.raises(ValidationError):
+            NewsSearchInput()
+
+    def test_invalid_timelimit_rejected(self):
+        with pytest.raises(ValidationError):
+            NewsSearchInput(query="test", timelimit="year")
+
+    def test_max_results_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            NewsSearchInput(query="test", max_results=0)
+
+    def test_valid_input_parses(self):
+        parsed = NewsSearchInput(query="climate", timelimit="m", max_results=3)
+        assert parsed.timelimit == "m"
+        assert parsed.max_results == 3
+
+
+class TestNewsTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        assert news_tool.name == "news_search"
+        assert news_tool.args_schema is NewsSearchInput

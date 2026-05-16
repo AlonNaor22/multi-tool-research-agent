@@ -6,7 +6,7 @@ from typing import Type, Literal, Optional
 import aiohttp
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-from src.utils import async_retry_on_error, parse_tool_input, get_aiohttp_session, safe_tool_call
+from src.utils import async_retry_on_error, get_aiohttp_session, safe_tool_call
 
 # ─── Module overview ───────────────────────────────────────────────
 # Fetches current weather and multi-day forecasts from the
@@ -166,20 +166,17 @@ class WeatherInput(BaseModel):
 class WeatherTool(BaseTool):
     name: str = "weather"
     description: str = (
-        "Get current weather or forecast for a location. "
-        "\n\nSIMPLE USAGE: Just provide a city name: 'London', 'New York', 'Tokyo'"
-        "\n\nADVANCED USAGE: Provide JSON with options:"
-        '\n{"location": "Paris", "units": "imperial", "forecast": true, "days": 5}'
+        "Get current weather or a multi-day forecast for a location."
+        "\n\nUSE FOR:"
+        "\n- Current conditions: location='London'"
+        "\n- Forecast: location='Tokyo', forecast=true, days=5"
+        "\n- Coordinate lookup: lat=40.7, lon=-74.0"
         "\n\nOPTIONS:"
-        "\n- location: City name"
+        "\n- location: City name (e.g. 'London', 'New York', 'Tokyo')"
         "\n- lat/lon: Coordinates (instead of city name)"
         "\n- units: 'metric' (Celsius, default) or 'imperial' (Fahrenheit)"
-        "\n- forecast: true for 5-day forecast, false for current weather (default)"
+        "\n- forecast: true for a multi-day forecast, false for current weather (default)"
         "\n- days: Number of forecast days (1-5, default 3)"
-        "\n\nEXAMPLES:"
-        "\n- 'London'"
-        '\n- {"location": "Tokyo", "forecast": true}'
-        '\n- {"lat": 40.7, "lon": -74.0, "units": "imperial"}'
     )
     args_schema: Type[BaseModel] = WeatherInput
 
@@ -196,18 +193,17 @@ class WeatherTool(BaseTool):
 weather_tool = WeatherTool()
 
 
-# Parses a location string or JSON and fetches weather. Used by tests and CLI.
-async def get_weather(query: str) -> str:
-    """Parse a location string/JSON and fetch weather. Used by tests and CLI."""
-    location_str, opts = parse_tool_input(query, {
-        "units": "metric", "forecast": False, "days": 3,
-    })
-    if location_str and location_str.strip().startswith("{"):
-        location_str = ""
+# Typed-parameter entry point used by tests and CLI callers.
+async def get_weather(
+    location: str = "",
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    units: str = "metric",
+    forecast: bool = False,
+    days: int = 3,
+) -> str:
+    """Fetch weather with typed parameters. Used by tests and CLI."""
     return await _get_weather(
-        location=opts.get("location", location_str or ""),
-        lat=opts.get("lat"), lon=opts.get("lon"),
-        units=opts.get("units", "metric"),
-        forecast=opts.get("forecast", False),
-        days=min(opts.get("days", 3), 5),
+        location=location, lat=lat, lon=lon,
+        units=units, forecast=forecast, days=min(days, 5),
     )

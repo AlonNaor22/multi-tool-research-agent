@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import patch, MagicMock
+from pydantic import ValidationError
 
 
 class MockArxivResult:
@@ -19,6 +20,17 @@ class MockArxivResult:
         self.categories = categories or ["cs.AI"]
 
 
+def _patch_arxiv(mock_arxiv, results_iter):
+    mock_client = MagicMock()
+    mock_client.results.return_value = results_iter
+    mock_arxiv.Client.return_value = mock_client
+    mock_arxiv.Search = MagicMock()
+    mock_arxiv.SortCriterion = MagicMock()
+    mock_arxiv.SortCriterion.Relevance = "relevance"
+    mock_arxiv.SortCriterion.SubmittedDate = "date"
+    return mock_client
+
+
 class TestArxivSearch:
     """Test arxiv search with mocked API."""
 
@@ -34,14 +46,7 @@ class TestArxivSearch:
         ]
 
         with patch("src.tools.arxiv_tool.arxiv") as mock_arxiv:
-            mock_client = MagicMock()
-            mock_client.results.return_value = iter(mock_results)
-            mock_arxiv.Client.return_value = mock_client
-            mock_arxiv.Search = MagicMock()
-            mock_arxiv.SortCriterion = MagicMock()
-            mock_arxiv.SortCriterion.Relevance = "relevance"
-            mock_arxiv.SortCriterion.SubmittedDate = "date"
-
+            _patch_arxiv(mock_arxiv, iter(mock_results))
             from src.tools.arxiv_tool import arxiv_search
             result = await arxiv_search("transformer attention")
 
@@ -50,14 +55,7 @@ class TestArxivSearch:
 
     async def test_no_results(self):
         with patch("src.tools.arxiv_tool.arxiv") as mock_arxiv:
-            mock_client = MagicMock()
-            mock_client.results.return_value = iter([])
-            mock_arxiv.Client.return_value = mock_client
-            mock_arxiv.Search = MagicMock()
-            mock_arxiv.SortCriterion = MagicMock()
-            mock_arxiv.SortCriterion.Relevance = "relevance"
-            mock_arxiv.SortCriterion.SubmittedDate = "date"
-
+            _patch_arxiv(mock_arxiv, iter([]))
             from src.tools.arxiv_tool import arxiv_search
             result = await arxiv_search("xyznonexistent123")
 
@@ -76,30 +74,62 @@ class TestArxivSearch:
         ]
 
         with patch("src.tools.arxiv_tool.arxiv") as mock_arxiv:
-            mock_client = MagicMock()
-            mock_client.results.return_value = iter(mock_results)
-            mock_arxiv.Client.return_value = mock_client
-            mock_arxiv.Search = MagicMock()
-            mock_arxiv.SortCriterion = MagicMock()
-            mock_arxiv.SortCriterion.Relevance = "relevance"
-            mock_arxiv.SortCriterion.SubmittedDate = "date"
-
+            _patch_arxiv(mock_arxiv, iter(mock_results))
             from src.tools.arxiv_tool import arxiv_search
             result = await arxiv_search("big paper")
 
             assert "et al" in result
 
-    async def test_json_input_with_options(self):
+    async def test_category_filter_applied(self):
         with patch("src.tools.arxiv_tool.arxiv") as mock_arxiv:
-            mock_client = MagicMock()
-            mock_client.results.return_value = iter([])
-            mock_arxiv.Client.return_value = mock_client
-            mock_arxiv.Search = MagicMock()
-            mock_arxiv.SortCriterion = MagicMock()
-            mock_arxiv.SortCriterion.Relevance = "relevance"
-            mock_arxiv.SortCriterion.SubmittedDate = "date"
-
+            _patch_arxiv(mock_arxiv, iter([]))
             from src.tools.arxiv_tool import arxiv_search
-            result = await arxiv_search('{"query": "neural networks", "max_results": 3, "sort": "date"}')
+            await arxiv_search("attention", category="cs.AI")
 
-            assert len(result) > 0  # Should not crash on JSON input
+            # Verify the category was prefixed onto the search query
+            search_call = mock_arxiv.Search.call_args[1]
+            assert "cat:cs.AI" in search_call["query"]
+
+    async def test_typed_kwargs(self):
+        with patch("src.tools.arxiv_tool.arxiv") as mock_arxiv:
+            _patch_arxiv(mock_arxiv, iter([]))
+            from src.tools.arxiv_tool import arxiv_search
+            result = await arxiv_search("neural networks", max_results=3, sort="date")
+
+            assert len(result) > 0  # Should not crash on typed kwargs
+            search_call = mock_arxiv.Search.call_args[1]
+            assert search_call["max_results"] == 3
+
+
+class TestArxivSearchSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_query_rejected(self):
+        from src.tools.arxiv_tool import ArxivSearchInput
+        with pytest.raises(ValidationError):
+            ArxivSearchInput()
+
+    def test_invalid_sort_rejected(self):
+        from src.tools.arxiv_tool import ArxivSearchInput
+        with pytest.raises(ValidationError):
+            ArxivSearchInput(query="test", sort="newest")
+
+    def test_max_results_out_of_range_rejected(self):
+        from src.tools.arxiv_tool import ArxivSearchInput
+        with pytest.raises(ValidationError):
+            ArxivSearchInput(query="test", max_results=0)
+
+    def test_valid_input_parses(self):
+        from src.tools.arxiv_tool import ArxivSearchInput
+        parsed = ArxivSearchInput(query="ML", max_results=10, sort="date", category="cs.LG")
+        assert parsed.sort == "date"
+        assert parsed.category == "cs.LG"
+
+
+class TestArxivTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        from src.tools.arxiv_tool import arxiv_tool, ArxivSearchInput
+        assert arxiv_tool.name == "arxiv_search"
+        assert arxiv_tool.args_schema is ArxivSearchInput

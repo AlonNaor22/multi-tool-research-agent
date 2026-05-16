@@ -3,12 +3,13 @@
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
+from pydantic import ValidationError
 
 # Mock duckduckgo_search before importing the tool
 if "duckduckgo_search" not in sys.modules:
     sys.modules["duckduckgo_search"] = MagicMock()
 
-from src.tools.search_tool import web_search
+from src.tools.search_tool import web_search, search_tool, WebSearchInput
 
 
 class TestWebSearch:
@@ -37,17 +38,27 @@ class TestWebSearch:
 
             assert "No search results" in result
 
-    async def test_json_input_with_options(self, search_results):
+    async def test_max_results_kwarg(self, search_results):
         with patch("src.tools.search_tool.DDGS") as mock_ddgs_cls:
             mock_instance = MagicMock()
             mock_instance.text.return_value = search_results
             mock_ddgs_cls.return_value = mock_instance
 
-            result = await web_search('{"query": "AI news", "max_results": 3}')
+            await web_search("AI news", max_results=3)
 
-            assert "AI news" in result
             call_kwargs = mock_instance.text.call_args[1]
             assert call_kwargs["max_results"] == 3
+
+    async def test_region_kwarg(self, search_results):
+        with patch("src.tools.search_tool.DDGS") as mock_ddgs_cls:
+            mock_instance = MagicMock()
+            mock_instance.text.return_value = search_results
+            mock_ddgs_cls.return_value = mock_instance
+
+            await web_search("local news", region="uk-en")
+
+            call_kwargs = mock_instance.text.call_args[1]
+            assert call_kwargs["region"] == "uk-en"
 
     async def test_empty_query(self):
         result = await web_search("")
@@ -77,3 +88,31 @@ class TestWebSearch:
             result = await web_search("test query")
 
             assert "Error" in result
+
+
+class TestWebSearchSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_query_rejected(self):
+        with pytest.raises(ValidationError):
+            WebSearchInput()
+
+    def test_max_results_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            WebSearchInput(query="test", max_results=0)
+        with pytest.raises(ValidationError):
+            WebSearchInput(query="test", max_results=100)
+
+    def test_valid_input_parses(self):
+        parsed = WebSearchInput(query="hello", max_results=3, region="us-en")
+        assert parsed.query == "hello"
+        assert parsed.max_results == 3
+        assert parsed.region == "us-en"
+
+
+class TestSearchTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        assert search_tool.name == "web_search"
+        assert search_tool.args_schema is WebSearchInput

@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from pydantic import ValidationError
 from tests.conftest import AsyncMockResponse
 
 
@@ -68,7 +69,6 @@ class TestGoogleScholar:
             _cache.clear()
             result = await google_scholar("deep learning")
 
-            # Second paper has 4 authors, should show 3 + et al.
             assert "et al." in result
 
     async def test_doi_url(self):
@@ -120,7 +120,7 @@ class TestGoogleScholar:
 
             assert "Error" in result
 
-    async def test_json_input_with_year_range(self):
+    async def test_year_range_kwargs(self):
         mock_resp = AsyncMockResponse(json_data=SEMANTIC_SCHOLAR_RESPONSE, status=200)
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
@@ -128,14 +128,26 @@ class TestGoogleScholar:
         with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
             from src.tools.google_scholar_tool import google_scholar, _cache
             _cache.clear()
-            result = await google_scholar('{"query": "AI", "year_from": 2020, "year_to": 2025}')
+            result = await google_scholar("AI", year_from=2020, year_to=2025)
 
             assert len(result) > 0
-            # Verify the year param was passed
             call_kwargs = mock_session.get.call_args
-            # params are passed as keyword argument
             params = call_kwargs[1].get("params", {}) if call_kwargs[1] else {}
             assert params.get("year") == "2020-2025"
+
+    async def test_year_from_only(self):
+        mock_resp = AsyncMockResponse(json_data=SEMANTIC_SCHOLAR_RESPONSE, status=200)
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+
+        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
+            from src.tools.google_scholar_tool import google_scholar, _cache
+            _cache.clear()
+            await google_scholar("neural networks", year_from=2020)
+
+            call_kwargs = mock_session.get.call_args
+            params = call_kwargs[1].get("params", {}) if call_kwargs[1] else {}
+            assert params.get("year") == "2020-"
 
     async def test_empty_query(self):
         from src.tools.google_scholar_tool import google_scholar
@@ -146,20 +158,6 @@ class TestGoogleScholar:
         from src.tools.google_scholar_tool import google_scholar
         result = await google_scholar("help")
         assert "Semantic Scholar" in result
-
-    async def test_year_from_prefix(self):
-        mock_resp = AsyncMockResponse(json_data=SEMANTIC_SCHOLAR_RESPONSE, status=200)
-        mock_session = MagicMock()
-        mock_session.get.return_value = mock_resp
-
-        with patch("src.utils.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
-            from src.tools.google_scholar_tool import google_scholar, _cache
-            _cache.clear()
-            await google_scholar("from 2020: neural networks")
-
-            call_kwargs = mock_session.get.call_args
-            params = call_kwargs[1].get("params", {}) if call_kwargs[1] else {}
-            assert params.get("year") == "2020-"
 
     async def test_caching(self):
         mock_resp = AsyncMockResponse(json_data=SEMANTIC_SCHOLAR_RESPONSE, status=200)
@@ -173,3 +171,32 @@ class TestGoogleScholar:
             await google_scholar("caching test")  # Should hit cache
 
             assert mock_session.get.call_count == 1  # Only one actual API call
+
+
+class TestGoogleScholarSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_query_rejected(self):
+        from src.tools.google_scholar_tool import GoogleScholarInput
+        with pytest.raises(ValidationError):
+            GoogleScholarInput()
+
+    def test_year_out_of_range_rejected(self):
+        from src.tools.google_scholar_tool import GoogleScholarInput
+        with pytest.raises(ValidationError):
+            GoogleScholarInput(query="test", year_from=1500)
+
+    def test_valid_input_parses(self):
+        from src.tools.google_scholar_tool import GoogleScholarInput
+        parsed = GoogleScholarInput(query="AI", year_from=2020, year_to=2025, max_results=5)
+        assert parsed.year_from == 2020
+        assert parsed.year_to == 2025
+
+
+class TestGoogleScholarTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        from src.tools.google_scholar_tool import google_scholar_tool, GoogleScholarInput
+        assert google_scholar_tool.name == "google_scholar"
+        assert google_scholar_tool.args_schema is GoogleScholarInput

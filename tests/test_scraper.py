@@ -1,8 +1,8 @@
 """Tests for the web scraper tool."""
 
-import json
 import pytest
 from unittest.mock import patch, AsyncMock
+from pydantic import ValidationError
 
 
 SAMPLE_HTML = """
@@ -85,8 +85,7 @@ class TestWebScraper:
 
         with patch("src.tools.scraper_tool._fetch_html", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = SAMPLE_HTML
-            query = json.dumps({"url": "https://example.com", "extract": ["tables"]})
-            result = await web_scraper(query)
+            result = await web_scraper("https://example.com", extract=["tables"])
 
         assert "Table 1" in result
         # Should not extract links when only tables requested
@@ -99,8 +98,7 @@ class TestWebScraper:
         html_with_class = '<html><body><div class="main">Target content</div><div>Other</div></body></html>'
         with patch("src.tools.scraper_tool._fetch_html", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = html_with_class
-            query = json.dumps({"url": "https://example.com", "selector": "div.main"})
-            result = await web_scraper(query)
+            result = await web_scraper("https://example.com", selector="div.main")
 
         # The selector targets div.main but won't have structured data
         assert "example.com" in result
@@ -122,7 +120,34 @@ class TestWebScraper:
 
         assert "No structured data" in result or "fetch_url" in result
 
-    def test_tool_wrapper_exists(self):
-        from src.tools.scraper_tool import scraper_tool
+
+class TestWebScraperSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_url_rejected(self):
+        from src.tools.scraper_tool import WebScraperInput
+        with pytest.raises(ValidationError):
+            WebScraperInput()
+
+    def test_invalid_extract_kind_rejected(self):
+        from src.tools.scraper_tool import WebScraperInput
+        with pytest.raises(ValidationError):
+            WebScraperInput(url="https://example.com", extract=["forms"])
+
+    def test_valid_input_parses(self):
+        from src.tools.scraper_tool import WebScraperInput
+        parsed = WebScraperInput(
+            url="https://example.com",
+            extract=["tables", "links"],
+            selector="div.main",
+        )
+        assert parsed.extract == ["tables", "links"]
+
+
+class TestScraperTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        from src.tools.scraper_tool import scraper_tool, WebScraperInput
         assert scraper_tool.name == "web_scraper"
-        assert scraper_tool.coroutine is not None
+        assert scraper_tool.args_schema is WebScraperInput

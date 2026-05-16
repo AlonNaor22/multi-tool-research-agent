@@ -40,14 +40,20 @@ definitions that take a single `query: str` and parse it as JSON inside the func
      `TestDatetimeSchema` for Pydantic boundary validation. End-to-end `tool.ainvoke({...})`
      verified — schema rejects bad operations and out-of-range list sizes.
 
-3. [ ] **Migrate string-or-JSON tools to `BaseTool` + `args_schema`** —
+3. [x] **Migrate string-or-JSON tools to `BaseTool` + `args_schema`** —
    `src/tools/search_tool.py`, `wikipedia_tool.py`, `news_tool.py`, `arxiv_tool.py`,
    `google_scholar_tool.py`, `reddit_tool.py`, `github_tool.py`, `csv_tool.py`, `scraper_tool.py`
-   All nine use `parse_tool_input(query, defaults)` to extract optional args from a
-   JSON-encoded query string. The LLM is told the tool takes a string but the docstring
-   sometimes also tells it to pass JSON — schema is enforced nowhere. Convert each to
-   named typed parameters (e.g. `web_search(query: str, max_results: int = 5, region: Optional[str] = None)`).
-   After all nine are migrated, delete `parse_tool_input` from `src/utils.py:218`.
+   All nine converted to `<Tool>Class(BaseTool)` with a Pydantic `<Tool>Input` schema
+   wired via `args_schema`. The underlying async function on each module kept `query`
+   (or `path`/`url`) as the first positional arg with typed defaults for the previously
+   JSON-encoded options, so `parallel_tool.py`'s `await func(query)` callers still
+   work. `weather_tool.get_weather()` was a tenth `parse_tool_input` caller — its
+   helper was rewritten to take typed kwargs. `parse_tool_input` and the now-unused
+   `json` import were deleted from `src/utils.py`. Tests rewritten: JSON-string input
+   tests replaced with typed-kwarg tests, plus a `Test<Tool>Schema` class per tool
+   asserting Pydantic `ValidationError` on missing/invalid fields, and a
+   `Test<Tool>Tool` class asserting the `name` and `args_schema` wiring. Full suite:
+   489/489 passing.
 
 4. [ ] **Eliminate the `MATH_STRUCTURED:` text-channel** —
    `app.py:130-183`, `main.py:79`, `src/tools/math_formatter.py`

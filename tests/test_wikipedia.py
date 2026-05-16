@@ -3,6 +3,7 @@
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
+from pydantic import ValidationError
 
 # Mock the wikipedia module if not installed
 if "wikipedia" not in sys.modules:
@@ -19,7 +20,7 @@ if "wikipedia" not in sys.modules:
     sys.modules["wikipedia"] = mock_wiki
 
 import wikipedia as wiki_module
-from src.tools.wikipedia_tool import wikipedia
+from src.tools.wikipedia_tool import wikipedia, wikipedia_tool, WikipediaInput
 
 
 class TestWikipediaSearch:
@@ -46,7 +47,39 @@ class TestWikipediaSearch:
         result = await wikipedia("Python")
         assert len(result) > 0  # Should handle gracefully
 
-    async def test_json_input_with_options(self):
+    async def test_sentences_kwarg(self):
         wiki_module.summary = MagicMock(return_value="Test summary.")
-        result = await wikipedia('{"query": "Python", "sentences": 2}')
+        result = await wikipedia("Python", sentences=2)
         assert "Test summary" in result
+        # Verify sentences was passed through
+        call_kwargs = wiki_module.summary.call_args[1]
+        assert call_kwargs.get("sentences") == 2
+
+
+class TestWikipediaSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_query_rejected(self):
+        with pytest.raises(ValidationError):
+            WikipediaInput()
+
+    def test_sentences_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            WikipediaInput(query="test", sentences=0)
+        with pytest.raises(ValidationError):
+            WikipediaInput(query="test", sentences=21)
+
+    def test_valid_input_parses(self):
+        parsed = WikipediaInput(query="Python", sentences=3, suggestion=False, results=2)
+        assert parsed.query == "Python"
+        assert parsed.sentences == 3
+        assert parsed.suggestion is False
+        assert parsed.results == 2
+
+
+class TestWikipediaTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        assert wikipedia_tool.name == "wikipedia"
+        assert wikipedia_tool.args_schema is WikipediaInput

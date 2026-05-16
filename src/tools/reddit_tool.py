@@ -1,16 +1,14 @@
 """Reddit search tool using Reddit's public JSON API."""
 
-import re
-import json
 import asyncio
-import aiohttp
-from typing import List, Dict
+from typing import List, Dict, Literal, Optional, Type
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+
 from src.utils import (
     async_retry_on_error, async_fetch,
-    parse_result_count, truncate, cached_tool,
-    safe_tool_call, require_input,
+    truncate, cached_tool, safe_tool_call, require_input,
 )
 from src.constants import (
     DEFAULT_USER_AGENT,
@@ -20,30 +18,35 @@ from src.constants import (
 )
 
 # ─── Module overview ───────────────────────────────────────────────
-# Searches Reddit posts via the public JSON API. Supports subreddit
-# filtering, sort modes, and time-range filters with result caching.
+# Searches Reddit posts via the public JSON API. Schema is enforced
+# via args_schema (subreddit, sort, time_filter, max_results).
 # ───────────────────────────────────────────────────────────────────
 
+SortOrder = Literal["relevance", "top", "new", "comments"]
+TimeFilter = Literal["all", "year", "month", "week", "day"]
 
-# Takes a query, result count, optional subreddit, sort, and time filter.
-# Returns a list of post dicts (title, score, comments, URL, selftext, etc.).
+DEFAULT_MAX_RESULTS = 5
+MAX_RESULTS = 10
+
+
+# Takes (query, max_results, subreddit, sort, time_filter). Calls the Reddit
+# JSON API. Returns a list of post dicts.
 @cached_tool("reddit")
 @async_retry_on_error(max_retries=2, delay=2.0)
 async def search_reddit(
     query: str,
-    max_results: int = 5,
-    subreddit: str = None,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    subreddit: Optional[str] = None,
     sort: str = "relevance",
     time_filter: str = "all",
 ) -> List[Dict]:
     """Search Reddit for posts matching a query and return a list of post dicts."""
-    # Build the search URL
     if subreddit:
         url = f"https://www.reddit.com/r/{subreddit}/search.json"
-        params = {"q": query, "restrict_sr": "on", "sort": sort, "t": time_filter, "limit": min(max_results, 10)}
+        params = {"q": query, "restrict_sr": "on", "sort": sort, "t": time_filter, "limit": min(max_results, MAX_RESULTS)}
     else:
         url = REDDIT_SEARCH_URL
-        params = {"q": query, "sort": sort, "t": time_filter, "limit": min(max_results, 10)}
+        params = {"q": query, "sort": sort, "t": time_filter, "limit": min(max_results, MAX_RESULTS)}
 
     headers = {"User-Agent": f"{DEFAULT_USER_AGENT} ResearchAgent/1.0"}
 
@@ -102,63 +105,25 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
-# Tool entry point. Parses free-text or JSON input for subreddit, sort,
-# time filter, and result count. Returns formatted Reddit search results.
+# Takes (query, max_results, subreddit, sort, time_filter). Returns formatted
+# Reddit search results.
 @safe_tool_call("searching Reddit")
-async def reddit_search(input_str: str) -> str:
-    """Search Reddit for posts, discussions, and community opinions.
+async def reddit_search(
+    query: str,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    subreddit: Optional[str] = None,
+    sort: SortOrder = "relevance",
+    time_filter: TimeFilter = "all",
+) -> str:
+    """Search Reddit with typed parameters and return formatted results."""
+    err = require_input(query, "search query")
+    if err:
+        return err
 
-FORMAT: 'query', 'r/subreddit: query', 'top week: query'
-
-RETURNS: Post titles, scores, comment counts, subreddit, URLs, text previews.
-
-USE FOR: Finding opinions, experiences, recent discussions, community recommendations.
-
-TIP: Add subreddit filter for focused results (e.g., r/science, r/askhistorians)."""
-    input_str = input_str.strip()
-
-    err = require_input(input_str, "search query")
-    if err: return err
-
-    if input_str.lower() in ("help", "?"):
+    if query.strip().lower() in ("help", "?"):
         return _get_help()
 
-    max_results = 5
-    subreddit = None
-    sort = "relevance"
-    time_filter = "all"
-    query = input_str
-
-    # Try JSON input
-    try:
-        if query.strip().startswith("{"):
-            options = json.loads(query)
-            query = options.get("query", query)
-            max_results = min(options.get("max_results", 5), 10)
-            subreddit = options.get("subreddit")
-            sort = options.get("sort", "relevance")
-            time_filter = options.get("time_filter", "all")
-    except json.JSONDecodeError:
-        pass
-
-    # Check for "N results:" prefix
-    query, max_results = parse_result_count(query, default=max_results)
-
-    # Check for "r/subreddit:" prefix
-    sub_match = re.match(r'r/(\w+):\s*(.+)', query, re.IGNORECASE)
-    if sub_match:
-        subreddit = sub_match.group(1)
-        query = sub_match.group(2)
-
-    # Check for sort prefix: "top week:", "new:", etc.
-    sort_match = re.match(r'(top|new|comments)\s+(all|year|month|week|day):\s*(.+)', query, re.IGNORECASE)
-    if sort_match:
-        sort = sort_match.group(1).lower()
-        time_filter = sort_match.group(2).lower()
-        query = sort_match.group(3)
-    elif query.lower().startswith(("top:", "new:")):
-        sort = query[:query.index(":")].lower()
-        query = query[query.index(":") + 1:].strip()
+    max_results = min(int(max_results), MAX_RESULTS)
 
     results = await search_reddit(query, max_results, subreddit, sort, time_filter)
     return format_results(results, query)
@@ -168,38 +133,76 @@ def _get_help() -> str:
     """Return help text for the Reddit search tool."""
     return """Reddit Search Help:
 
-FORMAT:
-  python best practices
-  r/machinelearning: transformers
-  5 results: climate change
-  top week: artificial intelligence
-  new: latest AI news
-
-OPTIONS:
-  N results: query              - Return N results (max 10)
-  r/subreddit: query            - Search within a specific subreddit
-  top/new/comments [time]: query - Sort by top/new/comments, with time filter
-
-TIME FILTERS: all, year, month, week, day
+PARAMETERS:
+  query        - Search terms (required)
+  max_results  - Number of posts (1-10, default 5)
+  subreddit    - Restrict to a specific subreddit (e.g. "Python", "science")
+  sort         - "relevance" | "top" | "new" | "comments"
+  time_filter  - "all" | "year" | "month" | "week" | "day"
 
 RETURNS:
-  - Post title
-  - Subreddit, score, comment count
+  - Post title, subreddit, score, comment count
   - Author and post URL
   - Text preview
 
 TIPS:
-  - Use subreddit filter for focused discussions (r/science, r/askhistorians)
-  - Sort by "top" to find most upvoted content
+  - Use subreddit filter for focused discussions (Python, science, askhistorians)
+  - Sort by "top" + time_filter="week" for the most upvoted recent posts
   - Reddit is great for opinions, experiences, and recent discussions
 
 EXAMPLES:
-  "best python libraries for data science"
-  "r/science: climate change 2024"
-  "top month: remote work productivity" """
+  query="best python libraries for data science"
+  query="climate change 2024", subreddit="science"
+  query="remote work productivity", sort="top", time_filter="month"
+"""
 
 
 # Expose cache for tests (search_reddit._cache)
 _cache = search_reddit._cache
 
-reddit_tool = tool(reddit_search)
+
+class RedditSearchInput(BaseModel):
+    """Inputs for the reddit_search tool."""
+    query: str = Field(description="Search terms for Reddit posts.")
+    max_results: int = Field(
+        default=DEFAULT_MAX_RESULTS,
+        ge=1,
+        le=MAX_RESULTS,
+        description=f"Number of posts to return (1-{MAX_RESULTS}).",
+    )
+    subreddit: Optional[str] = Field(
+        default=None,
+        description="Subreddit name (without 'r/' prefix) to restrict the search.",
+    )
+    sort: SortOrder = Field(
+        default="relevance",
+        description="Sort order: relevance, top, new, or comments.",
+    )
+    time_filter: TimeFilter = Field(
+        default="all",
+        description="Time filter: all, year, month, week, or day.",
+    )
+
+
+class RedditSearchTool(BaseTool):
+    name: str = "reddit_search"
+    description: str = (
+        "Search Reddit for posts, discussions, and community opinions."
+        "\n\nUSE FOR:"
+        "\n- Opinions, experiences, recent discussions"
+        "\n- Community recommendations"
+        "\n- Focused search via subreddit (e.g. 'science', 'askhistorians')"
+        "\n- Time-filtered top posts via sort='top' + time_filter='week'"
+        "\n\nRETURNS: Post titles, scores, comment counts, subreddit, URLs, text previews."
+    )
+    args_schema: Type[BaseModel] = RedditSearchInput
+
+    # Forwards every validated parameter to reddit_search.
+    async def _arun(self, **kwargs) -> str:
+        return await reddit_search(**kwargs)
+
+    def _run(self, **kwargs) -> str:
+        return asyncio.run(self._arun(**kwargs))
+
+
+reddit_tool = RedditSearchTool()

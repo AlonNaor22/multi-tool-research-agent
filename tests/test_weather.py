@@ -52,7 +52,7 @@ class TestCurrentWeather:
 
         with patch("src.tools.weather_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.weather_tool.os.getenv", return_value="test_key"):
-            result = await get_weather('{"location": "London", "units": "imperial"}')
+            result = await get_weather(location="London", units="imperial")
 
             assert "72" in result
 
@@ -67,7 +67,7 @@ class TestForecast:
 
         with patch("src.tools.weather_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.weather_tool.os.getenv", return_value="test_key"):
-            result = await get_weather('{"location": "London", "forecast": true}')
+            result = await get_weather(location="London", forecast=True)
 
             assert "London" in result
             assert "forecast" in result.lower()
@@ -78,7 +78,7 @@ class TestWeatherEdgeCases:
 
     async def test_empty_location(self):
         with patch("src.tools.weather_tool.os.getenv", return_value="test_key"):
-            result = await get_weather('{"units": "metric"}')
+            result = await get_weather(units="metric")
 
             assert "Error" in result or "location" in result.lower()
 
@@ -89,6 +89,6 @@ class TestWeatherEdgeCases:
 
         with patch("src.tools.weather_tool.get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session), \
              patch("src.tools.weather_tool.os.getenv", return_value="test_key"):
-            result = await get_weather('{"lat": 51.5, "lon": -0.1}')
+            result = await get_weather(lat=51.5, lon=-0.1)
 
             assert "London" in result

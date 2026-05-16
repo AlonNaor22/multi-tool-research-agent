@@ -1,15 +1,14 @@
 """Academic paper search tool using the Semantic Scholar API."""
 
-import re
 import asyncio
-import aiohttp
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Type
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+
 from src.utils import (
     async_retry_on_error, async_fetch, cached_tool,
-    parse_tool_input, parse_result_count, truncate,
-    safe_tool_call, require_input,
+    truncate, safe_tool_call, require_input,
 )
 from src.constants import (
     SEMANTIC_SCHOLAR_BASE_URL,
@@ -22,14 +21,14 @@ from src.constants import (
 
 # ─── Module overview ───────────────────────────────────────────────
 # Searches published academic papers via the Semantic Scholar API.
-# Supports year-range filtering, citation counts, and result caching.
+# Schema is enforced via args_schema (year_from/year_to, max_results).
 # ───────────────────────────────────────────────────────────────────
 
 # Fields to request from the Semantic Scholar API
 _PAPER_FIELDS = "title,authors,year,citationCount,abstract,url,externalIds,publicationTypes"
 
 
-# Takes (query, max_results, year_from, year_to). Queries Semantic Scholar API.
+# Takes (query, max_results, year_from, year_to). Queries Semantic Scholar.
 # Returns a list of paper dicts with title, authors, year, citations, abstract, url.
 @cached_tool("scholar")
 @async_retry_on_error(max_retries=2, delay=2.0)
@@ -92,7 +91,6 @@ async def search_semantic_scholar(
 
 
 # Takes (results, query). Formats paper dicts into a numbered display string.
-# Returns the formatted text with titles, authors, years, citations, and abstracts.
 def format_results(results: List[Dict], query: str) -> str:
     """Format a list of paper dicts into a display string."""
     if not results:
@@ -123,90 +121,42 @@ def format_results(results: List[Dict], query: str) -> str:
     return "\n".join(lines)
 
 
-# Takes (input_str). Parses year filters and options, then searches Semantic Scholar.
-# Returns formatted academic paper results.
+# Takes (query, max_results, year_from, year_to). Searches Semantic Scholar
+# and returns formatted academic paper results.
 @safe_tool_call("searching academic papers")
-async def google_scholar(input_str: str) -> str:
-    """Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. Covers journals, conferences, and theses — with citation counts.
+async def google_scholar(
+    query: str,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
+) -> str:
+    """Search Semantic Scholar with typed parameters and return formatted results."""
+    err = require_input(query, "search query")
+    if err:
+        return err
 
-USE FOR:
-- Any academic field: medicine, history, social science, law, STEM, humanities
-- Papers with citation counts (to judge impact)
-- Year-filtered searches: 'from 2020: topic' or '2010-2020: topic'
-- Published, vetted research (not pre-prints)
-
-DO NOT USE FOR:
-- Latest unpublished pre-prints (use arxiv_search — it has newest STEM papers)
-- General web info (use web_search)
-
-FORMAT: 'roman empire climate', 'from 2020: topic', '2010-2020: paleoclimate levant'
-
-RULE: Need PUBLISHED papers with citations? -> google_scholar. Need the NEWEST pre-prints in STEM? -> arxiv."""
-    input_str = input_str.strip()
-
-    err = require_input(input_str, "search query")
-    if err: return err
-
-    # Command: help
-    if input_str.lower() in ("help", "?"):
+    if query.strip().lower() in ("help", "?"):
         return _get_help()
 
-    # Parse options
-    query, opts = parse_tool_input(input_str, {
-        "max_results": DEFAULT_MAX_RESULTS,
-    })
-    max_results = min(int(opts.get("max_results", DEFAULT_MAX_RESULTS)), MAX_SEARCH_RESULTS)
-    year_from = opts.get("year_from")
-    year_to = opts.get("year_to")
-
-    # Check for "N results:" prefix
-    query, max_results = parse_result_count(query, max_results, MAX_SEARCH_RESULTS)
-
-    # Check for "from YEAR:" prefix
-    from_match = re.match(r'from\s+(\d{4}):\s*(.+)', query, re.IGNORECASE)
-    if from_match:
-        year_from = int(from_match.group(1))
-        query = from_match.group(2)
-
-    # Check for "YEAR-YEAR:" range prefix
-    range_match = re.match(r'(\d{4})\s*-\s*(\d{4}):\s*(.+)', query, re.IGNORECASE)
-    if range_match:
-        year_from = int(range_match.group(1))
-        year_to = int(range_match.group(2))
-        query = range_match.group(3)
-
-    # Check for "until YEAR:" or "to YEAR:" prefix
-    to_match = re.match(r'(?:until|to)\s+(\d{4}):\s*(.+)', query, re.IGNORECASE)
-    if to_match:
-        year_to = int(to_match.group(1))
-        query = to_match.group(2)
+    max_results = min(int(max_results), MAX_SEARCH_RESULTS)
 
     results = await search_semantic_scholar(query, max_results, year_from, year_to)
     return format_results(results, query)
 
 
-# Returns help text listing supported formats, options, and examples.
+# Returns help text listing supported options and examples.
 def _get_help() -> str:
     """Return help text for the scholar search tool."""
     return """Academic Paper Search Help (powered by Semantic Scholar):
 
-FORMAT:
-  paleoclimate ancient israel
-  5 results: machine learning transformers
-  from 2020: climate change effects
-  2010-2020: roman empire climate
-  until 2000: ancient history archaeology
-
-OPTIONS:
-  N results: query     - Return N results (max 10)
-  from YEAR: query     - Papers from YEAR onwards
-  until YEAR: query    - Papers up to YEAR
-  YEAR-YEAR: query     - Papers within year range
+PARAMETERS:
+  query        - Search terms (required)
+  max_results  - Number of papers to return (1-10, default 5)
+  year_from    - Earliest publication year
+  year_to      - Latest publication year
 
 RETURNS:
-  - Paper title
-  - Authors
-  - Publication year
+  - Paper title, authors, publication year
   - Citation count
   - URL (DOI or ArXiv link)
   - Abstract snippet
@@ -219,12 +169,61 @@ TIPS:
   - Combine with pdf_reader to read full papers
 
 EXAMPLES:
-  "paleoclimate levant bronze age"
-  "from 2015: deep learning survey"
-  "2000-2010: roman climate reconstruction" """
+  query="paleoclimate levant bronze age"
+  query="deep learning survey", year_from=2015
+  query="roman climate reconstruction", year_from=2000, year_to=2010"""
 
 
 # Expose cache for test clearing
 _cache = search_semantic_scholar._cache
 
-google_scholar_tool = tool(google_scholar)
+
+class GoogleScholarInput(BaseModel):
+    """Inputs for the google_scholar tool."""
+    query: str = Field(description="Search terms for academic papers.")
+    max_results: int = Field(
+        default=DEFAULT_MAX_RESULTS,
+        ge=1,
+        le=MAX_SEARCH_RESULTS,
+        description=f"Number of papers to return (1-{MAX_SEARCH_RESULTS}).",
+    )
+    year_from: Optional[int] = Field(
+        default=None,
+        ge=1800,
+        le=2100,
+        description="Earliest publication year (inclusive). Optional.",
+    )
+    year_to: Optional[int] = Field(
+        default=None,
+        ge=1800,
+        le=2100,
+        description="Latest publication year (inclusive). Optional.",
+    )
+
+
+class GoogleScholarTool(BaseTool):
+    name: str = "google_scholar"
+    description: str = (
+        "Search PUBLISHED, peer-reviewed academic papers across ALL fields via Semantic Scholar. "
+        "Covers journals, conferences, and theses — with citation counts."
+        "\n\nUSE FOR:"
+        "\n- Any academic field: medicine, history, social science, law, STEM, humanities"
+        "\n- Papers with citation counts (to judge impact)"
+        "\n- Year-filtered searches (year_from, year_to)"
+        "\n- Published, vetted research (not pre-prints)"
+        "\n\nDO NOT USE FOR:"
+        "\n- Latest unpublished pre-prints (use arxiv_search — it has newest STEM papers)"
+        "\n- General web info (use web_search)"
+        "\n\nRULE: Need PUBLISHED papers with citations? -> google_scholar. Need the NEWEST pre-prints in STEM? -> arxiv."
+    )
+    args_schema: Type[BaseModel] = GoogleScholarInput
+
+    # Forwards every validated parameter to google_scholar.
+    async def _arun(self, **kwargs) -> str:
+        return await google_scholar(**kwargs)
+
+    def _run(self, **kwargs) -> str:
+        return asyncio.run(self._arun(**kwargs))
+
+
+google_scholar_tool = GoogleScholarTool()

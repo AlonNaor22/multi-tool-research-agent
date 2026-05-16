@@ -1,9 +1,7 @@
 """Tests for the CSV/Spreadsheet reader tool."""
 
-import json
-import os
-import tempfile
 import pytest
+from pydantic import ValidationError
 
 
 class TestCsvReader:
@@ -55,16 +53,14 @@ class TestCsvReader:
     async def test_custom_head(self, sample_csv):
         from src.tools.csv_tool import csv_reader
 
-        query = json.dumps({"path": sample_csv, "head": 2})
-        result = await csv_reader(query)
+        result = await csv_reader(sample_csv, head=2)
         assert "First 2 rows" in result
 
     @pytest.mark.asyncio
     async def test_filter(self, sample_csv):
         from src.tools.csv_tool import csv_reader
 
-        query = json.dumps({"path": sample_csv, "filter": {"column": "city", "value": "NYC"}})
-        result = await csv_reader(query)
+        result = await csv_reader(sample_csv, filter_column="city", filter_value="NYC")
         assert "Alice" in result
         assert "1 rows" in result
 
@@ -72,10 +68,16 @@ class TestCsvReader:
     async def test_select_columns(self, sample_csv):
         from src.tools.csv_tool import csv_reader
 
-        query = json.dumps({"path": sample_csv, "columns": ["name", "city"]})
-        result = await csv_reader(query)
+        result = await csv_reader(sample_csv, columns=["name", "city"])
         assert "name" in result
         assert "city" in result
+
+    @pytest.mark.asyncio
+    async def test_groupby_aggregation(self, sample_csv):
+        from src.tools.csv_tool import csv_reader
+
+        result = await csv_reader(sample_csv, groupby="city", agg="sum", agg_column="salary")
+        assert "sum(salary)" in result or "Aggregation" in result
 
     @pytest.mark.asyncio
     async def test_tsv_support(self, sample_tsv):
@@ -109,7 +111,42 @@ class TestCsvReader:
         result = await csv_reader("")
         assert "Error" in result
 
-    def test_tool_wrapper_exists(self):
-        from src.tools.csv_tool import csv_tool
+
+class TestCsvReaderSchema:
+    """Pydantic args_schema validation at the LangChain boundary."""
+
+    def test_missing_path_rejected(self):
+        from src.tools.csv_tool import CsvReaderInput
+        with pytest.raises(ValidationError):
+            CsvReaderInput()
+
+    def test_invalid_agg_rejected(self):
+        from src.tools.csv_tool import CsvReaderInput
+        with pytest.raises(ValidationError):
+            CsvReaderInput(path="data.csv", agg="median")
+
+    def test_head_out_of_range_rejected(self):
+        from src.tools.csv_tool import CsvReaderInput
+        with pytest.raises(ValidationError):
+            CsvReaderInput(path="data.csv", head=-1)
+        with pytest.raises(ValidationError):
+            CsvReaderInput(path="data.csv", head=200)
+
+    def test_valid_input_parses(self):
+        from src.tools.csv_tool import CsvReaderInput
+        parsed = CsvReaderInput(
+            path="data.csv", head=10, describe=False,
+            filter_column="x", filter_value="y",
+            groupby="cat", agg="mean", agg_column="val",
+        )
+        assert parsed.head == 10
+        assert parsed.agg == "mean"
+
+
+class TestCsvTool:
+    """The BaseTool wrapper exposes the schema to the LangGraph agent."""
+
+    def test_tool_wired_with_schema(self):
+        from src.tools.csv_tool import csv_tool, CsvReaderInput
         assert csv_tool.name == "csv_reader"
-        assert csv_tool.coroutine is not None
+        assert csv_tool.args_schema is CsvReaderInput
