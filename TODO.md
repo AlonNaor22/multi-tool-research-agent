@@ -219,7 +219,32 @@ Do in this order — each builds on the previous:
    Verify locally with `docker compose up --build` + `curl localhost:8000/health`.
 3. [ ] CI/CD pipeline (GitHub Actions) for tests, linting, build validation
 4. [ ] Environment-based configuration (dev / staging / prod)
-5. [ ] API authentication and rate limiting at the endpoint level
+5. [x] **API authentication and rate limiting at the endpoint level** —
+   `src/api/auth.py`, `src/api/rate_limit.py`, `config.py`,
+   `src/api/routes/*`, `docker-compose.yml`
+   Bearer-token auth via FastAPI's `HTTPBearer` security scheme (so
+   `/docs` gets an Authorize button for free). The `verify_token`
+   dependency reads `API_AUTH_TOKEN` per-request, so tests can flip the
+   env var via monkeypatch and the runtime can hot-swap the token
+   without restart. When unset, auth is a no-op (dev mode) and the
+   startup log emits a prominent WARNING. `/health` is intentionally
+   left open so Docker/k8s liveness probes work without credentials;
+   `/query`, `/query/stream`, and every `/sessions/*` route require auth.
+
+   Rate limiting via `slowapi` (in-memory, per remote IP, X-Forwarded-For
+   aware): `/query` and `/query/stream` 10/min (LLM-expensive),
+   `/sessions` reads 60/min, `/sessions/{id}` DELETE 30/min. A custom
+   429 handler in `src/api/rate_limit.py` augments slowapi's default
+   with a `Retry-After` header so HTTP clients can back off cleanly
+   (slowapi only emits `X-RateLimit-*` out of the box). Tests flip
+   `limiter.enabled = False` autouse so the existing 18 API tests run
+   without hitting limits; dedicated `TestRateLimit` re-enables and
+   asserts the 11th `/query` request returns 429 with `Retry-After`.
+
+   6 new auth tests (missing/invalid/valid token; /health stays open;
+   sessions also protected; default-disabled in tests) + 2 rate-limit
+   tests. README + `docker-compose.yml` documentation updated. Full
+   suite: 516/516.
 
 ---
 

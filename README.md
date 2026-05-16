@@ -126,6 +126,15 @@ Endpoints (interactive docs at `http://127.0.0.1:8000/docs`):
 
 Modes: `auto` (routes simple → direct, complex → plan), `direct`, `plan`, `multi`.
 
+**Authentication**: set `API_AUTH_TOKEN=<your-secret>` in `.env` and every protected endpoint requires `Authorization: Bearer <your-secret>`. When unset, auth is disabled (dev mode) and the server logs a warning at startup. `/health` is always open so Docker/k8s liveness probes work.
+
+**Rate limits** (per remote IP, in-memory):
+- `POST /query`, `POST /query/stream` — 10 / minute (LLM-expensive)
+- `GET /sessions`, `GET /sessions/{id}` — 60 / minute
+- `DELETE /sessions/{id}` — 30 / minute
+
+A 429 response includes a `Retry-After` header and the slowapi `X-RateLimit-*` headers so clients can back off cleanly.
+
 ### Docker
 ```bash
 docker compose up --build           # build & run the API on :8000

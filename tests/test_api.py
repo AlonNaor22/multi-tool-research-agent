@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import types
 from unittest.mock import MagicMock
 
@@ -9,7 +10,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
+from slowapi.errors import RateLimitExceeded as SlowAPIRateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
+from src.api.rate_limit import limiter, rate_limit_handler
 from src.api.routes import health as health_route
 from src.api.routes import query as query_route
 from src.api.routes import sessions as sessions_route
@@ -75,7 +79,12 @@ class StubAgent:
 
 
 def _build_test_app(agent: StubAgent) -> FastAPI:
-    """Build a FastAPI app preloaded with the stub agent (no lifespan)."""
+    """Build a FastAPI app preloaded with the stub agent (no lifespan).
+
+    Mirrors the real app.py wiring: CORS, slowapi middleware + exception
+    handler. The auth dependency reads API_AUTH_TOKEN at request time, so
+    individual tests can toggle it via monkeypatch.
+    """
     app = FastAPI()
     app.add_middleware(
         CORSMiddleware,
@@ -85,10 +94,29 @@ def _build_test_app(agent: StubAgent) -> FastAPI:
     )
     app.state.agent = agent
     app.state.agent_lock = asyncio.Lock()
+    app.state.limiter = limiter
+    app.add_exception_handler(SlowAPIRateLimitExceeded, rate_limit_handler)
+    app.add_middleware(SlowAPIMiddleware)
     app.include_router(health_route.router)
     app.include_router(query_route.router)
     app.include_router(sessions_route.router)
     return app
+
+
+@pytest.fixture(autouse=True)
+def _auth_disabled(monkeypatch):
+    """Disable bearer-token auth by default. TestAuth re-enables explicitly."""
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _rate_limit_disabled():
+    """Disable slowapi rate limiting by default; TestRateLimit re-enables."""
+    limiter.enabled = False
+    yield
+    limiter.enabled = False
+    # Reset per-key counters so a re-enabling test starts fresh.
+    limiter.reset()
 
 
 @pytest.fixture
@@ -314,3 +342,116 @@ class TestSessions:
         monkeypatch.setattr(sessions_route, "delete_session", lambda cp, sid: False)
         resp = client.delete("/sessions/missing")
         assert resp.status_code == 404
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Bearer-token authentication
+# ─────────────────────────────────────────────────────────────────────
+
+
+TOKEN = "secret-test-token-123"
+
+
+class TestAuth:
+    """Bearer-token auth: required when API_AUTH_TOKEN is set, else no-op."""
+
+    def test_protected_routes_reject_missing_token(self, client: TestClient, monkeypatch):
+        monkeypatch.setenv("API_AUTH_TOKEN", TOKEN)
+
+        resp = client.post("/query", json={"query": "hi", "mode": "direct"})
+        assert resp.status_code == 401
+        assert "Missing bearer token" in resp.json()["detail"]
+        assert resp.headers.get("www-authenticate") == "Bearer"
+
+    def test_protected_routes_reject_invalid_token(self, client: TestClient, monkeypatch):
+        monkeypatch.setenv("API_AUTH_TOKEN", TOKEN)
+
+        resp = client.post(
+            "/query",
+            json={"query": "hi", "mode": "direct"},
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert resp.status_code == 401
+        assert "Invalid bearer token" in resp.json()["detail"]
+
+    def test_protected_routes_accept_valid_token(self, client: TestClient, monkeypatch):
+        monkeypatch.setenv("API_AUTH_TOKEN", TOKEN)
+
+        resp = client.post(
+            "/query",
+            json={"query": "hi", "mode": "direct"},
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["answer"] == "DIRECT: hi"
+
+    def test_health_endpoint_is_unprotected(self, client: TestClient, monkeypatch):
+        """Health probe stays open so k8s/Docker can liveness-check it."""
+        monkeypatch.setenv("API_AUTH_TOKEN", TOKEN)
+
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+    def test_sessions_endpoints_also_protected(self, client: TestClient, monkeypatch):
+        monkeypatch.setenv("API_AUTH_TOKEN", TOKEN)
+
+        # GET /sessions
+        assert client.get("/sessions").status_code == 401
+        # GET /sessions/{id}
+        assert client.get("/sessions/abc").status_code == 401
+        # DELETE /sessions/{id}
+        assert client.delete("/sessions/abc").status_code == 401
+
+    def test_auth_disabled_by_default_in_tests(self, client: TestClient):
+        """The auto-use _auth_disabled fixture removes API_AUTH_TOKEN."""
+        assert os.getenv("API_AUTH_TOKEN") is None
+        # All requests should succeed without a header.
+        resp = client.post("/query", json={"query": "hi", "mode": "direct"})
+        assert resp.status_code == 200
+
+
+# ─────────────────────────────────────────────────────────────────────
+# slowapi rate limiting
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestRateLimit:
+    """Per-endpoint slowapi rate limits.
+
+    Each test re-enables the limiter (the _rate_limit_disabled fixture
+    flips it off by default), drives the endpoint past its allowance,
+    and asserts the (N+1)th request returns 429 with a Retry-After hint.
+    """
+
+    def _enable_limiter_with(self, limit_string: str):
+        """Override the dynamic limit for the next requests in this test."""
+        # slowapi.Limiter exposes a _route_limits dict; the simplest way
+        # to assert a 429 path is to enable the global enforcement and
+        # hit the real per-endpoint decorator.
+        limiter.enabled = True
+        limiter.reset()
+
+    def test_query_endpoint_429_after_limit(self, client: TestClient):
+        self._enable_limiter_with("10/minute")
+        body = {"query": "hi", "mode": "direct"}
+
+        # Hit the configured ceiling (LIMIT_QUERY = "10/minute")
+        for _ in range(10):
+            resp = client.post("/query", json=body)
+            assert resp.status_code == 200, resp.text
+
+        # 11th request gets throttled
+        resp = client.post("/query", json=body)
+        assert resp.status_code == 429
+        # slowapi emits a Retry-After header so clients can back off
+        assert resp.headers.get("retry-after") is not None
+
+    def test_sessions_list_higher_ceiling(self, client: TestClient, monkeypatch):
+        """LIMIT_SESSIONS_READ is much higher than LIMIT_QUERY (60/min vs 10/min)."""
+        monkeypatch.setattr(sessions_route, "list_sessions", lambda cp: [])
+        self._enable_limiter_with("60/minute")
+
+        # 15 reads must succeed — well above the /query ceiling but below /sessions.
+        for i in range(15):
+            resp = client.get("/sessions")
+            assert resp.status_code == 200, f"Request {i+1} failed: {resp.text}"

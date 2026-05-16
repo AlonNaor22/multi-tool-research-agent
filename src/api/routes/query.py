@@ -6,12 +6,14 @@ import logging
 import time
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sse_starlette.sse import EventSourceResponse
 
 from src.agent import ResearchAgent
+from src.api.auth import verify_token
 from src.api.dependencies import API_MODE_TO_INTERNAL, get_agent, get_agent_lock
 from src.api.models import QueryRequest, QueryResponse
+from src.api.rate_limit import LIMIT_QUERY, LIMIT_QUERY_STREAM, limiter
 from src.constants import (
     EVENT_DONE, MODE_AUTO, MODE_DIRECT, MODE_MULTI_AGENT, MODE_PLAN_EXECUTE,
 )
@@ -24,12 +26,13 @@ from src.session_manager import generate_session_id
 # after the run completes; /query/stream emits Server-Sent Events.
 # Concurrent requests are serialized by app.state.agent_lock because
 # the ResearchAgent owns mutable state (current_session_id, callbacks,
-# rate limiter) that would race under parallel access.
+# rate limiter) that would race under parallel access. Bearer-token
+# auth + slowapi per-endpoint rate limits gate every request here.
 # ───────────────────────────────────────────────────────────────────
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["query"])
+router = APIRouter(tags=["query"], dependencies=[Depends(verify_token)])
 
 
 # Sets the agent's session_id to the caller's value, or a freshly generated
@@ -58,7 +61,9 @@ async def _run_query_for_mode(agent: ResearchAgent, query: str, mode: str) -> st
 
 
 @router.post("/query", response_model=QueryResponse)
+@limiter.limit(LIMIT_QUERY)
 async def run_query(
+    request: Request,  # noqa: ARG001 — slowapi reads `request` for IP-based keying
     body: QueryRequest,
     agent: ResearchAgent = Depends(get_agent),
     lock: asyncio.Lock = Depends(get_agent_lock),
@@ -105,7 +110,9 @@ async def _bridge_sync_iter(sync_gen) -> AsyncIterator:
 
 
 @router.post("/query/stream")
+@limiter.limit(LIMIT_QUERY_STREAM)
 async def stream_query(
+    request: Request,  # noqa: ARG001 — slowapi reads `request` for IP-based keying
     body: QueryRequest,
     agent: ResearchAgent = Depends(get_agent),
     lock: asyncio.Lock = Depends(get_agent_lock),

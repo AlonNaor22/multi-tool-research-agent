@@ -20,8 +20,10 @@ services:
     ports:
       - "8000:8000"
     # Reads ANTHROPIC_API_KEY (and optional WOLFRAM_ALPHA_APP_ID,
-    # OPENWEATHER_API_KEY, TAVILY_API_KEY) from the host .env file —
-    # the same file the CLI and Streamlit UI already use.
+    # OPENWEATHER_API_KEY, TAVILY_API_KEY, API_AUTH_TOKEN) from the host
+    # .env file — the same file the CLI and Streamlit UI already use.
+    # Set API_AUTH_TOKEN before exposing the container to anything but
+    # localhost; without it the API runs unauthenticated.
     env_file:
       - .env
     # Bind-mount persistent state. The container's app user runs as

@@ -65,6 +65,12 @@ def update_env_key(key: str, value: str) -> None:
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 WOLFRAM_ALPHA_APP_ID = os.getenv("WOLFRAM_ALPHA_APP_ID")
 
+# REST API authentication
+# When unset, the FastAPI app runs without auth (dev mode) and logs a
+# prominent warning at startup. Set to any non-empty string to require
+# `Authorization: Bearer <token>` on every protected endpoint.
+API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN")
+
 # LLM Configuration
 MODEL_NAME = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")  # Override via .env
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))  # Lower = more focused/deterministic

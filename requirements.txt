@@ -35,6 +35,7 @@ streamlit>=1.32.0                # Chat-based web interface
 fastapi>=0.115.0                 # ASGI web framework for the REST API
 uvicorn[standard]>=0.32.0        # ASGI server (with watchfiles + websockets extras)
 sse-starlette>=2.1.0             # Server-Sent Events streaming responses
+slowapi>=0.1.9                   # Per-endpoint rate limiting for the FastAPI routes
 httpx>=0.27.0                    # Async HTTP client (also used by FastAPI's TestClient)
 
 # Testing
