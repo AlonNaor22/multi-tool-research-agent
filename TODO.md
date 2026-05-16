@@ -9,6 +9,38 @@ Within each category, items are ordered by **importance** (highest first).
 
 ---
 
+## Status snapshot
+
+**516 tests passing. CI green. Project is presentable.**
+
+What's shipped, in priority order:
+- Structured output & schema enforcement: planner, supervisor, **24 tools**, and the
+  calculator's KaTeX output channel are all schema-driven via Pydantic
+  `args_schema` / `with_structured_output`. No JSON-in-string parsing left in
+  user space.
+- LangGraph orchestration: explicit `ResearchAgentState`, `AsyncSqliteSaver`
+  unified persistence, dependency-driven parallel plan execution, history
+  summarizer middleware.
+- Three interfaces — CLI, Streamlit, **FastAPI REST + SSE** — all share one
+  agent + checkpoint store.
+- Production-ready packaging: multi-stage **Docker** (~250 MB, non-root),
+  one-command **docker-compose** with bind-mounted state, **GitHub Actions
+  CI** running pytest + docker-build on every push, **bearer-token auth +
+  per-endpoint slowapi rate limits** with `Retry-After`.
+- **README** rewritten with Mermaid architecture diagram, three-mode comparison
+  table, updated tool catalog (24), engineering-highlights section, and CI /
+  Tests / Python / License badges.
+
+What's intentionally still on the board (none required for presentability):
+- `#5 Structured fact-checker output` — optional, only worth doing alongside UI
+  badges for per-claim verdicts.
+- `Capabilities` section — RAG pipeline / semantic memory + Human-in-the-Loop;
+  both are multi-day features, not blockers.
+- `Deployment #4` — env-based config (dev/staging/prod profiles); modest value,
+  invisible to README skimmers.
+
+---
+
 ## Structured output & tool-schema enforcement (audit)
 
 Background: `src/multi_agent/supervisor.py` was converted from `json.loads(llm.invoke(...))` to
@@ -135,6 +167,23 @@ Do in this order — each builds on the previous:
 ## Code cleanup & refactoring
 
 *All items completed.*
+
+---
+
+## Documentation
+
+1. [x] **Presentability pass on `README.md`** —
+   Rewrote the README around the project's strongest differentiator (three
+   execution modes auto-routed by complexity), added a Mermaid architecture
+   diagram showing how interfaces → mode router → tools → checkpointer fit
+   together, fixed stale facts (24 tools — was 20; 516 tests — was 283),
+   replaced the obsolete "JSON input parsing" engineering bullet with the
+   current pattern (Pydantic `args_schema` everywhere + structured outputs),
+   added missing sections for the FastAPI REST + SSE service, bearer-token
+   auth, per-endpoint rate limits, Docker quickstart, and the GitHub Actions
+   CI workflow. New CI / Tests / Python / License badges at the top. The
+   first thing repo visitors see is now "tests passing on every commit" plus
+   a one-glance read of the architecture.
 
 ---
 
